@@ -1,0 +1,14 @@
+on_http_request:
+  - name: OAuth
+    actions:
+      - type: oauth
+        config:
+          provider: google
+          auth_id: alyana-luz-login
+      - type: add-headers
+        config:
+          headers:
+            x-user-email: ${actions.ngrok.oauth.identity.email}
+            x-user-name:  ${actions.ngrok.oauth.identity.name}
+            x-user-sub:   ${actions.ngrok.oauth.identity.provider_user_id}
+
