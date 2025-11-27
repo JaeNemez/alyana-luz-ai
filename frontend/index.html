@@ -1,17 +1,8 @@
-<!DOCTYPE html>
+k<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Alyana Luz · Bible AI</title>
-
-  <!-- Google tag (gtag.js) -->
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-LL6XLNV7M5"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-LL6XLNV7M5');
-  </script>
 
   <style>
     * { box-sizing: border-box; }
@@ -21,48 +12,113 @@
       background: #050316;
       color: #f9f5ff;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-    }
-    .app {
-      width: 100%;
-      max-width: 760px;
-      height: 90vh;
-      display: flex;
-      flex-direction: column;
-      background: radial-gradient(circle at top left, #4c1d95 0, #050316 45%);
-      border-radius: 18px;
-      border: 1px solid rgba(255,255,255,0.12);
-      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      height: 100vh;
       overflow: hidden;
     }
-    header {
-      padding: 16px 24px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+
+    /* ----- Layout ----- */
+    .sidebar {
+      width: 260px;
+      background: #050316;
+      border-right: 1px solid rgba(148,163,184,0.25);
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      padding: 16px 16px 20px;
+      gap: 16px;
     }
-    header h1 {
-      margin: 0;
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      color: #e5e7eb;
     }
-    header h1 span.emoji { font-size: 22px; }
-    header small {
-      color: #c4b5fd;
-      font-size: 12px;
-    }
-    #chat {
+    .chat-list {
       flex: 1;
-      padding: 16px 20px;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
+      gap: 8px;
+      padding-right: 2px;
+    }
+    .chat-list-item {
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 13px;
+      color: #e5e7eb;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .chat-list-item.active {
+      background: rgba(88,28,135,0.85);
+      border-color: rgba(216,180,254,0.6);
+    }
+    .delete-history-btn {
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: none;
+      background: #f97373;
+      color: #111827;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .delete-history-btn:hover {
+      background: #fb6b67;
+    }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at top left, #4c1d95 0, #050316 50%);
+      border-radius: 0;
+    }
+
+    /* ----- Header ----- */
+    header {
+      padding: 14px 24px 14px 24px;
+      border-bottom: 1px solid rgba(148,163,184,0.25);
+      display: flex;
+      align-items: center;
       gap: 10px;
+    }
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      background: radial-gradient(circle at center, #f97316 0, #e11d48 40%, #4c1d95 80%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+    .header-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .header-title {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .header-sub {
+      font-size: 11px;
+      color: #c4b5fd;
+    }
+
+    /* ----- Chat area ----- */
+    #chat {
+      flex: 1;
+      padding: 24px 32px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
     }
     .bubble-row {
       display: flex;
@@ -73,214 +129,435 @@
     .bubble-row.system { justify-content: center; }
     .bubble {
       max-width: 80%;
-      padding: 10px 14px;
-      border-radius: 16px;
+      padding: 12px 16px;
+      border-radius: 18px;
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       white-space: pre-wrap;
     }
     .bubble.user {
       background: #4f46e5;
       color: #e0e7ff;
-      border-bottom-right-radius: 4px;
+      border-bottom-right-radius: 6px;
     }
     .bubble.bot {
-      background: rgba(15,23,42,0.9);
-      color: #e5e7eb;
-      border-bottom-left-radius: 4px;
-      border: 1px solid rgba(148,163,184,0.4);
+      background: rgba(30,64,175,0.25);
+      border: 1px solid rgba(191,219,254,0.4);
+      color: #f9fafb;
+      border-bottom-left-radius: 6px;
     }
     .bubble.system {
       background: transparent;
-      border: none;
       color: #9ca3af;
       font-size: 12px;
       text-align: center;
     }
-    form {
-      padding: 12px 16px;
-      border-top: 1px solid rgba(255,255,255,0.08);
-      display: flex;
-      gap: 8px;
-      background: rgba(15,23,42,0.96);
-      align-items: center;
-      flex-wrap: wrap;
+    .typing {
+      font-style: italic;
+      opacity: 0.8;
     }
-    input[type="text"] {
+
+    /* ----- Footer ----- */
+    .footer {
+      padding: 12px 20px 16px;
+      border-top: 1px solid rgba(148,163,184,0.25);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(15,23,42,0.98);
+    }
+    .footer-input {
       flex: 1;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-radius: 999px;
       border: 1px solid rgba(148,163,184,0.6);
       background: rgba(15,23,42,0.9);
       color: #f9fafb;
-      outline: none;
       font-size: 14px;
+      outline: none;
     }
-    input[type="text"]::placeholder {
+    .footer-input::placeholder {
       color: #6b7280;
     }
-    button {
-      padding: 10px 16px;
+    .btn {
+      padding: 10px 18px;
       border-radius: 999px;
       border: none;
-      background: #6366f1;
-      color: white;
+      font-size: 14px;
       font-weight: 600;
       cursor: pointer;
-      font-size: 14px;
       white-space: nowrap;
     }
-    button:disabled {
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+    }
+    .btn-primary:disabled {
       opacity: 0.6;
+      cursor: default;
     }
-    .clear-btn {
-      background: #e5e7eb;
-      color: #111827;
-    }
-    .listen-btn {
+    .btn-voice {
       background: #a855f7;
       color: #fdf4ff;
     }
-    .stop-btn {
-      background: #ef4444 !important;
-      color: white !important;
+    .btn-secondary {
+      background: #e5e7eb;
+      color: #111827;
     }
   </style>
 </head>
-
 <body>
-  <div class="app">
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-title">Past Chats</div>
+    <div id="chatList" class="chat-list"></div>
+    <button id="deleteHistoryBtn" class="delete-history-btn">Delete All History</button>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
     <header>
-      <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
-      <small>pray • learn • walk in the light</small>
+      <div class="avatar">✨</div>
+      <div class="header-text">
+        <div class="header-title">Alyana Luz · Bible AI</div>
+        <div class="header-sub">pray · learn · walk in the light</div>
+      </div>
     </header>
 
     <div id="chat"></div>
 
-    <form id="form">
-      <input id="input" type="text" autocomplete="off"
-        placeholder="Ask for a prayer, verse, or 'verses about forgiveness'…">
-      <button type="submit">Send</button>
-      <button type="button" id="listenBtn" class="listen-btn" disabled>🔊 Listen</button>
-      <button type="button" id="clearChat" class="clear-btn">🗑️ New Chat</button>
+    <form id="form" class="footer">
+      <input
+        id="input"
+        class="footer-input"
+        type="text"
+        autocomplete="off"
+        placeholder="Ask for a prayer or verse in English or Spanish..."
+      />
+      <button type="submit" class="btn btn-primary" id="sendBtn">Send</button>
+      <button type="button" class="btn btn-voice" id="listenBtn" disabled>Listen</button>
+      <button type="button" class="btn btn-secondary" id="newChatBtn">New</button>
     </form>
   </div>
 
   <script>
-    const chat = document.getElementById("chat");
-    const form = document.getElementById("form");
-    const input = document.getElementById("input");
-    const listenBtn = document.getElementById("listenBtn");
-    const clearBtn = document.getElementById("clearChat");
+    const chatEl     = document.getElementById("chat");
+    const formEl     = document.getElementById("form");
+    const inputEl    = document.getElementById("input");
+    const sendBtn    = document.getElementById("sendBtn");
+    const listenBtn  = document.getElementById("listenBtn");
+    const newChatBtn = document.getElementById("newChatBtn");
+    const chatListEl = document.getElementById("chatList");
+    const deleteHistoryBtn = document.getElementById("deleteHistoryBtn");
 
-    let history = [];
+    const STORAGE_KEY = "alyana_chat_history_v1";
+
+    let sessions = [];
+    let activeSessionId = null;
     let lastBotText = "";
-    let isSpeaking = false;
+    let typingBubble = null;
 
-    function addBubble(text, who = "bot") {
+    // ------- Helpers: DOM -------
+
+    function addBubble(text, who = "bot", extraClass = "") {
       const row = document.createElement("div");
       row.className = "bubble-row " + who;
 
-      const b = document.createElement("div");
-      b.className = "bubble " + (who === "user" ? "user" :
-                                who === "system" ? "system" : "bot");
-      b.textContent = text;
+      const bubble = document.createElement("div");
+      bubble.className = "bubble " + (who === "user" ? "user" : who === "system" ? "system" : "bot");
+      if (extraClass) bubble.classList.add(extraClass);
+      bubble.textContent = text;
 
-      row.appendChild(b);
-      chat.appendChild(row);
-      chat.scrollTop = chat.scrollHeight;
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      return bubble;
     }
 
     function addWelcome() {
-      addBubble('Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".', "system");
+      addBubble(
+        'Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".',
+        "system"
+      );
     }
 
-    addWelcome();
-
-    // ------------------ SPEECH CONTROLS ------------------
-    function stopSpeech() {
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
+    function renderChat() {
+      chatEl.innerHTML = "";
+      if (!activeSessionId) {
+        addWelcome();
+        return;
       }
-      isSpeaking = false;
-      listenBtn.textContent = "🔊 Listen";
-      listenBtn.classList.remove("stop-btn");
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (!session || session.messages.length === 0) {
+        addWelcome();
+        return;
+      }
+      for (const msg of session.messages) {
+        addBubble(msg.text, msg.role);
+      }
     }
 
-    function speak(text) {
-      if (!("speechSynthesis" in window)) return alert("Voice not supported on this browser.");
+    function renderSidebar() {
+      chatListEl.innerHTML = "";
+      for (const s of sessions) {
+        const btn = document.createElement("button");
+        btn.className = "chat-list-item" + (s.id === activeSessionId ? " active" : "");
+        btn.textContent = s.title || "(Untitled conversation)";
+        btn.onclick = () => {
+          activeSessionId = s.id;
+          saveHistory();
+          renderSidebar();
+          renderChat();
+          lastBotText = getLastBotText();
+          listenBtn.disabled = !lastBotText;
+        };
+        chatListEl.appendChild(btn);
+      }
+    }
 
-      stopSpeech();
+    function createNewSession(title = "New chat") {
+      const id = Date.now().toString();
+      const session = { id, title, messages: [] };
+      sessions.unshift(session);
+      activeSessionId = id;
+      saveHistory();
+      renderSidebar();
+      renderChat();
+      lastBotText = "";
+      listenBtn.disabled = true;
+    }
 
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.9;
-      u.pitch = 1.15;
+    function getLastBotText() {
+      const session = sessions.find(s => s.id === activeSessionId);
+      if (!session) return "";
+      const lastBot = [...session.messages].reverse().find(m => m.role === "bot");
+      return lastBot ? lastBot.text : "";
+    }
 
-      u.onend = stopSpeech;
+    // ------- Local Storage -------
 
-      window.speechSynthesis.speak(u);
-      isSpeaking = true;
-      listenBtn.textContent = "⏹ Stop";
-      listenBtn.classList.add("stop-btn");
+    function loadHistory() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) {
+          sessions = [];
+          activeSessionId = null;
+          return;
+        }
+        sessions = JSON.parse(raw);
+        if (!Array.isArray(sessions)) sessions = [];
+        activeSessionId = sessions[0]?.id || null;
+      } catch {
+        sessions = [];
+        activeSessionId = null;
+      }
+    }
+
+    function saveHistory() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    }
+
+    // ------- Typing indicator -------
+
+    function showTypingIndicator() {
+      if (typingBubble) return;
+      typingBubble = addBubble("Alyana is typing…", "bot", "typing");
+    }
+
+    function updateTypingText(text) {
+      if (typingBubble) typingBubble.textContent = text;
+    }
+
+    function clearTypingIndicator() {
+      typingBubble = null;
+    }
+
+    // ------- Voice (bilingual, browser TTS) -------
+
+    let voices = [];
+    let speaking = false;
+
+    function loadVoices() {
+      if (!("speechSynthesis" in window)) return;
+      voices = window.speechSynthesis.getVoices();
+    }
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    }
+
+    function detectLanguage(text) {
+      const spanishHints = /[áéíóúñü]|( dios| señor| jesús|cristo|gracia|perdón|oración|fe )/i;
+      return spanishHints.test(text) ? "es" : "en";
+    }
+
+    function pickVoice(langCode) {
+      if (!voices || voices.length === 0) return null;
+      if (langCode === "es") {
+        const pauli = voices.find(v => /Paulina/i.test(v.name) && v.lang.startsWith("es"));
+        if (pauli) return pauli;
+        const es = voices.find(v => v.lang.startsWith("es"));
+        if (es) return es;
+      } else {
+        const sam = voices.find(v => /Samantha/i.test(v.name));
+        if (sam) return sam;
+        const en = voices.find(v => v.lang.startsWith("en"));
+        if (en) return en;
+      }
+      return voices[0];
+    }
+
+    function stopSpeaking() {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      speaking = false;
+      listenBtn.textContent = "Listen";
+    }
+
+    function speakText(text) {
+      if (!("speechSynthesis" in window)) {
+        alert("Your browser does not support voice playback.");
+        return;
+      }
+      if (!text) return;
+
+      stopSpeaking();
+      const lang = detectLanguage(text);
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voice = pickVoice(lang);
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice?.lang || (lang === "es" ? "es-ES" : "en-US");
+      utterance.rate = 0.92;
+      utterance.pitch = 1.1;
+      speaking = true;
+      listenBtn.textContent = "Stop";
+      utterance.onend = () => {
+        speaking = false;
+        listenBtn.textContent = "Listen";
+      };
+      window.speechSynthesis.speak(utterance);
     }
 
     listenBtn.addEventListener("click", () => {
       if (!lastBotText) return;
-
-      if (isSpeaking) {
-        stopSpeech();
+      if (speaking) {
+        stopSpeaking();
       } else {
-        speak(lastBotText);
+        speakText(lastBotText);
       }
     });
 
-    // ------------------ CHAT LOGIC ------------------
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
+    // ------- Chat logic -------
 
-      const userText = input.value.trim();
+    function getActiveSession() {
+      if (!activeSessionId) {
+        createNewSession("New chat");
+      }
+      return sessions.find(s => s.id === activeSessionId);
+    }
+
+    formEl.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const userText = inputEl.value.trim();
       if (!userText) return;
 
+      const session = getActiveSession();
+      if (session.messages.length === 0) {
+        session.title = userText.slice(0, 40);
+      }
+
+      // user bubble
       addBubble(userText, "user");
-      input.value = "";
+      session.messages.push({ role: "user", text: userText });
+      saveHistory();
+      renderSidebar();
+      inputEl.value = "";
+      inputEl.focus();
 
-      history.push({ role: "user", text: userText });
-
-      const loading = "Thinking…";
-      addBubble(loading, "bot");
+      showTypingIndicator();
+      sendBtn.disabled = true;
 
       try {
+        // Build conversation history text
+        const historyText = session.messages
+          .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
+          .join("\n");
+
+        const fullPrompt =
+          historyText +
+          "\n\nContinue responding as Alyana Luz, a gentle bilingual (English & Spanish) Bible AI. Use the same language the user just used.";
+
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: userText })
+          body: JSON.stringify({ prompt: fullPrompt })
         });
 
-        const data = await res.json();
-        const text = data.message || "Sorry, something went wrong.";
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          data = {};
+        }
 
-        // replace last bubble "Thinking…" with real message
-        chat.lastChild.firstChild.textContent = text;
+        let text;
+        if (!res.ok) {
+          text = data.detail || `Server error (${res.status}).`;
+        } else {
+          text = data.message || data.prayer || JSON.stringify(data, null, 2);
+        }
 
+        // replace typing bubble with real text
+        updateTypingText(text);
+        clearTypingIndicator();
+
+        session.messages.push({ role: "bot", text });
+        saveHistory();
         lastBotText = text;
-        listenBtn.disabled = false;
-
-        history.push({ role: "assistant", text });
-
+        listenBtn.disabled = !lastBotText;
       } catch (err) {
-        chat.lastChild.firstChild.textContent = "Error contacting server.";
         console.error(err);
+        updateTypingText("Network error talking to the Bible AI server.");
+        clearTypingIndicator();
+        lastBotText = "";
+        listenBtn.disabled = true;
+      } finally {
+        sendBtn.disabled = false;
+        chatEl.scrollTop = chatEl.scrollHeight;
       }
     });
 
-    clearBtn.addEventListener("click", () => {
-      chat.innerHTML = "";
-      history = [];
+    newChatBtn.addEventListener("click", () => {
+      createNewSession("New chat");
+      inputEl.focus();
+      stopSpeaking();
+    });
+
+    deleteHistoryBtn.addEventListener("click", () => {
+      if (!confirm("Delete all saved chats on this device?")) return;
+      sessions = [];
+      activeSessionId = null;
+      saveHistory();
+      renderSidebar();
+      renderChat();
       lastBotText = "";
       listenBtn.disabled = true;
-      stopSpeech();
-      addWelcome();
+      stopSpeaking();
     });
+
+    // ------- Init -------
+
+    loadHistory();
+    if (!activeSessionId) {
+      createNewSession("New chat");
+    } else {
+      renderSidebar();
+      renderChat();
+      lastBotText = getLastBotText();
+      listenBtn.disabled = !lastBotText;
+    }
+    inputEl.focus();
   </script>
 </body>
 </html>
