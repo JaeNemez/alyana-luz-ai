@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Alyana Luz · Bible AI</title>
- 
+
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-LL6XLNV7M5"></script>
   <script>
@@ -25,9 +25,9 @@
       justify-content: center;
       min-height: 100vh;
     }
-    .app { 
+    .app {
       width: 100%;
-      max-width: 760px;  
+      max-width: 760px;
       height: 90vh;
       display: flex;
       flex-direction: column;
@@ -40,14 +40,14 @@
     header {
       padding: 16px 24px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
-      display: flex; 
+      display: flex;
       flex-direction: column;
       gap: 4px;
     }
     header h1 {
       margin: 0;
       font-size: 20px;
-      display: flex; 
+      display: flex;
       align-items: center;
       gap: 8px;
     }
@@ -75,13 +75,13 @@
       max-width: 80%;
       padding: 10px 14px;
       border-radius: 16px;
-      font-size: 14px;   
+      font-size: 14px;
       line-height: 1.5;
       white-space: pre-wrap;
     }
-    .bubble.user {   
+    .bubble.user {
       background: #4f46e5;
-      color: #e0e7ff; 
+      color: #e0e7ff;
       border-bottom-right-radius: 4px;
     }
     .bubble.bot {
@@ -92,8 +92,8 @@
     }
     .bubble.system {
       background: transparent;
-      border: none;   
-      color: #9ca3af; 
+      border: none;
+      color: #9ca3af;
       font-size: 12px;
       text-align: center;
     }
@@ -127,10 +127,10 @@
       background: #6366f1;
       color: white;
       font-weight: 600;
-      cursor: pointer;  
+      cursor: pointer;
       font-size: 14px;
       white-space: nowrap;
-    } 
+    }
     button:disabled {
       opacity: 0.6;
       cursor: default;
@@ -163,7 +163,6 @@
 
     <div id="chat"></div>
 
-    <!-- Form: Send + New Chat + Listen -->
     <form id="form">
       <input
         id="input"
@@ -184,6 +183,7 @@
     const clearBtn = document.getElementById("clearChat");
     const listenBtn = document.getElementById("listenBtn");
 
+    // Simple in-browser memory for this session
     const history = []; // { role: "user" | "assistant", text: string }
     let lastBotText = "";
 
@@ -210,8 +210,10 @@
 
     addWelcome();
 
-    // -------- VOICE SETUP --------
+    // ---------- VOICE: Softer, more human + STOP ----------
     let voices = [];
+    let isSpeaking = false;
+    let currentUtterance = null;
 
     function loadVoices() {
       if (!("speechSynthesis" in window)) return;
@@ -225,18 +227,30 @@
 
     function pickAlyanaVoice() {
       if (!voices || voices.length === 0) return null;
+
       const preferredNames = [
         "Samantha",
         "Google UK English Female",
         "Google US English",
-        "Google español de Estados Unidos"
+        "Microsoft Helena",
+        "Microsoft Aria"
       ];
+
       for (const name of preferredNames) {
         const v = voices.find(voice => voice.name.includes(name));
         if (v) return v;
       }
+
       const female = voices.find(v => /female/i.test(v.name));
       return female || voices[0];
+    }
+
+    function stopSpeaking() {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      isSpeaking = false;
+      currentUtterance = null;
+      listenBtn.textContent = "🔊 Listen";
     }
 
     function speakText(text) {
@@ -246,15 +260,34 @@
       }
       if (!text) return;
 
-      window.speechSynthesis.cancel();
+      // If already speaking, clicking again stops it
+      if (isSpeaking) {
+        stopSpeaking();
+        return;
+      }
+
+      stopSpeaking(); // cancel any previous
 
       const utterance = new SpeechSynthesisUtterance(text);
       const v = pickAlyanaVoice();
       if (v) utterance.voice = v;
 
-      utterance.rate = 0.95;
-      utterance.pitch = 1.15;
+      // Soft / calm settings
+      utterance.rate = 0.9;   // a bit slower than default
+      utterance.pitch = 1.05; // slightly gentle / feminine
 
+      utterance.onend = () => {
+        isSpeaking = false;
+        listenBtn.textContent = "🔊 Listen";
+      };
+      utterance.onerror = () => {
+        isSpeaking = false;
+        listenBtn.textContent = "🔊 Listen";
+      };
+
+      isSpeaking = true;
+      currentUtterance = utterance;
+      listenBtn.textContent = "⏹ Stop";
       window.speechSynthesis.speak(utterance);
     }
 
@@ -263,7 +296,7 @@
       speakText(lastBotText);
     });
 
-    // -------- CHAT LOGIC --------
+    // ---------- CHAT LOGIC ----------
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const userText = input.value.trim();
@@ -301,7 +334,6 @@
         history.push({ role: "assistant", text });
         lastBotText = text;
         listenBtn.disabled = !lastBotText;
-
       } catch (err) {
         console.error(err);
         loadingBubble.textContent = "Network error talking to the Bible AI server.";
@@ -320,7 +352,7 @@
       listenBtn.disabled = true;
       input.focus();
       if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
+        stopSpeaking();
       }
     });
   </script>
