@@ -108,7 +108,6 @@
     }
     input[type="text"] {
       flex: 1;
-      min-width: 0;
       padding: 10px 12px;
       border-radius: 999px;
       border: 1px solid rgba(148,163,184,0.6);
@@ -133,27 +132,22 @@
     }
     button:disabled {
       opacity: 0.6;
-      cursor: default;
     }
     .clear-btn {
       background: #e5e7eb;
       color: #111827;
-      padding: 10px 14px;
-      border-radius: 999px;
-      border: none;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 600;
-    }
-    .clear-btn:hover {
-      background: #d4d4d8;
     }
     .listen-btn {
       background: #a855f7;
       color: #fdf4ff;
     }
+    .stop-btn {
+      background: #ef4444 !important;
+      color: white !important;
+    }
   </style>
 </head>
+
 <body>
   <div class="app">
     <header>
@@ -164,12 +158,8 @@
     <div id="chat"></div>
 
     <form id="form">
-      <input
-        id="input"
-        type="text"
-        autocomplete="off"
-        placeholder="Ask for a prayer, verse, or 'verses about forgiveness'…"
-      />
+      <input id="input" type="text" autocomplete="off"
+        placeholder="Ask for a prayer, verse, or 'verses about forgiveness'…">
       <button type="submit">Send</button>
       <button type="button" id="listenBtn" class="listen-btn" disabled>🔊 Listen</button>
       <button type="button" id="clearChat" class="clear-btn">🗑️ New Chat</button>
@@ -180,180 +170,116 @@
     const chat = document.getElementById("chat");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
-    const clearBtn = document.getElementById("clearChat");
     const listenBtn = document.getElementById("listenBtn");
+    const clearBtn = document.getElementById("clearChat");
 
-    // Simple in-browser memory for this session
-    const history = []; // { role: "user" | "assistant", text: string }
+    let history = [];
     let lastBotText = "";
+    let isSpeaking = false;
 
     function addBubble(text, who = "bot") {
       const row = document.createElement("div");
       row.className = "bubble-row " + who;
 
       const b = document.createElement("div");
-      b.className = "bubble " + (who === "user" ? "user" : who === "system" ? "system" : "bot");
+      b.className = "bubble " + (who === "user" ? "user" :
+                                who === "system" ? "system" : "bot");
       b.textContent = text;
 
       row.appendChild(b);
       chat.appendChild(row);
       chat.scrollTop = chat.scrollHeight;
-      return b;
     }
 
     function addWelcome() {
-      addBubble(
-        'Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".',
-        "system"
-      );
+      addBubble('Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".', "system");
     }
 
     addWelcome();
 
-    // ---------- VOICE: Softer, more human + STOP ----------
-    let voices = [];
-    let isSpeaking = false;
-    let currentUtterance = null;
-
-    function loadVoices() {
-      if (!("speechSynthesis" in window)) return;
-      voices = window.speechSynthesis.getVoices();
-    }
-
-    if ("speechSynthesis" in window) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-      loadVoices();
-    }
-
-    function pickAlyanaVoice() {
-      if (!voices || voices.length === 0) return null;
-
-      const preferredNames = [
-        "Samantha",
-        "Google UK English Female",
-        "Google US English",
-        "Microsoft Helena",
-        "Microsoft Aria"
-      ];
-
-      for (const name of preferredNames) {
-        const v = voices.find(voice => voice.name.includes(name));
-        if (v) return v;
+    // ------------------ SPEECH CONTROLS ------------------
+    function stopSpeech() {
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
       }
-
-      const female = voices.find(v => /female/i.test(v.name));
-      return female || voices[0];
-    }
-
-    function stopSpeaking() {
-      if (!("speechSynthesis" in window)) return;
-      window.speechSynthesis.cancel();
       isSpeaking = false;
-      currentUtterance = null;
       listenBtn.textContent = "🔊 Listen";
+      listenBtn.classList.remove("stop-btn");
     }
 
-    function speakText(text) {
-      if (!("speechSynthesis" in window)) {
-        alert("Sorry, your browser does not support voice yet.");
-        return;
-      }
-      if (!text) return;
+    function speak(text) {
+      if (!("speechSynthesis" in window)) return alert("Voice not supported on this browser.");
 
-      // If already speaking, clicking again stops it
-      if (isSpeaking) {
-        stopSpeaking();
-        return;
-      }
+      stopSpeech();
 
-      stopSpeaking(); // cancel any previous
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 0.9;
+      u.pitch = 1.15;
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      const v = pickAlyanaVoice();
-      if (v) utterance.voice = v;
+      u.onend = stopSpeech;
 
-      // Soft / calm settings
-      utterance.rate = 0.9;   // a bit slower than default
-      utterance.pitch = 1.05; // slightly gentle / feminine
-
-      utterance.onend = () => {
-        isSpeaking = false;
-        listenBtn.textContent = "🔊 Listen";
-      };
-      utterance.onerror = () => {
-        isSpeaking = false;
-        listenBtn.textContent = "🔊 Listen";
-      };
-
+      window.speechSynthesis.speak(u);
       isSpeaking = true;
-      currentUtterance = utterance;
       listenBtn.textContent = "⏹ Stop";
-      window.speechSynthesis.speak(utterance);
+      listenBtn.classList.add("stop-btn");
     }
 
     listenBtn.addEventListener("click", () => {
       if (!lastBotText) return;
-      speakText(lastBotText);
+
+      if (isSpeaking) {
+        stopSpeech();
+      } else {
+        speak(lastBotText);
+      }
     });
 
-    // ---------- CHAT LOGIC ----------
+    // ------------------ CHAT LOGIC ------------------
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+
       const userText = input.value.trim();
       if (!userText) return;
 
       addBubble(userText, "user");
       input.value = "";
-      input.focus();
 
       history.push({ role: "user", text: userText });
 
-      const loadingBubble = addBubble("Thinking…", "bot");
-      const sendBtn = form.querySelector('button[type="submit"]');
-      sendBtn.disabled = true;
+      const loading = "Thinking…";
+      addBubble(loading, "bot");
 
       try {
-        const historyText = history
-          .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
-          .join("\n");
-
-        const fullPrompt =
-          historyText +
-          "\n\nContinue responding as Alyana Luz, a gentle Bible AI assistant that uses the internal Bible tools.";
-
         const res = await fetch("/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: fullPrompt })
+          body: JSON.stringify({ prompt: userText })
         });
 
         const data = await res.json();
-        const text = data.message || data.prayer || JSON.stringify(data, null, 2);
+        const text = data.message || "Sorry, something went wrong.";
 
-        loadingBubble.textContent = text;
-        history.push({ role: "assistant", text });
+        // replace last bubble "Thinking…" with real message
+        chat.lastChild.firstChild.textContent = text;
+
         lastBotText = text;
-        listenBtn.disabled = !lastBotText;
+        listenBtn.disabled = false;
+
+        history.push({ role: "assistant", text });
+
       } catch (err) {
+        chat.lastChild.firstChild.textContent = "Error contacting server.";
         console.error(err);
-        loadingBubble.textContent = "Network error talking to the Bible AI server.";
-        lastBotText = "";
-        listenBtn.disabled = true;
-      } finally {
-        sendBtn.disabled = false;
       }
     });
 
     clearBtn.addEventListener("click", () => {
-      history.length = 0;
       chat.innerHTML = "";
-      addWelcome();
+      history = [];
       lastBotText = "";
       listenBtn.disabled = true;
-      input.focus();
-      if ("speechSynthesis" in window) {
-        stopSpeaking();
-      }
+      stopSpeech();
+      addWelcome();
     });
   </script>
 </body>
