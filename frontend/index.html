@@ -5,14 +5,13 @@
   <title>Alyana Luz · Bible AI</title>
  
   <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-LL6XLNV7M5"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-LL6XLNV7M5');
-</script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-LL6XLNV7M5"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-LL6XLNV7M5');
+  </script>
 
   <style>
     * { box-sizing: border-box; }
@@ -104,9 +103,12 @@
       display: flex;
       gap: 8px;
       background: rgba(15,23,42,0.96);
+      align-items: center;
+      flex-wrap: wrap;
     }
     input[type="text"] {
       flex: 1;
+      min-width: 0;
       padding: 10px 12px;
       border-radius: 999px;
       border: 1px solid rgba(148,163,184,0.6);
@@ -119,7 +121,7 @@
       color: #6b7280;
     }
     button {
-      padding: 10px 18px;
+      padding: 10px 16px;
       border-radius: 999px;
       border: none;
       background: #6366f1;
@@ -127,6 +129,7 @@
       font-weight: 600;
       cursor: pointer;  
       font-size: 14px;
+      white-space: nowrap;
     } 
     button:disabled {
       opacity: 0.6;
@@ -145,6 +148,10 @@
     .clear-btn:hover {
       background: #d4d4d8;
     }
+    .listen-btn {
+      background: #a855f7;
+      color: #fdf4ff;
+    }
   </style>
 </head>
 <body>
@@ -156,7 +163,7 @@
 
     <div id="chat"></div>
 
-    <!-- ONE single form with Send + New Chat -->
+    <!-- Form: Send + New Chat + Listen -->
     <form id="form">
       <input
         id="input"
@@ -165,6 +172,7 @@
         placeholder="Ask for a prayer, verse, or 'verses about forgiveness'…"
       />
       <button type="submit">Send</button>
+      <button type="button" id="listenBtn" class="listen-btn" disabled>🔊 Listen</button>
       <button type="button" id="clearChat" class="clear-btn">🗑️ New Chat</button>
     </form>
   </div>
@@ -174,9 +182,10 @@
     const form = document.getElementById("form");
     const input = document.getElementById("input");
     const clearBtn = document.getElementById("clearChat");
+    const listenBtn = document.getElementById("listenBtn");
 
-    // 🧠 Simple in-browser memory for this session
     const history = []; // { role: "user" | "assistant", text: string }
+    let lastBotText = "";
 
     function addBubble(text, who = "bot") {
       const row = document.createElement("div");
@@ -192,7 +201,6 @@
       return b;
     }
 
-    // Welcome message
     function addWelcome() {
       addBubble(
         'Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".',
@@ -202,17 +210,69 @@
 
     addWelcome();
 
+    // -------- VOICE SETUP --------
+    let voices = [];
+
+    function loadVoices() {
+      if (!("speechSynthesis" in window)) return;
+      voices = window.speechSynthesis.getVoices();
+    }
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+      loadVoices();
+    }
+
+    function pickAlyanaVoice() {
+      if (!voices || voices.length === 0) return null;
+      const preferredNames = [
+        "Samantha",
+        "Google UK English Female",
+        "Google US English",
+        "Google español de Estados Unidos"
+      ];
+      for (const name of preferredNames) {
+        const v = voices.find(voice => voice.name.includes(name));
+        if (v) return v;
+      }
+      const female = voices.find(v => /female/i.test(v.name));
+      return female || voices[0];
+    }
+
+    function speakText(text) {
+      if (!("speechSynthesis" in window)) {
+        alert("Sorry, your browser does not support voice yet.");
+        return;
+      }
+      if (!text) return;
+
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      const v = pickAlyanaVoice();
+      if (v) utterance.voice = v;
+
+      utterance.rate = 0.95;
+      utterance.pitch = 1.15;
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    listenBtn.addEventListener("click", () => {
+      if (!lastBotText) return;
+      speakText(lastBotText);
+    });
+
+    // -------- CHAT LOGIC --------
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const userText = input.value.trim();
       if (!userText) return;
 
-      // show user message
       addBubble(userText, "user");
       input.value = "";
       input.focus();
 
-      // add to memory
       history.push({ role: "user", text: userText });
 
       const loadingBubble = addBubble("Thinking…", "bot");
@@ -220,7 +280,6 @@
       sendBtn.disabled = true;
 
       try {
-        // Build a full conversation prompt so Alyana has context
         const historyText = history
           .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
           .join("\n");
@@ -238,25 +297,31 @@
         const data = await res.json();
         const text = data.message || data.prayer || JSON.stringify(data, null, 2);
 
-        // show bot reply
         loadingBubble.textContent = text;
-
-        // add bot reply to memory
         history.push({ role: "assistant", text });
+        lastBotText = text;
+        listenBtn.disabled = !lastBotText;
+
       } catch (err) {
         console.error(err);
         loadingBubble.textContent = "Network error talking to the Bible AI server.";
+        lastBotText = "";
+        listenBtn.disabled = true;
       } finally {
         sendBtn.disabled = false;
       }
     });
 
-    // ⭐ CLEAR CHAT BUTTON
     clearBtn.addEventListener("click", () => {
-      history.length = 0;        // clear memory
-      chat.innerHTML = "";       // clear UI
-      addWelcome();              // add greeting again
+      history.length = 0;
+      chat.innerHTML = "";
+      addWelcome();
+      lastBotText = "";
+      listenBtn.disabled = true;
       input.focus();
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
     });
   </script>
 </body>
