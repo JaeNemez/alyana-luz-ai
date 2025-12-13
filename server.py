@@ -188,16 +188,73 @@ def _require_ai():
         raise HTTPException(status_code=503, detail="AI key not configured (GEMINI_API_KEY missing).")
 
 
+def _detect_language_from_text(text: str) -> str:
+    """
+    Small heuristic:
+    - If user input looks Spanish, return 'es'
+    - Else return 'en'
+    """
+    t = (text or "").strip().lower()
+
+    # quick signals: accents or inverted punctuation
+    if any(ch in t for ch in ["¿", "¡", "á", "é", "í", "ó", "ú", "ñ"]):
+        return "es"
+
+    # common Spanish tokens
+    spanish_hits = [
+        " jesus", " jesús", " dios", " oración", " oracion", " por favor", " gracias",
+        " versículo", " versiculo", " biblia", " milagro", " milagros",
+        " perdón", " perdon", " cómo", " como ", " qué", " que ", " porque", " para ",
+        "me puedes", "puedes", "háblame", "hablame", "quiero", "necesito",
+        "hola", "buenas", "bendiciones", "señor", "senor"
+    ]
+    score = sum(1 for w in spanish_hits if w in f" {t} ")
+    return "es" if score >= 2 else "en"
+
+
+def _extract_last_user_line(full_history_blob: str) -> str:
+    """
+    Your frontend sends a 'historyText' that includes lines like:
+      User: ...
+      Alyana: ...
+    We try to pull the last User: line for language detection.
+    If not found, fallback to the whole blob.
+    """
+    blob = full_history_blob or ""
+    matches = re.findall(r"(?:^|\n)User:\s*(.*)", blob)
+    if matches:
+        return matches[-1].strip()
+    return blob.strip()
+
+
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
+
+    # Decide language based on the user's *latest* message (not the whole history).
+    last_user = _extract_last_user_line(body.prompt)
+    lang = _detect_language_from_text(last_user)
+
+    if lang == "es":
+        language_rule = (
+            "IMPORTANT: Reply entirely in Spanish. Do NOT switch to English. "
+            "If the user asks in Spanish, keep the full response in Spanish."
+        )
+        fallback = "Lo siento, no pude pensar en algo que decir."
+    else:
+        language_rule = (
+            "IMPORTANT: Reply entirely in English. Do NOT switch to Spanish unless the user asks."
+        )
+        fallback = "Sorry, I couldn't think of anything to say."
 
     system_prompt = (
         "You are Alyana Luz, a warm, scripture-focused assistant. "
         "You pray with the user, suggest Bible passages, and explain verses. "
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
+        "for something technical. Keep answers concise but caring.\n\n"
+        f"{language_rule}"
     )
+
     full_prompt = f"{system_prompt}\n\nUser: {body.prompt}"
 
     last_error = None
@@ -207,7 +264,7 @@ def chat(body: ChatIn):
                 model="gemini-2.5-flash",
                 contents=full_prompt,
             )
-            text = response.text or "Sorry, I couldn't think of anything to say."
+            text = response.text or fallback
             return {"status": "success", "message": text}
         except Exception as e:
             last_error = e
@@ -216,7 +273,10 @@ def chat(body: ChatIn):
                 time.sleep(1 + attempt)
                 continue
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                raise HTTPException(status_code=429, detail="Alyana reached today's free AI limit. Please try again later.")
+                raise HTTPException(
+                    status_code=429,
+                    detail="Alyana reached today's free AI limit. Please try again later.",
+                )
             break
 
     print("Gemini error after retries:", repr(last_error))
