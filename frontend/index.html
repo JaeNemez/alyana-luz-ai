@@ -467,3 +467,1085 @@
                 </div>
                 <textarea id="devMyExplanation" placeholder="Write your explanation here…"></textarea>
               </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="block-title">4) My Application</div>
+                <div class="muted" style="margin-bottom:8px;">
+                  How can you apply this to your life today?
+                </div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="devAssistApply">Alyana Assist</button>
+                </div>
+                <textarea id="devMyApplication" placeholder="Write how you can apply it…"></textarea>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="block-title">5) My Prayer</div>
+                <div class="muted" style="margin-bottom:8px;">
+                  Write a prayer based on the scripture.
+                </div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="devAssistPrayer">Alyana Assist</button>
+                </div>
+                <textarea id="devMyPrayer" placeholder="Write your prayer here…"></textarea>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="block-title">Your Reflection</div>
+                <div class="muted" style="margin-bottom:8px;">
+                  Anything God is showing you today? What do you want to remember?
+                </div>
+                <textarea id="devReflection" placeholder="Write your reflection here…"></textarea>
+              </div>
+            </div>
+
+            <div class="card">
+              <h4>Saved Devotionals</h4>
+              <div class="saved-list" id="devSavedList">
+                <small style="opacity:0.75;">No saved devotionals yet.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DAILY PRAYER -->
+        <section id="prayerSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:center;">
+                <div style="flex:2;">
+                  <h3 style="margin-bottom:6px;">Daily Prayer</h3>
+                  <div class="muted">
+                    You write Adoration → Confession → Thanksgiving → Supplication.
+                    Alyana can help you start each section if you want.
+                  </div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+                  <span class="pill" id="prayStreakPill">Prayer Streak: 0</span>
+                  <span class="pill" id="praySavedPill">Not saved yet</span>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px;">
+                <button class="btn btn-primary" id="assistPrayerAll" type="button">Alyana Assist (All)</button>
+                <button class="btn btn-green" id="savePrayer" type="button">Save Today</button>
+                <button class="btn btn-danger" id="clearPrayer" type="button">Clear</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="block">
+                <div class="block-title">1) Adoration</div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="assistAdoration">Alyana Assist</button>
+                </div>
+                <textarea id="prayAdorationInput" placeholder="Write your adoration…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="block-title">2) Confession</div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="assistConfession">Alyana Assist</button>
+                </div>
+                <textarea id="prayConfessionInput" placeholder="Write your confession…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="block-title">3) Thanksgiving</div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="assistThanksgiving">Alyana Assist</button>
+                </div>
+                <textarea id="prayThanksgivingInput" placeholder="Write your thanksgiving…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="block-title">4) Supplication</div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="assistSupplication">Alyana Assist</button>
+                </div>
+                <textarea id="praySupplicationInput" placeholder="Write your supplication…"></textarea>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="block-title">Your Notes</div>
+                <div class="muted" style="margin-bottom:8px;">
+                  Optional: write what you’re praying for today (people, needs, decisions).
+                </div>
+                <textarea id="prayNotes" placeholder="Write your notes here…"></textarea>
+              </div>
+            </div>
+
+            <div class="card">
+              <h4>Saved Prayers</h4>
+              <div class="saved-list" id="praySavedList">
+                <small style="opacity:0.75;">No saved prayers yet.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      // ------------------------------
+      // Helpers
+      // ------------------------------
+      function todayKey() {
+        const d = new Date();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yyyy}-${mm}-${dd}`;
+      }
+
+      function safeJSONFromModel(text) {
+        if (!text) return null;
+        let t = String(text).trim();
+        t = t.replace(/```json/gi, "```");
+        if (t.includes("```")) {
+          const parts = t.split("```");
+          if (parts.length >= 3) t = parts[1].trim();
+          else t = t.replace(/```/g, "").trim();
+        }
+        const first = t.indexOf("{");
+        const last = t.lastIndexOf("}");
+        if (first >= 0 && last > first) t = t.slice(first, last + 1);
+        try { return JSON.parse(t); } catch { return null; }
+      }
+
+      async function apiJSON(url, options) {
+        const res = await fetch(url, options);
+        if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
+        return await res.json();
+      }
+
+      function calcStreak(dates) {
+        const set = new Set(dates);
+        let streak = 0;
+        const now = new Date();
+        for (;;) {
+          const d = new Date(now);
+          d.setDate(now.getDate() - streak);
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const dd = String(d.getDate()).padStart(2, "0");
+          const key = `${yyyy}-${mm}-${dd}`;
+          if (set.has(key)) streak++;
+          else break;
+        }
+        return streak;
+      }
+
+      // ------------------------------
+      // Support button
+      // ------------------------------
+      document.getElementById("supportBtn").addEventListener("click", () => {
+        window.open("https://buy.stripe.com/", "_blank");
+      });
+
+      // ------------------------------
+      // Tab switching
+      // ------------------------------
+      const sections = Array.from(document.querySelectorAll(".app-section"));
+      const menuButtons = Array.from(document.querySelectorAll(".menu-btn"));
+
+      function showSection(id) {
+        sections.forEach(s => s.classList.toggle("active", s.id === id));
+        menuButtons.forEach(b => b.classList.toggle("active", b.dataset.target === id));
+      }
+      menuButtons.forEach(btn => btn.addEventListener("click", () => showSection(btn.dataset.target)));
+      showSection("chatSection");
+
+      // ------------------------------
+      // TTS: Two-voice mode (Karen en-AU, Paulina es-MX)
+      // ------------------------------
+      const TWO_VOICE_STORAGE = "alyana_two_voice_v1"; // { mode: "en"|"es" }
+      function getTwoVoiceMode() {
+        try { return JSON.parse(localStorage.getItem(TWO_VOICE_STORAGE) || "{}").mode || "en"; }
+        catch { return "en"; }
+      }
+      function setTwoVoiceMode(mode) {
+        localStorage.setItem(TWO_VOICE_STORAGE, JSON.stringify({ mode }));
+      }
+
+      function resolvePreferredVoice(mode) {
+        if (!("speechSynthesis" in window)) return { voice: null, lang: (mode === "es" ? "es-MX" : "en-AU") };
+
+        const voices = window.speechSynthesis.getVoices() || [];
+        const want = (mode === "es")
+          ? { nameContains: "Paulina", langStarts: "es" , langExact: "es-MX" }
+          : { nameContains: "Karen", langStarts: "en" , langExact: "en-AU" };
+
+        // 1) exact best: name + exact lang
+        let v = voices.find(x =>
+          (x.name || "").toLowerCase().includes(want.nameContains.toLowerCase()) &&
+          (x.lang || "").toLowerCase() === want.langExact.toLowerCase()
+        );
+
+        // 2) name + startsWith lang
+        if (!v) v = voices.find(x =>
+          (x.name || "").toLowerCase().includes(want.nameContains.toLowerCase()) &&
+          (x.lang || "").toLowerCase().startsWith(want.langStarts)
+        );
+
+        // 3) any voice with exact lang
+        if (!v) v = voices.find(x => (x.lang || "").toLowerCase() === want.langExact.toLowerCase());
+
+        // 4) fallback: any with langStarts
+        if (!v) v = voices.find(x => (x.lang || "").toLowerCase().startsWith(want.langStarts));
+
+        return { voice: v || null, lang: want.langExact };
+      }
+
+      function speakText(text, mode) {
+        if (!("speechSynthesis" in window)) {
+          alert("Speech synthesis is not supported in this browser.");
+          return;
+        }
+        window.speechSynthesis.cancel();
+
+        const { voice, lang } = resolvePreferredVoice(mode);
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.lang = lang;
+        utter.rate = 0.95;
+        utter.pitch = 1.0;
+        if (voice) utter.voice = voice;
+
+        window.speechSynthesis.speak(utter);
+      }
+
+      function updateVoicePills() {
+        const mode = getTwoVoiceMode();
+        const chatVoicePill = document.getElementById("chatVoicePill");
+        const ttsStatus = document.getElementById("ttsStatus");
+
+        // we don't want to show "loading..." forever, so just show selected profile
+        const label = (mode === "es") ? "Paulina (es-MX)" : "Karen (en-AU)";
+        chatVoicePill.textContent = `Voice: ${label}`;
+        ttsStatus.textContent = `Voice: ${label}`;
+      }
+
+      if ("speechSynthesis" in window) {
+        window.speechSynthesis.onvoiceschanged = () => updateVoicePills();
+        setTimeout(updateVoicePills, 300);
+        setTimeout(updateVoicePills, 1200);
+      } else {
+        document.getElementById("chatVoicePill").textContent = "Voice: not supported";
+        document.getElementById("ttsStatus").textContent = "Voice: not supported";
+      }
+
+      // ------------------------------
+      // CHAT + Chat Log (save/load/delete)
+      // ------------------------------
+      const chatEl = document.getElementById("chat");
+      const chatForm = document.getElementById("chatForm");
+      const chatInput = document.getElementById("chatInput");
+      const chatSendBtn = document.getElementById("chatSendBtn");
+      const chatNewBtn = document.getElementById("chatNewBtn");
+
+      const chatListenBtn = document.getElementById("chatListenBtn");
+      const chatStopBtn = document.getElementById("chatStopBtn");
+
+      const chatSaveBtn = document.getElementById("chatSaveBtn");
+      const chatDeleteBtn = document.getElementById("chatDeleteBtn");
+      const chatSavedSelect = document.getElementById("chatSavedSelect");
+
+      const CHAT_STORAGE_KEY = "alyana_chat_logs_v1"; // [{id, date, title, messages:[{role,text}]}]
+
+      let chatId = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+      const chatHistory = []; // { role: "user"|"assistant", text }
+      let lastAssistantText = "";
+
+      function addBubble(text, who="bot") {
+        const row = document.createElement("div");
+        row.className = "bubble-row " + who;
+
+        const b = document.createElement("div");
+        b.className = "bubble " + (who === "user" ? "user" : who === "system" ? "system" : "bot");
+        b.textContent = text;
+
+        row.appendChild(b);
+        chatEl.appendChild(row);
+        chatEl.scrollTop = chatEl.scrollHeight;
+        return b;
+      }
+
+      function addWelcome() {
+        addBubble('Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".', "system");
+      }
+
+      function loadList(key) {
+        try { return JSON.parse(localStorage.getItem(key) || "[]"); }
+        catch { return []; }
+      }
+      function saveList(key, list) {
+        localStorage.setItem(key, JSON.stringify(list));
+      }
+
+      function chatTitleFromHistory() {
+        const firstUser = chatHistory.find(m => m.role === "user");
+        if (!firstUser) return "Chat";
+        return (firstUser.text || "Chat").slice(0, 42);
+      }
+
+      function upsertCurrentChat() {
+        const list = loadList(CHAT_STORAGE_KEY);
+        const date = todayKey();
+        const payload = {
+          id: chatId,
+          date,
+          title: chatTitleFromHistory(),
+          messages: chatHistory.slice()
+        };
+        const idx = list.findIndex(x => x.id === chatId);
+        if (idx >= 0) list[idx] = payload;
+        else list.push(payload);
+
+        saveList(CHAT_STORAGE_KEY, list);
+        renderSavedChats();
+      }
+
+      function renderSavedChats() {
+        const list = loadList(CHAT_STORAGE_KEY)
+          .slice()
+          .sort((a,b) => (b.date || "").localeCompare(a.date || "") || (b.title || "").localeCompare(a.title || ""));
+
+        const current = chatSavedSelect.value;
+        chatSavedSelect.innerHTML = `<option value="">Saved Chats…</option>`;
+
+        list.forEach(item => {
+          const opt = document.createElement("option");
+          opt.value = item.id;
+          opt.textContent = `${item.date || "—"} — ${item.title || "Chat"}`;
+          chatSavedSelect.appendChild(opt);
+        });
+
+        // try to keep selection if possible
+        if (current && list.some(x => x.id === current)) chatSavedSelect.value = current;
+      }
+
+      function loadChatById(id) {
+        const list = loadList(CHAT_STORAGE_KEY);
+        const item = list.find(x => x.id === id);
+        if (!item) return;
+
+        // switch current chat
+        chatId = item.id;
+        chatHistory.length = 0;
+        chatHistory.push(...(item.messages || []));
+
+        // render
+        chatEl.innerHTML = "";
+        addWelcome();
+        lastAssistantText = "";
+        chatHistory.forEach(m => {
+          if (m.role === "user") addBubble(m.text, "user");
+          else {
+            addBubble(m.text, "bot");
+            lastAssistantText = m.text || lastAssistantText;
+          }
+        });
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
+
+      function deleteChatById(id) {
+        let list = loadList(CHAT_STORAGE_KEY);
+        list = list.filter(x => x.id !== id);
+        saveList(CHAT_STORAGE_KEY, list);
+        renderSavedChats();
+      }
+
+      addWelcome();
+      renderSavedChats();
+      updateVoicePills();
+
+      chatListenBtn.addEventListener("click", () => {
+        const mode = getTwoVoiceMode();
+        if (!lastAssistantText) {
+          alert("Nothing to read yet. Send a message first.");
+          return;
+        }
+        speakText(lastAssistantText, mode);
+      });
+
+      chatStopBtn.addEventListener("click", () => {
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      });
+
+      chatSaveBtn.addEventListener("click", () => {
+        if (!chatHistory.length) {
+          alert("Nothing to save yet.");
+          return;
+        }
+        upsertCurrentChat();
+        alert("Saved.");
+      });
+
+      chatDeleteBtn.addEventListener("click", () => {
+        const id = chatSavedSelect.value || chatId;
+        const list = loadList(CHAT_STORAGE_KEY);
+        const exists = list.some(x => x.id === id);
+        if (!exists) {
+          alert("Select a saved chat to delete (or save this chat first).");
+          return;
+        }
+        if (!confirm("Delete this saved chat?")) return;
+        deleteChatById(id);
+
+        // If we deleted the current chat, start fresh
+        if (id === chatId) {
+          chatId = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+          chatHistory.length = 0;
+          chatEl.innerHTML = "";
+          addWelcome();
+          lastAssistantText = "";
+        }
+      });
+
+      chatSavedSelect.addEventListener("change", () => {
+        const id = chatSavedSelect.value;
+        if (!id) return;
+        loadChatById(id);
+      });
+
+      chatNewBtn.addEventListener("click", () => {
+        // auto-save current chat if it has content
+        if (chatHistory.length) upsertCurrentChat();
+
+        chatId = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+        chatHistory.length = 0;
+        chatEl.innerHTML = "";
+        addWelcome();
+        lastAssistantText = "";
+        chatInput.focus();
+      });
+
+      chatForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const userText = chatInput.value.trim();
+        if (!userText) return;
+
+        addBubble(userText, "user");
+        chatInput.value = "";
+        chatInput.focus();
+
+        chatHistory.push({ role: "user", text: userText });
+
+        const loading = addBubble("Thinking…", "bot");
+        chatSendBtn.disabled = true;
+
+        try {
+          const historyText = chatHistory
+            .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
+            .join("\n");
+
+          const fullPrompt =
+            historyText +
+            "\n\nContinue responding as Alyana Luz, a gentle Bible AI assistant.";
+
+          const res = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: fullPrompt })
+          });
+
+          const data = await res.json();
+          const text = data.message || data.prayer || JSON.stringify(data, null, 2);
+
+          loading.textContent = text;
+          lastAssistantText = text;
+
+          chatHistory.push({ role: "assistant", text });
+
+          // auto-upsert so users always can come back
+          upsertCurrentChat();
+        } catch (err) {
+          console.error(err);
+          loading.textContent = "Network error talking to the Bible AI server.";
+        } finally {
+          chatSendBtn.disabled = false;
+        }
+      });
+
+      // ------------------------------
+      // Bible Reader dropdowns + verse API FIX
+      // ------------------------------
+      const bookSelect = document.getElementById("bookSelect");
+      const chapterSelect = document.getElementById("chapterSelect");
+      const verseStartSelect = document.getElementById("verseStartSelect");
+      const verseEndSelect = document.getElementById("verseEndSelect");
+      const fullChapterChk = document.getElementById("fullChapter");
+
+      const versionSelect = document.getElementById("versionSelect");
+      const rememberVersion = document.getElementById("rememberVersion");
+      const ttsMode = document.getElementById("ttsMode");
+
+      const VALID_VERSIONS = ["KJV","NKJV","NIV","NLT","ESV","NASB","CSB","AMP","MSG"];
+
+      function prettyBookLabel(bookKey) {
+        const raw = String(bookKey || "");
+        const s = raw.replace(/_/g," ").trim();
+        // handle 1samuel/2samuel style
+        const m = s.match(/^([123])\s*([a-z].*)$/i);
+        if (m) {
+          const num = m[1];
+          const rest = m[2];
+          const spaced = rest.replace(/([a-z])([A-Z])/g, "$1 $2");
+          return `${num} ${spaced.charAt(0).toUpperCase() + spaced.slice(1)}`.replace(/\b(\w)/g, c => c.toUpperCase());
+        }
+        // add space between leading number and word if missing
+        const m2 = s.match(/^([123])([a-z].*)$/i);
+        if (m2) return prettyBookLabel(`${m2[1]} ${m2[2]}`);
+        // title case fallback
+        return s.replace(/\b(\w)/g, c => c.toUpperCase());
+      }
+
+      function fillSelect(selectEl, items, { placeholder = null, disabled = false } = {}) {
+        selectEl.innerHTML = "";
+        if (placeholder) {
+          const o = document.createElement("option");
+          o.value = "";
+          o.textContent = placeholder;
+          selectEl.appendChild(o);
+        }
+
+        items.forEach(it => {
+          const o = document.createElement("option");
+          if (typeof it === "object") {
+            o.value = String(it.value);
+            o.textContent = String(it.label);
+          } else {
+            o.value = String(it);
+            o.textContent = String(it);
+          }
+          selectEl.appendChild(o);
+        });
+
+        selectEl.disabled = !!disabled;
+      }
+
+      function normalizeVersion(v) {
+        let raw = (v || "").trim().toUpperCase();
+        if (!raw) raw = "KJV";
+        if (VALID_VERSIONS.includes(raw)) return raw;
+        return "KJV";
+      }
+
+      (function initVersionPreference() {
+        fillSelect(versionSelect, VALID_VERSIONS.map(v => ({ value: v, label: v })), { placeholder: "Select version…" });
+        const saved = localStorage.getItem("preferredVersion");
+        if (saved && VALID_VERSIONS.includes(saved)) {
+          versionSelect.value = saved;
+          rememberVersion.checked = true;
+        } else {
+          versionSelect.value = "KJV";
+        }
+      })();
+
+      versionSelect.addEventListener("change", () => {
+        const normalized = normalizeVersion(versionSelect.value);
+        versionSelect.value = normalized;
+        if (rememberVersion.checked) localStorage.setItem("preferredVersion", normalized);
+      });
+
+      rememberVersion.addEventListener("change", () => {
+        if (rememberVersion.checked) {
+          const normalized = normalizeVersion(versionSelect.value);
+          versionSelect.value = normalized;
+          localStorage.setItem("preferredVersion", normalized);
+        } else {
+          localStorage.removeItem("preferredVersion");
+        }
+      });
+
+      (function initTwoVoiceModeForBible() {
+        const saved = getTwoVoiceMode();
+        ttsMode.value = saved;
+        ttsMode.addEventListener("change", () => {
+          setTwoVoiceMode(ttsMode.value);
+          updateVoicePills();
+        });
+      })();
+
+      async function loadBooks() {
+        // server returns DB keys like "Genesis" (or possibly "2samuel").
+        const data = await apiJSON("/bible/books");
+        const books = (data.books || []).map(b => ({
+          value: b,
+          label: prettyBookLabel(b)
+        }));
+        fillSelect(bookSelect, books, { placeholder: "Select book…" });
+      }
+
+      async function loadChapters(book) {
+        const data = await apiJSON(`/bible/chapters?book=${encodeURIComponent(book)}`);
+        const chapters = (data.chapters || []).map(n => ({ value: n, label: `Chapter ${n}` }));
+        fillSelect(chapterSelect, chapters, { placeholder: "Select chapter…" });
+      }
+
+      async function loadVerses(book, chapter) {
+        const data = await apiJSON(`/bible/verses?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}`);
+        const verses = (data.verses || []).map(n => ({ value: n, label: `Verse ${n}` }));
+        fillSelect(verseStartSelect, verses, { placeholder: "Select start…" });
+        fillSelect(verseEndSelect, verses, { placeholder: "Select end (optional)..." });
+      }
+
+      async function refreshBibleSelectors() {
+        const book = bookSelect.value;
+        if (!book) {
+          chapterSelect.disabled = true;
+          verseStartSelect.disabled = true;
+          verseEndSelect.disabled = true;
+          return;
+        }
+
+        await loadChapters(book);
+        chapterSelect.disabled = false;
+
+        // if user hasn't selected chapter yet, keep them at placeholder
+        const chapter = chapterSelect.value;
+        if (chapter) {
+          await loadVerses(book, chapter);
+          verseStartSelect.disabled = false;
+          verseEndSelect.disabled = false;
+        } else {
+          verseStartSelect.disabled = true;
+          verseEndSelect.disabled = true;
+        }
+      }
+
+      bookSelect.addEventListener("change", async () => {
+        try {
+          // reset downstream
+          fillSelect(chapterSelect, [], { placeholder: "Select chapter…", disabled: true });
+          fillSelect(verseStartSelect, [], { placeholder: "Select start…", disabled: true });
+          fillSelect(verseEndSelect, [], { placeholder: "Select end (optional)…", disabled: true });
+          await refreshBibleSelectors();
+        } catch (e) { console.error(e); }
+      });
+
+      chapterSelect.addEventListener("change", async () => {
+        try {
+          const book = bookSelect.value;
+          const chapter = chapterSelect.value;
+          fillSelect(verseStartSelect, [], { placeholder: "Select start…", disabled: true });
+          fillSelect(verseEndSelect, [], { placeholder: "Select end (optional)…", disabled: true });
+          if (book && chapter) {
+            await loadVerses(book, chapter);
+            verseStartSelect.disabled = false;
+            verseEndSelect.disabled = false;
+          }
+          fullChapterChk.dispatchEvent(new Event("change"));
+        } catch (e) { console.error(e); }
+      });
+
+      fullChapterChk.addEventListener("change", () => {
+        const on = fullChapterChk.checked;
+        verseStartSelect.disabled = on || !chapterSelect.value;
+        verseEndSelect.disabled = on || !chapterSelect.value;
+      });
+
+      async function fetchPassageText() {
+        const book = bookSelect.value;
+        const chapter = chapterSelect.value;
+
+        if (!book || !chapter) throw new Error("Missing book/chapter");
+
+        if (fullChapterChk.checked) {
+          const data = await apiJSON(
+            `/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=true`
+          );
+          return { reference: data.reference || `${prettyBookLabel(book)} ${chapter}`, text: data.text || "" };
+        }
+
+        const start = verseStartSelect.value;
+        let end = verseEndSelect.value;
+
+        if (!start) throw new Error("Missing start verse");
+        if (!end || Number(end) < Number(start)) end = start;
+
+        const data = await apiJSON(
+          `/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+        );
+        return { reference: data.reference || `${prettyBookLabel(book)} ${chapter}:${start}-${end}`, text: data.text || "" };
+      }
+
+      document.getElementById("listenBible").addEventListener("click", async () => {
+        try {
+          const { reference, text } = await fetchPassageText();
+          if (!text) {
+            alert("No text returned for that passage.");
+            return;
+          }
+
+          const version = normalizeVersion(versionSelect.value || "KJV");
+          const mode = ttsMode.value || getTwoVoiceMode();
+          const spokenText = `${version}. ${reference}. ${text}`;
+
+          speakText(spokenText, mode);
+        } catch (err) {
+          console.error(err);
+          alert("Could not read the passage. Please select Book/Chapter/Verses and try again.");
+        }
+      });
+
+      document.getElementById("stopBible").addEventListener("click", () => {
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      });
+
+      (async function initBible() {
+        try {
+          fillSelect(bookSelect, [], { placeholder: "Loading books…", disabled: true });
+          await loadBooks();
+          bookSelect.disabled = false;
+
+          fillSelect(chapterSelect, [], { placeholder: "Select chapter…", disabled: true });
+          fillSelect(verseStartSelect, [], { placeholder: "Select start…", disabled: true });
+          fillSelect(verseEndSelect, [], { placeholder: "Select end (optional)…", disabled: true });
+
+          fullChapterChk.dispatchEvent(new Event("change"));
+          updateVoicePills();
+        } catch (e) {
+          console.error(e);
+          document.getElementById("ttsStatus").textContent = "Voice: ready";
+        }
+      })();
+
+      // ------------------------------
+      // DEVOTIONAL: Alyana gives Scripture + Brief Explanation, user writes the rest
+      // ------------------------------
+      const devScripture = document.getElementById("devScripture");
+      const devBriefExplanation = document.getElementById("devBriefExplanation");
+      const devMyExplanation = document.getElementById("devMyExplanation");
+      const devMyApplication = document.getElementById("devMyApplication");
+      const devMyPrayer = document.getElementById("devMyPrayer");
+      const devReflection = document.getElementById("devReflection");
+      const devSavedList = document.getElementById("devSavedList");
+
+      const btnGenDev = document.getElementById("generateDevotional");
+      const btnSaveDev = document.getElementById("saveDevotional");
+      const btnClearDev = document.getElementById("clearDevotional");
+
+      const devStreakPill = document.getElementById("devStreakPill");
+      const devSavedPill = document.getElementById("devSavedPill");
+
+      const DEV_STORAGE_KEY = "alyana_devotionals_v3";
+
+      function setDevotionalUI(d) {
+        devScripture.textContent = d.scripture || "";
+        devBriefExplanation.textContent = d.brief_explanation || "";
+        devMyExplanation.value = d.my_explanation || "";
+        devMyApplication.value = d.my_application || "";
+        devMyPrayer.value = d.my_prayer || "";
+        devReflection.value = d.reflection || "";
+      }
+
+      function clearDevotionalUI() {
+        setDevotionalUI({
+          scripture: "",
+          brief_explanation: "",
+          my_explanation: "",
+          my_application: "",
+          my_prayer: "",
+          reflection: ""
+        });
+        devScripture.textContent = "Click “Generate Today’s Devotional”.";
+        devSavedPill.textContent = "Not saved yet";
+      }
+
+      function renderDevSavedList() {
+        const list = loadList(DEV_STORAGE_KEY);
+        devSavedList.innerHTML = "";
+
+        if (!list.length) {
+          devSavedList.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
+          devStreakPill.textContent = `Devotional Streak: 0`;
+          return;
+        }
+
+        const dates = list.map(x => x.date).filter(Boolean);
+        devStreakPill.textContent = `Devotional Streak: ${calcStreak(dates)}`;
+
+        list
+          .slice()
+          .sort((a,b) => (b.date || "").localeCompare(a.date || ""))
+          .forEach(item => {
+            const btn = document.createElement("button");
+            btn.className = "btn btn-ghost";
+            btn.style.textAlign = "left";
+            btn.textContent = `${item.date} — ${item.title || "Devotional"}`;
+            btn.addEventListener("click", () => {
+              setDevotionalUI(item);
+              devSavedPill.textContent = `Loaded: ${item.date}`;
+            });
+            devSavedList.appendChild(btn);
+          });
+      }
+
+      async function generateDevotional() {
+        btnGenDev.disabled = true;
+        btnGenDev.textContent = "Generating…";
+
+        try {
+          // Prefer /devotional endpoint if available, fallback to /chat JSON
+          let payload = null;
+
+          try {
+            const devRes = await fetch("/devotional", { method: "POST" });
+            const devData = await devRes.json();
+            const parsed = safeJSONFromModel(devData.json || "");
+            if (parsed && parsed.scripture) payload = parsed;
+          } catch {}
+
+          if (!payload) {
+            const prompt = `
+Return ONLY valid JSON (no markdown, no backticks).
+Schema:
+{
+  "scripture": "Reference + verse text (1-3 verses max).",
+  "brief_explanation": "2-4 sentences explaining it simply."
+}
+Theme: encouraging, Christ-centered.
+`;
+            const res = await fetch("/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt })
+            });
+            const data = await res.json();
+            payload = safeJSONFromModel(data.message || "") || null;
+          }
+
+          if (!payload || !payload.scripture) {
+            setDevotionalUI({
+              scripture: "Could not generate devotional content.",
+              brief_explanation: "Please try again.",
+              my_explanation: devMyExplanation.value || "",
+              my_application: devMyApplication.value || "",
+              my_prayer: devMyPrayer.value || "",
+              reflection: devReflection.value || ""
+            });
+            return;
+          }
+
+          setDevotionalUI({
+            scripture: payload.scripture || "",
+            brief_explanation: payload.brief_explanation || "",
+            my_explanation: devMyExplanation.value || "",
+            my_application: devMyApplication.value || "",
+            my_prayer: devMyPrayer.value || "",
+            reflection: devReflection.value || ""
+          });
+
+          devSavedPill.textContent = "Generated (not saved yet)";
+        } catch (err) {
+          console.error(err);
+          setDevotionalUI({
+            scripture: "Error generating devotional.",
+            brief_explanation: "Please try again.",
+            my_explanation: devMyExplanation.value || "",
+            my_application: devMyApplication.value || "",
+            my_prayer: devMyPrayer.value || "",
+            reflection: devReflection.value || ""
+          });
+        } finally {
+          btnGenDev.disabled = false;
+          btnGenDev.textContent = "Generate Today’s Devotional";
+        }
+      }
+
+      function saveCurrentDevotional() {
+        const date = todayKey();
+        const current = {
+          date,
+          title: (devScripture.textContent || "").split("\n")[0].slice(0, 70) || "Daily Devotional",
+          scripture: devScripture.textContent || "",
+          brief_explanation: devBriefExplanation.textContent || "",
+          my_explanation: devMyExplanation.value || "",
+          my_application: devMyApplication.value || "",
+          my_prayer: devMyPrayer.value || "",
+          reflection: devReflection.value || ""
+        };
+
+        if (!current.scripture) {
+          alert("Generate the devotional first.");
+          return;
+        }
+
+        const list = loadList(DEV_STORAGE_KEY);
+        const idx = list.findIndex(x => x.date === date);
+        if (idx >= 0) list[idx] = current;
+        else list.push(current);
+
+        saveList(DEV_STORAGE_KEY, list);
+        renderDevSavedList();
+        devSavedPill.textContent = `Saved: ${date}`;
+        alert("Saved.");
+      }
+
+      async function devotionalAssist(kind) {
+        const scripture = devScripture.textContent || "";
+        if (!scripture || scripture.includes("Generate")) {
+          alert("Generate today's scripture first.");
+          return;
+        }
+
+        const prompts = {
+          explain: `Help me START my own explanation (2-4 sentences) of this scripture, in simple words. Scripture: ${scripture}`,
+          apply: `Help me START my own application (2-4 sentences): how can I apply this scripture today? Scripture: ${scripture}`,
+          prayer: `Help me START my own prayer (2-4 sentences) based on this scripture. Scripture: ${scripture}`
+        };
+
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: prompts[kind] })
+        });
+        const data = await res.json();
+        const text = (data.message || "").trim();
+
+        if (kind === "explain") devMyExplanation.value = devMyExplanation.value ? (devMyExplanation.value + "\n\n" + text) : text;
+        if (kind === "apply") devMyApplication.value = devMyApplication.value ? (devMyApplication.value + "\n\n" + text) : text;
+        if (kind === "prayer") devMyPrayer.value = devMyPrayer.value ? (devMyPrayer.value + "\n\n" + text) : text;
+      }
+
+      document.getElementById("devAssistExplain").addEventListener("click", () => devotionalAssist("explain"));
+      document.getElementById("devAssistApply").addEventListener("click", () => devotionalAssist("apply"));
+      document.getElementById("devAssistPrayer").addEventListener("click", () => devotionalAssist("prayer"));
+
+      btnGenDev.addEventListener("click", generateDevotional);
+      btnSaveDev.addEventListener("click", saveCurrentDevotional);
+      btnClearDev.addEventListener("click", clearDevotionalUI);
+      renderDevSavedList();
+
+      // ------------------------------
+      // DAILY PRAYER: user writes, Alyana assists
+      // ------------------------------
+      const prayAdorationInput = document.getElementById("prayAdorationInput");
+      const prayConfessionInput = document.getElementById("prayConfessionInput");
+      const prayThanksgivingInput = document.getElementById("prayThanksgivingInput");
+      const praySupplicationInput = document.getElementById("praySupplicationInput");
+      const prayNotes = document.getElementById("prayNotes");
+      const praySavedList = document.getElementById("praySavedList");
+
+      const btnSavePray = document.getElementById("savePrayer");
+      const btnClearPray = document.getElementById("clearPrayer");
+      const btnAssistAll = document.getElementById("assistPrayerAll");
+
+      const prayStreakPill = document.getElementById("prayStreakPill");
+      const praySavedPill = document.getElementById("praySavedPill");
+
+      const PRAY_STORAGE_KEY = "alyana_prayers_v2";
+
+      function setPrayerUI(p) {
+        prayAdorationInput.value = p.adoration || "";
+        prayConfessionInput.value = p.confession || "";
+        prayThanksgivingInput.value = p.thanksgiving || "";
+        praySupplicationInput.value = p.supplication || "";
+        prayNotes.value = p.notes || "";
+      }
+
+      function clearPrayerUI() {
+        setPrayerUI({ adoration: "", confession: "", thanksgiving: "", supplication: "", notes: "" });
+        praySavedPill.textContent = "Not saved yet";
+      }
+
+      function renderPraySavedList() {
+        const list = loadList(PRAY_STORAGE_KEY);
+        praySavedList.innerHTML = "";
+
+        if (!list.length) {
+          praySavedList.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
+          prayStreakPill.textContent = `Prayer Streak: 0`;
+          return;
+        }
+
+        const dates = list.map(x => x.date).filter(Boolean);
+        prayStreakPill.textContent = `Prayer Streak: ${calcStreak(dates)}`;
+
+        list
+          .slice()
+          .sort((a,b) => (b.date || "").localeCompare(a.date || ""))
+          .forEach(item => {
+            const btn = document.createElement("button");
+            btn.className = "btn btn-ghost";
+            btn.style.textAlign = "left";
+            btn.textContent = `${item.date} — Daily Prayer`;
+            btn.addEventListener("click", () => {
+              setPrayerUI(item);
+              praySavedPill.textContent = `Loaded: ${item.date}`;
+            });
+            praySavedList.appendChild(btn);
+          });
+      }
+
+      function saveCurrentPrayer() {
+        const date = todayKey();
+        const current = {
+          date,
+          adoration: prayAdorationInput.value || "",
+          confession: prayConfessionInput.value || "",
+          thanksgiving: prayThanksgivingInput.value || "",
+          supplication: praySupplicationInput.value || "",
+          notes: prayNotes.value || ""
+        };
+
+        if (!current.adoration && !current.confession && !current.thanksgiving && !current.supplication) {
+          alert("Write at least one section (or use Alyana Assist) before saving.");
+          return;
+        }
+
+        const list = loadList(PRAY_STORAGE_KEY);
+        const idx = list.findIndex(x => x.date === date);
+        if (idx >= 0) list[idx] = current;
+        else list.push(current);
+
+        saveList(PRAY_STORAGE_KEY, list);
+        renderPraySavedList();
+        praySavedPill.textContent = `Saved: ${date}`;
+        alert("Saved.");
+      }
+
+      async function prayerAssist(section) {
+        const promptMap = {
+          adoration: "Give me a 1-2 sentence starter for Adoration (praise God for who He is).",
+          confession: "Give me a 1-2 sentence starter for Confession (honest, humble, seeking forgiveness).",
+          thanksgiving: "Give me a 1-2 sentence starter for Thanksgiving (gratitude for blessings).",
+          supplication: "Give me a 1-2 sentence starter for Supplication (requests for self/others: wisdom, strength, peace)."
+        };
+
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: promptMap[section] })
+        });
+        const data = await res.json();
+        const text = (data.message || "").trim();
+
+        const target =
+          section === "adoration" ? prayAdorationInput :
+          section === "confession" ? prayConfessionInput :
+          section === "thanksgiving" ? prayThanksgivingInput :
+          praySupplicationInput;
+
+        target.value = target.value ? (target.value + "\n\n" + text) : text;
+      }
+
+      document.getElementById("assistAdoration").addEventListener("click", () => prayerAssist("adoration"));
+      document.getElementById("assistConfession").addEventListener("click", () => prayerAssist("confession"));
+      document.getElementById("assistThanksgiving").addEventListener("click", () => prayerAssist("thanksgiving"));
+      document.getElementById("assistSupplication").addEventListener("click", () => prayerAssist("supplication"));
+
+      btnAssistAll.addEventListener("click", async () => {
+        await prayerAssist("adoration");
+        await prayerAssist("confession");
+        await prayerAssist("thanksgiving");
+        await prayerAssist("supplication");
+      });
+
+      btnSavePray.addEventListener("click", saveCurrentPrayer);
+      btnClearPray.addEventListener("click", clearPrayerUI);
+      renderPraySavedList();
+    </script>
+  </body>
+</html>
