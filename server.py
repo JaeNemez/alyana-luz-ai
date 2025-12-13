@@ -5,7 +5,7 @@ import sqlite3
 from typing import Optional, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -44,17 +44,21 @@ def health():
 
 # =========================
 # Bible Reader (LOCAL DB)
-# Uses ./data/bible.db (table: verses)
 # =========================
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bible.db")
+
+# Allow override if needed on Render
+# Example: BIBLE_DB_PATH=/opt/render/project/src/data/bible.db
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bible.db")
+DB_PATH = os.getenv("BIBLE_DB_PATH", DEFAULT_DB_PATH)
+
+
+def _db_exists() -> bool:
+    return os.path.exists(DB_PATH) and os.path.isfile(DB_PATH)
 
 
 def _db():
-    if not os.path.exists(DB_PATH):
-        raise HTTPException(
-            status_code=500,
-            detail=f"bible.db not found at {DB_PATH}. Make sure data/bible.db is committed to GitHub and deployed on Render.",
-        )
+    if not _db_exists():
+        raise HTTPException(status_code=500, detail=f"bible.db not found at {DB_PATH}")
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
@@ -63,52 +67,89 @@ def _db():
 def _normalize_book_key(book: str) -> str:
     # Accept UI-style ("2 Samuel") or DB-style ("2samuel") and normalize to DB key.
     b = (book or "").strip().lower()
-    b = re.sub(r"\s+", "", b)  # remove spaces
+    b = re.sub(r"\s+", "", b)
     return b
 
 
 def _pretty_book_label(book_key: str) -> str:
-    # For reference strings only (simple formatter)
-    m = re.match(r"^([123])(.*)$", book_key)
+    # "2samuel" -> "2 Samuel"
+    bk = (book_key or "").strip()
+    m = re.match(r"^([123])(.+)$", bk, flags=re.I)
     if m:
-        num, rest = m.group(1), m.group(2)
-        return f"{num} {rest.capitalize()}"
-    return (book_key or "").capitalize()
+        num = m.group(1)
+        rest = m.group(2)
+        # Insert space before common compound words if DB removed spaces (best-effort)
+        # "samuel" -> "Samuel", "kings" -> "Kings", etc.
+        return f"{num} {rest[:1].upper()}{rest[1:]}"
+    return f"{bk[:1].upper()}{bk[1:]}"
 
 
-def _parse_verse_range(verse: Optional[str], start: int, end: Optional[int]) -> Tuple[int, int]:
+def _parse_verse_range(verse: str) -> Tuple[int, Optional[int]]:
     """
-    Supports:
-      - verse="5" or verse="5-9"
-      - start/end query params (existing)
-    Returns (start, end)
+    Accepts:
+      "5" -> (5, None)
+      "5-10" -> (5, 10)
+      " 5 - 10 " -> (5, 10)
     """
-    if verse:
-        v = str(verse).strip()
-        m = re.match(r"^(\d+)(?:\s*-\s*(\d+))?$", v)
-        if not m:
-            raise HTTPException(status_code=400, detail="Invalid verse format. Use e.g. verse=5 or verse=5-9")
-        s = int(m.group(1))
-        e = int(m.group(2)) if m.group(2) else s
-        return (s, e)
-
-    # fallback to start/end
-    s = int(start)
-    e = int(end) if end is not None else s
-    if e < s:
-        e = s
-    return (s, e)
+    if not verse:
+        return (1, None)
+    v = verse.strip()
+    v = re.sub(r"\s+", "", v)
+    if "-" in v:
+        a, b = v.split("-", 1)
+        if not a.isdigit() or not b.isdigit():
+            raise HTTPException(status_code=400, detail="Invalid verse range")
+        return (int(a), int(b))
+    if not v.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid verse")
+    return (int(v), None)
 
 
 @app.get("/bible/health")
 def bible_health():
     """
-    This helps you debug Render deploys quickly.
-    If this shows db_exists=false, your repo/deploy does not include data/bible.db.
+    Used by the frontend to explain why dropdowns are not loading.
     """
-    exists = os.path.exists(DB_PATH)
-    size = os.path.getsize(DB_PATH) if exists else 0
-    return {"db_exists": exists, "db_path": DB_PATH, "db_size_bytes": size}
+    if not _db_exists():
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": False,
+                "db_path": DB_PATH,
+                "error": "bible.db missing",
+                "hint": "Ensure data/bible.db is included in your Render deploy (in repo) or set BIBLE_DB_PATH.",
+            },
+        )
+
+    con = _db()
+    try:
+        # Confirm table exists + has rows
+        try:
+            row = con.execute("SELECT COUNT(1) AS n FROM verses").fetchone()
+            n = int(row["n"]) if row and row["n"] is not None else 0
+        except Exception as e:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": False,
+                    "db_path": DB_PATH,
+                    "error": f"Cannot query verses table: {repr(e)}",
+                    "hint": "Your bible.db must contain a table named 'verses' with columns book, chapter, verse, text.",
+                },
+            )
+
+        # Also show a sample book value for debugging
+        sample = con.execute("SELECT book FROM verses LIMIT 1").fetchone()
+        sample_book = sample["book"] if sample else None
+
+        return {
+            "ok": True,
+            "db_path": DB_PATH,
+            "verses_count": n,
+            "sample_book": sample_book,
+        }
+    finally:
+        con.close()
 
 
 @app.get("/bible/books")
@@ -116,7 +157,7 @@ def bible_books():
     con = _db()
     try:
         rows = con.execute("SELECT DISTINCT book FROM verses ORDER BY book").fetchall()
-        # Return both key and label (frontend shows label, but uses key for API calls)
+        # Return both raw DB key and a human label (frontend supports both)
         books = [{"key": r["book"], "label": _pretty_book_label(r["book"])} for r in rows]
         return {"books": books}
     finally:
@@ -163,25 +204,28 @@ def bible_verses(book: str, chapter: int):
 def bible_passage(
     book: str,
     chapter: int,
+    # New style (frontend v2): full_chapter/start/end
     full_chapter: bool = False,
-    # Backward compatible:
-    verse: Optional[str] = Query(default=None, description="Optional verse range like 5 or 5-9"),
     start: int = 1,
     end: Optional[int] = None,
+    # Backward compatibility (older frontend): verse="3" or "3-7"
+    verse: Optional[str] = None,
 ):
     """
-    Supports BOTH styles:
-
-    Style A (your updated frontend should use this):
-      /bible/passage?book=genesis&chapter=1&full_chapter=true
-      /bible/passage?book=genesis&chapter=1&start=1&end=5
-
-    Style B (backward compatible):
-      /bible/passage?book=genesis&chapter=1&verse=1-5
+    Supports BOTH:
+      /bible/passage?book=...&chapter=...&full_chapter=true
+      /bible/passage?book=...&chapter=...&start=3&end=7
+      /bible/passage?book=...&chapter=...&verse=3-7   (legacy)
     """
     bk = _normalize_book_key(book)
     if chapter < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter")
+
+    # Legacy "verse" overrides start/end/full_chapter (unless full_chapter is explicitly true)
+    if verse and not full_chapter:
+        s, e = _parse_verse_range(verse)
+        start = s
+        end = e
 
     con = _db()
     try:
@@ -196,9 +240,10 @@ def bible_passage(
             ref = f"{_pretty_book_label(bk)} {chapter}"
             return {"reference": ref, "text": text}
 
-        s, e = _parse_verse_range(verse=verse, start=start, end=end)
-        if s < 1:
+        if start < 1:
             raise HTTPException(status_code=400, detail="Invalid start verse")
+        if end is None or end < start:
+            end = start
 
         rows = con.execute(
             """
@@ -207,14 +252,19 @@ def bible_passage(
             WHERE book=? AND chapter=? AND verse BETWEEN ? AND ?
             ORDER BY verse
             """,
-            (bk, int(chapter), int(s), int(e)),
+            (bk, int(chapter), int(start), int(end)),
         ).fetchall()
 
         if not rows:
             raise HTTPException(status_code=404, detail="No passage text returned")
 
         text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-        ref = f"{_pretty_book_label(bk)} {chapter}:{s}" if s == e else f"{_pretty_book_label(bk)} {chapter}:{s}-{e}"
+
+        if start == end:
+            ref = f"{_pretty_book_label(bk)} {chapter}:{start}"
+        else:
+            ref = f"{_pretty_book_label(bk)} {chapter}:{start}-{end}"
+
         return {"reference": ref, "text": text}
     finally:
         con.close()
@@ -237,6 +287,7 @@ def chat(body: ChatIn):
         "You pray with the user, suggest Bible passages, and explain verses. "
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
         "for something technical. Keep answers concise but caring."
+        "\n\nIMPORTANT: Match the user's language. If they write in Spanish, respond fully in Spanish."
     )
     full_prompt = f"{system_prompt}\n\nUser: {body.prompt}"
 
@@ -256,44 +307,13 @@ def chat(body: ChatIn):
                 time.sleep(1 + attempt)
                 continue
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                raise HTTPException(status_code=429, detail="Alyana reached today's free AI limit. Please try again later.")
+                raise HTTPException(
+                    status_code=429,
+                    detail="Alyana reached today's free AI limit. Please try again later.",
+                )
             break
 
     print("Gemini error after retries:", repr(last_error))
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
 
-
-@app.post("/devotional")
-def devotional():
-    _require_ai()
-
-    prompt = (
-        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
-        "scripture: a short scripture reference + verse text (1-3 verses max)\n"
-        "brief_explanation: 2-4 sentences explaining it simply\n"
-        "Choose an encouraging, Christ-centered theme.\n"
-    )
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return {"json": (response.text or "").strip()}
-
-
-@app.post("/daily_prayer")
-def daily_prayer():
-    _require_ai()
-
-    prompt = (
-        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
-        "example_adoration, example_confession, example_thanksgiving, example_supplication.\n"
-        "Each value should be 1-2 sentences, warm and biblically grounded.\n"
-    )
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return {"json": (response.text or "").strip()}
 
