@@ -2,11 +2,11 @@ import os
 import re
 import time
 import sqlite3
-from typing import Optional
+from typing import Optional, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from google import genai
@@ -36,7 +36,6 @@ async def serve_frontend():
 
 @app.get("/health")
 def health():
-    # Helpful for debugging Render deploys
     return {
         "status": "ok",
         "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
@@ -52,7 +51,10 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bible.db")
 
 def _db():
     if not os.path.exists(DB_PATH):
-        raise HTTPException(status_code=500, detail=f"bible.db not found at {DB_PATH}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"bible.db not found at {DB_PATH}. Make sure data/bible.db is committed to GitHub and deployed on Render.",
+        )
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
@@ -71,7 +73,42 @@ def _pretty_book_label(book_key: str) -> str:
     if m:
         num, rest = m.group(1), m.group(2)
         return f"{num} {rest.capitalize()}"
-    return book_key.capitalize()
+    return (book_key or "").capitalize()
+
+
+def _parse_verse_range(verse: Optional[str], start: int, end: Optional[int]) -> Tuple[int, int]:
+    """
+    Supports:
+      - verse="5" or verse="5-9"
+      - start/end query params (existing)
+    Returns (start, end)
+    """
+    if verse:
+        v = str(verse).strip()
+        m = re.match(r"^(\d+)(?:\s*-\s*(\d+))?$", v)
+        if not m:
+            raise HTTPException(status_code=400, detail="Invalid verse format. Use e.g. verse=5 or verse=5-9")
+        s = int(m.group(1))
+        e = int(m.group(2)) if m.group(2) else s
+        return (s, e)
+
+    # fallback to start/end
+    s = int(start)
+    e = int(end) if end is not None else s
+    if e < s:
+        e = s
+    return (s, e)
+
+
+@app.get("/bible/health")
+def bible_health():
+    """
+    This helps you debug Render deploys quickly.
+    If this shows db_exists=false, your repo/deploy does not include data/bible.db.
+    """
+    exists = os.path.exists(DB_PATH)
+    size = os.path.getsize(DB_PATH) if exists else 0
+    return {"db_exists": exists, "db_path": DB_PATH, "db_size_bytes": size}
 
 
 @app.get("/bible/books")
@@ -79,7 +116,8 @@ def bible_books():
     con = _db()
     try:
         rows = con.execute("SELECT DISTINCT book FROM verses ORDER BY book").fetchall()
-        books = [r["book"] for r in rows]
+        # Return both key and label (frontend shows label, but uses key for API calls)
+        books = [{"key": r["book"], "label": _pretty_book_label(r["book"])} for r in rows]
         return {"books": books}
     finally:
         con.close()
@@ -126,12 +164,20 @@ def bible_passage(
     book: str,
     chapter: int,
     full_chapter: bool = False,
+    # Backward compatible:
+    verse: Optional[str] = Query(default=None, description="Optional verse range like 5 or 5-9"),
     start: int = 1,
     end: Optional[int] = None,
 ):
     """
-    Matches your FRONTEND query params:
-      /bible/passage?book=...&chapter=...&full_chapter=true|false&start=...&end=...
+    Supports BOTH styles:
+
+    Style A (your updated frontend should use this):
+      /bible/passage?book=genesis&chapter=1&full_chapter=true
+      /bible/passage?book=genesis&chapter=1&start=1&end=5
+
+    Style B (backward compatible):
+      /bible/passage?book=genesis&chapter=1&verse=1-5
     """
     bk = _normalize_book_key(book)
     if chapter < 1:
@@ -150,10 +196,9 @@ def bible_passage(
             ref = f"{_pretty_book_label(bk)} {chapter}"
             return {"reference": ref, "text": text}
 
-        if start < 1:
+        s, e = _parse_verse_range(verse=verse, start=start, end=end)
+        if s < 1:
             raise HTTPException(status_code=400, detail="Invalid start verse")
-        if end is None or end < start:
-            end = start
 
         rows = con.execute(
             """
@@ -162,19 +207,14 @@ def bible_passage(
             WHERE book=? AND chapter=? AND verse BETWEEN ? AND ?
             ORDER BY verse
             """,
-            (bk, int(chapter), int(start), int(end)),
+            (bk, int(chapter), int(s), int(e)),
         ).fetchall()
 
         if not rows:
             raise HTTPException(status_code=404, detail="No passage text returned")
 
         text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-
-        if start == end:
-            ref = f"{_pretty_book_label(bk)} {chapter}:{start}"
-        else:
-            ref = f"{_pretty_book_label(bk)} {chapter}:{start}-{end}"
-
+        ref = f"{_pretty_book_label(bk)} {chapter}:{s}" if s == e else f"{_pretty_book_label(bk)} {chapter}:{s}-{e}"
         return {"reference": ref, "text": text}
     finally:
         con.close()
@@ -188,73 +228,16 @@ def _require_ai():
         raise HTTPException(status_code=503, detail="AI key not configured (GEMINI_API_KEY missing).")
 
 
-def _detect_language_from_text(text: str) -> str:
-    """
-    Small heuristic:
-    - If user input looks Spanish, return 'es'
-    - Else return 'en'
-    """
-    t = (text or "").strip().lower()
-
-    # quick signals: accents or inverted punctuation
-    if any(ch in t for ch in ["¿", "¡", "á", "é", "í", "ó", "ú", "ñ"]):
-        return "es"
-
-    # common Spanish tokens
-    spanish_hits = [
-        " jesus", " jesús", " dios", " oración", " oracion", " por favor", " gracias",
-        " versículo", " versiculo", " biblia", " milagro", " milagros",
-        " perdón", " perdon", " cómo", " como ", " qué", " que ", " porque", " para ",
-        "me puedes", "puedes", "háblame", "hablame", "quiero", "necesito",
-        "hola", "buenas", "bendiciones", "señor", "senor"
-    ]
-    score = sum(1 for w in spanish_hits if w in f" {t} ")
-    return "es" if score >= 2 else "en"
-
-
-def _extract_last_user_line(full_history_blob: str) -> str:
-    """
-    Your frontend sends a 'historyText' that includes lines like:
-      User: ...
-      Alyana: ...
-    We try to pull the last User: line for language detection.
-    If not found, fallback to the whole blob.
-    """
-    blob = full_history_blob or ""
-    matches = re.findall(r"(?:^|\n)User:\s*(.*)", blob)
-    if matches:
-        return matches[-1].strip()
-    return blob.strip()
-
-
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
-
-    # Decide language based on the user's *latest* message (not the whole history).
-    last_user = _extract_last_user_line(body.prompt)
-    lang = _detect_language_from_text(last_user)
-
-    if lang == "es":
-        language_rule = (
-            "IMPORTANT: Reply entirely in Spanish. Do NOT switch to English. "
-            "If the user asks in Spanish, keep the full response in Spanish."
-        )
-        fallback = "Lo siento, no pude pensar en algo que decir."
-    else:
-        language_rule = (
-            "IMPORTANT: Reply entirely in English. Do NOT switch to Spanish unless the user asks."
-        )
-        fallback = "Sorry, I couldn't think of anything to say."
 
     system_prompt = (
         "You are Alyana Luz, a warm, scripture-focused assistant. "
         "You pray with the user, suggest Bible passages, and explain verses. "
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring.\n\n"
-        f"{language_rule}"
+        "for something technical. Keep answers concise but caring."
     )
-
     full_prompt = f"{system_prompt}\n\nUser: {body.prompt}"
 
     last_error = None
@@ -264,7 +247,7 @@ def chat(body: ChatIn):
                 model="gemini-2.5-flash",
                 contents=full_prompt,
             )
-            text = response.text or fallback
+            text = response.text or "Sorry, I couldn't think of anything to say."
             return {"status": "success", "message": text}
         except Exception as e:
             last_error = e
@@ -273,10 +256,7 @@ def chat(body: ChatIn):
                 time.sleep(1 + attempt)
                 continue
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Alyana reached today's free AI limit. Please try again later.",
-                )
+                raise HTTPException(status_code=429, detail="Alyana reached today's free AI limit. Please try again later.")
             break
 
     print("Gemini error after retries:", repr(last_error))
@@ -285,10 +265,6 @@ def chat(body: ChatIn):
 
 @app.post("/devotional")
 def devotional():
-    """
-    Frontend expects: { json: "<json-string>" }
-    with keys: scripture, brief_explanation
-    """
     _require_ai()
 
     prompt = (
@@ -307,11 +283,6 @@ def devotional():
 
 @app.post("/daily_prayer")
 def daily_prayer():
-    """
-    Frontend expects: { json: "<json-string>" }
-    with keys:
-      example_adoration, example_confession, example_thanksgiving, example_supplication
-    """
     _require_ai()
 
     prompt = (
