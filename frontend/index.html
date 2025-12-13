@@ -152,10 +152,7 @@
       .row { display: flex; gap: 10px; flex-wrap: wrap; }
       .row > * { flex: 1; min-width: 220px; }
 
-      label {
-        font-size: 12px;
-        opacity: 0.85;
-      }
+      label { font-size: 12px; opacity: 0.85; }
 
       input[type="text"], input[type="number"], select, textarea {
         width: 100%;
@@ -199,14 +196,8 @@
       .bubble-row.bot { justify-content: flex-start; }
       .bubble-row.system { justify-content: center; }
 
-      .bubble-wrap {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        max-width: 84%;
-      }
-
       .bubble {
+        max-width: 84%;
         padding: 10px 14px;
         border-radius: 16px;
         font-size: 14px;
@@ -230,26 +221,22 @@
         color: #9ca3af;
         font-size: 12px;
         text-align: center;
-        padding: 0;
       }
 
-      .bubble-actions {
+      .chat-toolbar {
+        padding: 12px 14px 0;
         display: flex;
-        gap: 8px;
-        justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
       }
-
-      .mini-btn {
-        padding: 6px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(255,255,255,0.12);
-        background: rgba(255,255,255,0.08);
-        color: #fff;
-        font-weight: 800;
-        font-size: 12px;
-        cursor: pointer;
+      .chat-toolbar-left, .chat-toolbar-right {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
       }
-      .mini-btn:hover { background: rgba(255,255,255,0.12); }
 
       .chat-form {
         padding: 12px 14px;
@@ -258,19 +245,11 @@
         gap: 10px;
         background: rgba(15,23,42,0.92);
       }
-      .chat-form input[type="text"] {
-        border-radius: 999px;
-      }
-      .chat-form .btn {
-        border-radius: 999px;
-        padding: 10px 18px;
-      }
+      .chat-form input[type="text"] { border-radius: 999px; }
+      .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
       /* Structured blocks */
-      .block-title {
-        font-weight: 900;
-        margin-bottom: 8px;
-      }
+      .block-title { font-weight: 900; margin-bottom: 8px; }
       .block {
         background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.10);
@@ -299,17 +278,7 @@
         margin-top: 8px;
       }
 
-      .assist {
-        margin-top: 8px;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px dashed rgba(255,255,255,0.18);
-        background: rgba(255,255,255,0.05);
-        font-size: 12px;
-        opacity: 0.92;
-        white-space: pre-wrap;
-      }
-      .assist strong { opacity: 1; }
+      .danger-text { color: #fecaca; }
     </style>
   </head>
 
@@ -339,6 +308,22 @@
       <div class="main">
         <!-- CHAT -->
         <section id="chatSection" class="app-section active">
+          <div class="chat-toolbar">
+            <div class="chat-toolbar-left">
+              <span class="pill" id="chatVoicePill">Voice: ready</span>
+              <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
+              <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
+            </div>
+
+            <div class="chat-toolbar-right">
+              <select id="chatSavedSelect" title="Saved chats">
+                <option value="">Saved Chats…</option>
+              </select>
+              <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
+              <button class="btn btn-danger" type="button" id="chatDeleteBtn">Delete</button>
+            </div>
+          </div>
+
           <div id="chat"></div>
 
           <form id="chatForm" class="chat-form">
@@ -349,8 +334,6 @@
               placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…"
             />
             <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
-            <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
-            <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
             <button class="btn btn-ghost" type="button" id="chatNewBtn">New Chat</button>
           </form>
         </section>
@@ -362,7 +345,9 @@
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2; min-width:260px;">
                   <h3 style="margin-bottom:6px;">Bible Reader (Listen)</h3>
-                  <div class="muted">Choose a book/chapter and either a verse range, or “Full Chapter”. Uses your local Bible database.</div>
+                  <div class="muted">
+                    Pick a Book → Chapter → Verses (or Full Chapter). Uses your local Bible database.
+                  </div>
                 </div>
                 <div style="display:flex; justify-content:flex-end;">
                   <span class="pill" id="ttsStatus">Voice: loading…</span>
@@ -377,17 +362,17 @@
 
                 <div>
                   <label>Chapter</label>
-                  <select id="chapterSelect"></select>
+                  <select id="chapterSelect" disabled></select>
                 </div>
 
                 <div>
                   <label>Verse (start)</label>
-                  <select id="verseStartSelect"></select>
+                  <select id="verseStartSelect" disabled></select>
                 </div>
 
                 <div>
                   <label>Verse (end)</label>
-                  <select id="verseEndSelect"></select>
+                  <select id="verseEndSelect" disabled></select>
                   <div class="small-note">Optional.</div>
                 </div>
               </div>
@@ -396,6 +381,7 @@
                 <div style="flex:1.2;">
                   <label>Bible Version (label only)</label>
                   <select id="versionSelect"></select>
+
                   <div class="small-note">
                     <label style="display:flex; gap:8px; align-items:center;">
                       <input type="checkbox" id="rememberVersion" checked />
@@ -405,21 +391,12 @@
                 </div>
 
                 <div>
-                  <label>Language</label>
-                  <select id="ttsLang">
-                    <option value="auto">Auto</option>
-                    <option value="en-US">English (en-US)</option>
-                    <option value="es-US">Spanish (es-US)</option>
-                    <option value="es-ES">Spanish (es-ES)</option>
+                  <label>Reading Voice</label>
+                  <select id="ttsMode">
+                    <option value="en">English — Karen (en-AU)</option>
+                    <option value="es">Spanish — Paulina (es-MX)</option>
                   </select>
-                </div>
-
-                <div>
-                  <label>Voice</label>
-                  <select id="ttsVoice">
-                    <option value="">Loading voices…</option>
-                  </select>
-                  <div class="small-note">Saved automatically.</div>
+                  <div class="small-note">Keeps the UI clean: only 2 voices.</div>
                 </div>
 
                 <div style="min-width:220px;">
@@ -439,7 +416,7 @@
               </div>
 
               <div class="small-note">
-                Tip: Voice/language is remembered for this device.
+                Tip: Bible version and voice are remembered for this device.
               </div>
             </div>
           </div>
@@ -453,7 +430,7 @@
                 <div style="flex:2;">
                   <h3 style="margin-bottom:6px;">Daily Devotional</h3>
                   <div class="muted">
-                    Alyana provides Scripture + a brief explanation. You write your own Explanation, Application, and Prayer.
+                    Alyana gives Scripture + a brief explanation. You write your own Explanation, Application, Prayer, and Reflection.
                   </div>
                 </div>
                 <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
@@ -463,7 +440,7 @@
               </div>
 
               <div class="row" style="margin-top:12px;">
-                <button class="btn btn-primary" id="generateDevotional" type="button">Generate Scripture</button>
+                <button class="btn btn-primary" id="generateDevotional" type="button">Generate Today’s Devotional</button>
                 <button class="btn btn-green" id="saveDevotional" type="button">Save Today</button>
                 <button class="btn btn-danger" id="clearDevotional" type="button">Clear</button>
               </div>
@@ -472,915 +449,21 @@
             <div class="card">
               <div class="block">
                 <div class="block-title">1) Scripture (Alyana)</div>
-                <div id="devScripture">Click “Generate Scripture”.</div>
+                <div id="devScripture">Click “Generate Today’s Devotional”.</div>
               </div>
 
               <div class="block">
                 <div class="block-title">2) Brief Explanation (Alyana)</div>
-                <div id="devBriefExplanation" class="muted">—</div>
-              </div>
-
-              <div class="block">
-                <div class="block-title">3) Your Explanation</div>
-                <textarea id="devYourExplanation" placeholder="In your own words: What do you think this passage means?"></textarea>
-              </div>
-
-              <div class="block">
-                <div class="block-title">4) Your Application</div>
-                <textarea id="devYourApplication" placeholder="How can you apply this to your life today? Be specific."></textarea>
-              </div>
-
-              <div class="block">
-                <div class="block-title">5) Your Prayer</div>
-                <textarea id="devYourPrayer" placeholder="Write a prayer that responds to the Scripture (ask for help, strength, wisdom)."></textarea>
+                <div id="devBriefExplanation"></div>
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="block-title">Your Reflection</div>
+                <div class="block-title">3) My Explanation</div>
                 <div class="muted" style="margin-bottom:8px;">
-                  Write your answer to: “How does this apply to my life right now?”
+                  Write what you think this scripture means (in your own words).
                 </div>
-                <textarea id="devReflection" placeholder="Write your reflection here…"></textarea>
-              </div>
-            </div>
-
-            <div class="card">
-              <h4>Saved Devotionals</h4>
-              <div class="saved-list" id="devSavedList">
-                <small style="opacity:0.75;">No saved devotionals yet.</small>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- DAILY PRAYER -->
-        <section id="prayerSection" class="app-section">
-          <div class="section-body">
-            <div class="card">
-              <div class="row" style="align-items:center;">
-                <div style="flex:2;">
-                  <h3 style="margin-bottom:6px;">Daily Prayer</h3>
-                  <div class="muted">
-                    You write your own prayer (ACTS). If you need help starting, tap “Get Starter Help”.
-                  </div>
+                <div class="row" style="margin-bottom:10px;">
+                  <button class="btn btn-ghost" type="button" id="devAssistExplain">Alyana Assist</button>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
-                  <span class="pill" id="prayStreakPill">Prayer Streak: 0</span>
-                  <span class="pill" id="praySavedPill">Not saved yet</span>
-                </div>
+                <textarea id="devMyExplanation" placeholder="Write your explanation here…"></textarea>
               </div>
-
-              <div class="row" style="margin-top:12px;">
-                <button class="btn btn-primary" id="generatePrayerHelp" type="button">Get Starter Help</button>
-                <button class="btn btn-green" id="savePrayer" type="button">Save Today</button>
-                <button class="btn btn-danger" id="clearPrayer" type="button">Clear</button>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="block">
-                <div class="block-title">1) Adoration (Your words)</div>
-                <textarea id="prayYourAdoration" placeholder="Praise God for who He is (holy, faithful, merciful, loving)…"></textarea>
-                <div class="assist" id="assistAdoration"><strong>Alyana starter:</strong> —</div>
-              </div>
-
-              <div class="block">
-                <div class="block-title">2) Confession (Your words)</div>
-                <textarea id="prayYourConfession" placeholder="Confess honestly. Ask forgiveness. Ask for change…"></textarea>
-                <div class="assist" id="assistConfession"><strong>Alyana starter:</strong> —</div>
-              </div>
-
-              <div class="block">
-                <div class="block-title">3) Thanksgiving (Your words)</div>
-                <textarea id="prayYourThanksgiving" placeholder="Thank God for specific blessings (today, family, protection, provision)…"></textarea>
-                <div class="assist" id="assistThanksgiving"><strong>Alyana starter:</strong> —</div>
-              </div>
-
-              <div class="block">
-                <div class="block-title">4) Supplication (Your words)</div>
-                <textarea id="prayYourSupplication" placeholder="Ask for needs (wisdom, strength, healing, guidance) for you and others…"></textarea>
-                <div class="assist" id="assistSupplication"><strong>Alyana starter:</strong> —</div>
-              </div>
-
-              <div class="block" style="margin-top:12px;">
-                <div class="block-title">Your Notes</div>
-                <div class="muted" style="margin-bottom:8px;">
-                  Optional: write what you’re praying for today (people, needs, decisions).
-                </div>
-                <textarea id="prayNotes" placeholder="Write your notes here…"></textarea>
-              </div>
-            </div>
-
-            <div class="card">
-              <h4>Saved Prayers</h4>
-              <div class="saved-list" id="praySavedList">
-                <small style="opacity:0.75;">No saved prayers yet.</small>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <!-- IMPORTANT: Script at the bottom so DOM is ready -->
-    <script>
-      // ------------------------------
-      // Helpers
-      // ------------------------------
-      function todayKey() {
-        const d = new Date();
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        return `${yyyy}-${mm}-${dd}`;
-      }
-
-      function safeJSONFromModel(text) {
-        if (!text) return null;
-        let t = String(text).trim();
-        t = t.replace(/```json/gi, "```");
-        if (t.includes("```")) {
-          const parts = t.split("```");
-          if (parts.length >= 3) t = parts[1].trim();
-          else t = t.replace(/```/g, "").trim();
-        }
-        const first = t.indexOf("{");
-        const last = t.lastIndexOf("}");
-        if (first >= 0 && last > first) t = t.slice(first, last + 1);
-        try { return JSON.parse(t); } catch { return null; }
-      }
-
-      // Pretty labels for DB book keys like "2samuel" -> "2 Samuel"
-      function prettyBookLabel(bookKey) {
-        const raw = String(bookKey || "").trim().toLowerCase();
-        if (!raw) return "";
-        const m = raw.match(/^([123])(.*)$/);
-        if (m) {
-          const num = m[1];
-          const rest = m[2] || "";
-          return `${num} ${rest.charAt(0).toUpperCase()}${rest.slice(1)}`;
-        }
-        return raw.charAt(0).toUpperCase() + raw.slice(1);
-      }
-
-      function escapeHTML(s) {
-        return String(s || "")
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;");
-      }
-
-      // ------------------------------
-      // Support button
-      // ------------------------------
-      const supportBtn = document.getElementById("supportBtn");
-      supportBtn.addEventListener("click", () => {
-        // Replace with your real Stripe link later
-        window.open("https://buy.stripe.com/", "_blank");
-      });
-
-      // ------------------------------
-      // Tab switching
-      // ------------------------------
-      const sections = Array.from(document.querySelectorAll(".app-section"));
-      const menuButtons = Array.from(document.querySelectorAll(".menu-btn"));
-
-      function showSection(id) {
-        sections.forEach(s => s.classList.toggle("active", s.id === id));
-        menuButtons.forEach(b => b.classList.toggle("active", b.dataset.target === id));
-      }
-
-      menuButtons.forEach(btn => btn.addEventListener("click", () => showSection(btn.dataset.target)));
-      showSection("chatSection");
-
-      // ------------------------------
-      // TTS (shared)
-      // ------------------------------
-      const ttsLang = document.getElementById("ttsLang");
-      const ttsVoice = document.getElementById("ttsVoice");
-      const ttsStatus = document.getElementById("ttsStatus");
-      const TTS_STORAGE = "alyana_tts_v1"; // { lang, voiceURI }
-
-      function getSavedTTS() {
-        try { return JSON.parse(localStorage.getItem(TTS_STORAGE) || "{}"); }
-        catch { return {}; }
-      }
-      function saveTTS(patch) {
-        const cur = getSavedTTS();
-        localStorage.setItem(TTS_STORAGE, JSON.stringify({ ...cur, ...patch }));
-      }
-
-      (function initTTSLang() {
-        const saved = getSavedTTS();
-        if (saved.lang) ttsLang.value = saved.lang;
-      })();
-
-      function computeLang() {
-        const saved = getSavedTTS();
-        const sel = ttsLang ? (ttsLang.value || saved.lang || "auto") : (saved.lang || "auto");
-        if (sel !== "auto") return sel;
-
-        const nav = (navigator.language || "en-US").toLowerCase();
-        return nav.startsWith("es") ? "es-US" : "en-US";
-      }
-
-      function loadVoiceOptions() {
-        if (!("speechSynthesis" in window)) {
-          if (ttsStatus) ttsStatus.textContent = "Voice: not supported";
-          return;
-        }
-
-        const synth = window.speechSynthesis;
-        const voices = synth.getVoices() || [];
-        const saved = getSavedTTS();
-        const lang = computeLang();
-        const primary = lang.toLowerCase().slice(0,2);
-
-        if (ttsVoice) {
-          ttsVoice.innerHTML = "";
-
-          const filtered = voices.filter(v => (v.lang || "").toLowerCase().startsWith(primary));
-          const listToUse = (filtered.length ? filtered : voices).slice();
-
-          const opt0 = document.createElement("option");
-          opt0.value = "";
-          opt0.textContent = listToUse.length ? "Auto (best match)" : "No voices found";
-          ttsVoice.appendChild(opt0);
-
-          listToUse
-            .sort((a,b) => (a.lang || "").localeCompare(b.lang || "") || (a.name || "").localeCompare(b.name || ""))
-            .forEach(v => {
-              const opt = document.createElement("option");
-              opt.value = v.voiceURI;
-              opt.textContent = `${v.name} — ${v.lang}`;
-              ttsVoice.appendChild(opt);
-            });
-
-          if (saved.voiceURI) {
-            const exists = Array.from(ttsVoice.options).some(o => o.value === saved.voiceURI);
-            if (exists) ttsVoice.value = saved.voiceURI;
-          }
-
-          if (ttsStatus) ttsStatus.textContent = listToUse.length ? `Voice: ready (${lang})` : "Voice: unavailable";
-        }
-      }
-
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.onvoiceschanged = loadVoiceOptions;
-        setTimeout(loadVoiceOptions, 300);
-        setTimeout(loadVoiceOptions, 1200);
-      } else {
-        if (ttsStatus) ttsStatus.textContent = "Voice: not supported";
-      }
-
-      if (ttsLang) {
-        ttsLang.addEventListener("change", () => {
-          saveTTS({ lang: ttsLang.value });
-          loadVoiceOptions();
-        });
-      }
-      if (ttsVoice) {
-        ttsVoice.addEventListener("change", () => {
-          saveTTS({ voiceURI: ttsVoice.value });
-        });
-      }
-
-      function chooseVoiceForLang(lang) {
-        if (!("speechSynthesis" in window)) return null;
-        const voices = window.speechSynthesis.getVoices() || [];
-        const saved = getSavedTTS();
-
-        if (saved.voiceURI) {
-          const v = voices.find(x => x.voiceURI === saved.voiceURI);
-          if (v) return v;
-        }
-
-        const primary = lang.toLowerCase().slice(0,2);
-        return voices.find(v => (v.lang || "").toLowerCase().startsWith(primary)) || null;
-      }
-
-      function speakText(text) {
-        if (!("speechSynthesis" in window)) {
-          alert("Speech synthesis is not supported in this browser.");
-          return;
-        }
-        const lang = computeLang();
-        window.speechSynthesis.cancel();
-
-        const utter = new SpeechSynthesisUtterance(String(text || ""));
-        utter.lang = lang;
-        utter.rate = 0.95;
-        utter.pitch = 1.0;
-
-        const voice = chooseVoiceForLang(lang);
-        if (voice) utter.voice = voice;
-
-        window.speechSynthesis.speak(utter);
-      }
-
-      // ------------------------------
-      // CHAT (with Listen button per Alyana message)
-      // ------------------------------
-      const chatEl = document.getElementById("chat");
-      const chatForm = document.getElementById("chatForm");
-      const chatInput = document.getElementById("chatInput");
-      const chatSendBtn = document.getElementById("chatSendBtn");
-      const chatNewBtn = document.getElementById("chatNewBtn");
-      const chatListenBtn = document.getElementById("chatListenBtn");
-      const chatStopBtn = document.getElementById("chatStopBtn");
-
-      const chatHistory = []; // { role: "user"|"assistant", text }
-      let lastAssistantText = "";
-
-      function addBubble(text, who="bot") {
-        const row = document.createElement("div");
-        row.className = "bubble-row " + who;
-
-        if (who === "system") {
-          const b = document.createElement("div");
-          b.className = "bubble system";
-          b.textContent = text;
-          row.appendChild(b);
-          chatEl.appendChild(row);
-          chatEl.scrollTop = chatEl.scrollHeight;
-          return b;
-        }
-
-        const wrap = document.createElement("div");
-        wrap.className = "bubble-wrap";
-
-        const b = document.createElement("div");
-        b.className = "bubble " + (who === "user" ? "user" : "bot");
-        b.textContent = text;
-        wrap.appendChild(b);
-
-        if (who === "bot") {
-          const actions = document.createElement("div");
-          actions.className = "bubble-actions";
-          const listen = document.createElement("button");
-          listen.type = "button";
-          listen.className = "mini-btn";
-          listen.textContent = "Listen";
-          listen.addEventListener("click", () => speakText(text));
-          actions.appendChild(listen);
-          wrap.appendChild(actions);
-        }
-
-        row.appendChild(wrap);
-        chatEl.appendChild(row);
-        chatEl.scrollTop = chatEl.scrollHeight;
-        return b;
-      }
-
-      function addWelcome() {
-        addBubble('Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".', "system");
-      }
-
-      addWelcome();
-
-      chatForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const userText = chatInput.value.trim();
-        if (!userText) return;
-
-        addBubble(userText, "user");
-        chatInput.value = "";
-        chatInput.focus();
-
-        chatHistory.push({ role: "user", text: userText });
-
-        const loading = addBubble("Thinking…", "bot");
-        chatSendBtn.disabled = true;
-
-        try {
-          const historyText = chatHistory
-            .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
-            .join("\n");
-
-          const fullPrompt =
-            historyText +
-            "\n\nContinue responding as Alyana Luz, a gentle Bible AI assistant.";
-
-          const res = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: fullPrompt })
-          });
-
-          const data = await res.json();
-          const text = data.message || data.prayer || JSON.stringify(data, null, 2);
-
-          loading.textContent = text;
-          chatHistory.push({ role: "assistant", text });
-          lastAssistantText = text;
-        } catch (err) {
-          console.error(err);
-          loading.textContent = "Network error talking to the Bible AI server.";
-        } finally {
-          chatSendBtn.disabled = false;
-        }
-      });
-
-      chatNewBtn.addEventListener("click", () => {
-        chatHistory.length = 0;
-        lastAssistantText = "";
-        chatEl.innerHTML = "";
-        addWelcome();
-        chatInput.focus();
-      });
-
-      chatListenBtn.addEventListener("click", () => {
-        if (!lastAssistantText) {
-          alert("No Alyana message to read yet.");
-          return;
-        }
-        speakText(lastAssistantText);
-      });
-
-      chatStopBtn.addEventListener("click", () => {
-        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-      });
-
-      // ------------------------------
-      // Bible Version dropdown (UI only)
-      // ------------------------------
-      const versionSelect = document.getElementById("versionSelect");
-      const rememberVersion = document.getElementById("rememberVersion");
-      const validVersions = ["KJV","NKJV","NIV","NLT","ESV","NASB","CSB","AMP","MSG"];
-
-      function fillVersionSelect() {
-        versionSelect.innerHTML = "";
-        validVersions.forEach(v => {
-          const o = document.createElement("option");
-          o.value = v;
-          o.textContent = v;
-          versionSelect.appendChild(o);
-        });
-      }
-
-      fillVersionSelect();
-
-      (function initVersionPreference() {
-        const saved = localStorage.getItem("preferredVersion");
-        if (saved && validVersions.includes(saved)) {
-          versionSelect.value = saved;
-          rememberVersion.checked = true;
-        } else {
-          versionSelect.value = "KJV";
-        }
-      })();
-
-      versionSelect.addEventListener("change", () => {
-        const v = versionSelect.value;
-        if (rememberVersion.checked) localStorage.setItem("preferredVersion", v);
-      });
-
-      rememberVersion.addEventListener("change", () => {
-        if (rememberVersion.checked) {
-          localStorage.setItem("preferredVersion", versionSelect.value);
-        } else {
-          localStorage.removeItem("preferredVersion");
-        }
-      });
-
-      // ------------------------------
-      // Bible Reader (Local SQLite API + TTS)
-      // ------------------------------
-      const bookSelect = document.getElementById("bookSelect");
-      const chapterSelect = document.getElementById("chapterSelect");
-      const verseStartSelect = document.getElementById("verseStartSelect");
-      const verseEndSelect = document.getElementById("verseEndSelect");
-      const fullChapterChk = document.getElementById("fullChapter");
-
-      function fillSelect(selectEl, values, { placeholder = null, labelFn = null } = {}) {
-        selectEl.innerHTML = "";
-        if (placeholder) {
-          const o = document.createElement("option");
-          o.value = "";
-          o.textContent = placeholder;
-          selectEl.appendChild(o);
-        }
-        values.forEach(v => {
-          const o = document.createElement("option");
-          o.value = String(v);
-          o.textContent = labelFn ? labelFn(v) : String(v);
-          selectEl.appendChild(o);
-        });
-      }
-
-      async function apiJSON(url) {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
-        return await res.json();
-      }
-
-      async function loadBooks() {
-        const data = await apiJSON("/bible/books");
-        const keys = data.books || [];
-        fillSelect(bookSelect, keys, { placeholder: "Select book", labelFn: prettyBookLabel });
-      }
-
-      async function loadChapters(book) {
-        const data = await apiJSON(`/bible/chapters?book=${encodeURIComponent(book)}`);
-        fillSelect(chapterSelect, data.chapters || [], { placeholder: "Select chapter" });
-      }
-
-      async function loadVerses(book, chapter) {
-        const data = await apiJSON(`/bible/verses?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}`);
-        const verses = data.verses || [];
-        fillSelect(verseStartSelect, verses, { placeholder: "Start" });
-        fillSelect(verseEndSelect, verses, { placeholder: "(optional)" });
-      }
-
-      async function refreshBibleSelectors() {
-        const book = bookSelect.value;
-        if (!book) return;
-        await loadChapters(book);
-
-        const chapter = chapterSelect.value || (chapterSelect.options[1] ? chapterSelect.options[1].value : "");
-        if (chapter) {
-          chapterSelect.value = chapter;
-          await loadVerses(book, chapter);
-        }
-      }
-
-      bookSelect.addEventListener("change", async () => {
-        try { await refreshBibleSelectors(); } catch (e) { console.error(e); }
-      });
-
-      chapterSelect.addEventListener("change", async () => {
-        try {
-          const book = bookSelect.value;
-          const chapter = chapterSelect.value;
-          if (book && chapter) await loadVerses(book, chapter);
-        } catch (e) { console.error(e); }
-      });
-
-      fullChapterChk.addEventListener("change", () => {
-        const on = fullChapterChk.checked;
-        verseStartSelect.disabled = on;
-        verseEndSelect.disabled = on;
-      });
-
-      async function fetchPassageText() {
-        const book = bookSelect.value;
-        const chapter = chapterSelect.value;
-
-        if (!book || !chapter) throw new Error("Missing book/chapter");
-
-        if (fullChapterChk.checked) {
-          const data = await apiJSON(
-            `/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=true`
-          );
-          return { reference: data.reference || `${prettyBookLabel(book)} ${chapter}`, text: data.text || "" };
-        }
-
-        const start = verseStartSelect.value;
-        const end = verseEndSelect.value;
-
-        if (!start) throw new Error("Missing start verse");
-
-        const qs =
-          `/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end || "")}`;
-
-        const data = await apiJSON(qs);
-        return { reference: data.reference || `${prettyBookLabel(book)} ${chapter}:${start}`, text: data.text || "" };
-      }
-
-      document.getElementById("listenBible").addEventListener("click", async () => {
-        try {
-          const { reference, text } = await fetchPassageText();
-          if (!text) {
-            alert("No text returned for that passage.");
-            return;
-          }
-
-          const version = versionSelect.value || "KJV";
-          const spokenText = `${version}. ${reference}. ${text}`;
-          speakText(spokenText);
-        } catch (err) {
-          console.error(err);
-          alert("Could not read the passage. Try selecting book/chapter/verses again.");
-        }
-      });
-
-      document.getElementById("stopBible").addEventListener("click", () => {
-        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-      });
-
-      (async function initBible() {
-        try {
-          await loadBooks();
-          fullChapterChk.dispatchEvent(new Event("change"));
-        } catch (e) {
-          console.error(e);
-          if (ttsStatus) ttsStatus.textContent = "Voice: ready";
-        }
-      })();
-
-      // ------------------------------
-      // DEVOTIONAL (Alyana scripture + brief explanation; user writes the rest)
-      // ------------------------------
-      const devScripture = document.getElementById("devScripture");
-      const devBriefExplanation = document.getElementById("devBriefExplanation");
-      const devYourExplanation = document.getElementById("devYourExplanation");
-      const devYourApplication = document.getElementById("devYourApplication");
-      const devYourPrayer = document.getElementById("devYourPrayer");
-      const devReflection = document.getElementById("devReflection");
-      const devSavedList = document.getElementById("devSavedList");
-
-      const btnGenDev = document.getElementById("generateDevotional");
-      const btnSaveDev = document.getElementById("saveDevotional");
-      const btnClearDev = document.getElementById("clearDevotional");
-
-      const devStreakPill = document.getElementById("devStreakPill");
-      const devSavedPill = document.getElementById("devSavedPill");
-
-      const DEV_STORAGE_KEY = "alyana_devotionals_v3";
-
-      function loadList(key) {
-        try { return JSON.parse(localStorage.getItem(key) || "[]"); }
-        catch { return []; }
-      }
-      function saveList(key, list) {
-        localStorage.setItem(key, JSON.stringify(list));
-      }
-
-      function clearDevotionalUI() {
-        devScripture.textContent = "Click “Generate Scripture”.";
-        devBriefExplanation.textContent = "—";
-        devYourExplanation.value = "";
-        devYourApplication.value = "";
-        devYourPrayer.value = "";
-        devReflection.value = "";
-        devSavedPill.textContent = "Not saved yet";
-      }
-
-      function calcStreak(dates) {
-        const set = new Set(dates);
-        let streak = 0;
-        const now = new Date();
-        for (;;) {
-          const d = new Date(now);
-          d.setDate(now.getDate() - streak);
-          const yyyy = d.getFullYear();
-          const mm = String(d.getMonth() + 1).padStart(2, "0");
-          const dd = String(d.getDate()).padStart(2, "0");
-          const key = `${yyyy}-${mm}-${dd}`;
-          if (set.has(key)) streak++;
-          else break;
-        }
-        return streak;
-      }
-
-      function renderDevSavedList() {
-        const list = loadList(DEV_STORAGE_KEY);
-        devSavedList.innerHTML = "";
-
-        if (!list.length) {
-          devSavedList.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
-          devStreakPill.textContent = `Devotional Streak: 0`;
-          return;
-        }
-
-        const dates = list.map(x => x.date).filter(Boolean);
-        devStreakPill.textContent = `Devotional Streak: ${calcStreak(dates)}`;
-
-        list
-          .slice()
-          .sort((a,b) => (b.date || "").localeCompare(a.date || ""))
-          .forEach(item => {
-            const btn = document.createElement("button");
-            btn.className = "btn btn-ghost";
-            btn.style.textAlign = "left";
-            btn.textContent = `${item.date} — ${item.title || "Devotional"}`;
-            btn.addEventListener("click", () => {
-              devScripture.textContent = item.scripture || "";
-              devBriefExplanation.textContent = item.brief_explanation || "—";
-              devYourExplanation.value = item.your_explanation || "";
-              devYourApplication.value = item.your_application || "";
-              devYourPrayer.value = item.your_prayer || "";
-              devReflection.value = item.reflection || "";
-              devSavedPill.textContent = `Loaded: ${item.date}`;
-            });
-            devSavedList.appendChild(btn);
-          });
-      }
-
-      async function generateDevotional() {
-        btnGenDev.disabled = true;
-        btnGenDev.textContent = "Generating…";
-
-        try {
-          const res = await fetch("/devotional", { method: "POST" });
-          const data = await res.json();
-          const parsed = safeJSONFromModel(data.json || "");
-
-          if (!parsed || !parsed.scripture) {
-            devScripture.textContent = "Could not generate devotional (server returned unexpected format).";
-            devBriefExplanation.textContent = (data.json || "").slice(0, 600);
-            devSavedPill.textContent = "Not saved yet";
-            return;
-          }
-
-          devScripture.textContent = parsed.scripture || "";
-          devBriefExplanation.textContent = parsed.brief_explanation || "—";
-
-          // user fields stay as-is (do not overwrite)
-          devSavedPill.textContent = "Generated (not saved yet)";
-        } catch (err) {
-          console.error(err);
-          devScripture.textContent = "Error generating scripture.";
-          devBriefExplanation.textContent = "Please try again.";
-        } finally {
-          btnGenDev.disabled = false;
-          btnGenDev.textContent = "Generate Scripture";
-        }
-      }
-
-      function saveCurrentDevotional() {
-        const date = todayKey();
-
-        const current = {
-          date,
-          title: (devScripture.textContent || "").split("\n")[0].slice(0, 70) || "Daily Devotional",
-          scripture: devScripture.textContent || "",
-          brief_explanation: devBriefExplanation.textContent || "",
-          your_explanation: devYourExplanation.value || "",
-          your_application: devYourApplication.value || "",
-          your_prayer: devYourPrayer.value || "",
-          reflection: devReflection.value || ""
-        };
-
-        if (!current.scripture || current.scripture.includes("Click “Generate")) {
-          alert("Generate Scripture first.");
-          return;
-        }
-
-        const list = loadList(DEV_STORAGE_KEY);
-        const idx = list.findIndex(x => x.date === date);
-        if (idx >= 0) list[idx] = current;
-        else list.push(current);
-
-        saveList(DEV_STORAGE_KEY, list);
-        renderDevSavedList();
-        devSavedPill.textContent = `Saved: ${date}`;
-        alert("Saved.");
-      }
-
-      btnGenDev.addEventListener("click", generateDevotional);
-      btnSaveDev.addEventListener("click", saveCurrentDevotional);
-      btnClearDev.addEventListener("click", clearDevotionalUI);
-      renderDevSavedList();
-
-      // ------------------------------
-      // DAILY PRAYER (user writes; Alyana provides starter help)
-      // ------------------------------
-      const prayYourAdoration = document.getElementById("prayYourAdoration");
-      const prayYourConfession = document.getElementById("prayYourConfession");
-      const prayYourThanksgiving = document.getElementById("prayYourThanksgiving");
-      const prayYourSupplication = document.getElementById("prayYourSupplication");
-      const prayNotes = document.getElementById("prayNotes");
-      const praySavedList = document.getElementById("praySavedList");
-
-      const assistAdoration = document.getElementById("assistAdoration");
-      const assistConfession = document.getElementById("assistConfession");
-      const assistThanksgiving = document.getElementById("assistThanksgiving");
-      const assistSupplication = document.getElementById("assistSupplication");
-
-      const btnGenPrayHelp = document.getElementById("generatePrayerHelp");
-      const btnSavePray = document.getElementById("savePrayer");
-      const btnClearPray = document.getElementById("clearPrayer");
-
-      const prayStreakPill = document.getElementById("prayStreakPill");
-      const praySavedPill = document.getElementById("praySavedPill");
-
-      const PRAY_STORAGE_KEY = "alyana_prayers_v2";
-
-      function setPrayerUI(p) {
-        prayYourAdoration.value = p.adoration || "";
-        prayYourConfession.value = p.confession || "";
-        prayYourThanksgiving.value = p.thanksgiving || "";
-        prayYourSupplication.value = p.supplication || "";
-        prayNotes.value = p.notes || "";
-
-        // starter help is optional / not required to save
-        if (p.assist) {
-          assistAdoration.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(p.assist.adoration || "—")}`;
-          assistConfession.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(p.assist.confession || "—")}`;
-          assistThanksgiving.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(p.assist.thanksgiving || "—")}`;
-          assistSupplication.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(p.assist.supplication || "—")}`;
-        }
-      }
-
-      function clearPrayerUI() {
-        setPrayerUI({ adoration: "", confession: "", thanksgiving: "", supplication: "", notes: "", assist: {
-          adoration: "—", confession: "—", thanksgiving: "—", supplication: "—"
-        }});
-        praySavedPill.textContent = "Not saved yet";
-      }
-
-      function renderPraySavedList() {
-        const list = loadList(PRAY_STORAGE_KEY);
-        praySavedList.innerHTML = "";
-
-        if (!list.length) {
-          praySavedList.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
-          prayStreakPill.textContent = `Prayer Streak: 0`;
-          return;
-        }
-
-        const dates = list.map(x => x.date).filter(Boolean);
-        prayStreakPill.textContent = `Prayer Streak: ${calcStreak(dates)}`;
-
-        list
-          .slice()
-          .sort((a,b) => (b.date || "").localeCompare(a.date || ""))
-          .forEach(item => {
-            const btn = document.createElement("button");
-            btn.className = "btn btn-ghost";
-            btn.style.textAlign = "left";
-            btn.textContent = `${item.date} — Daily Prayer`;
-            btn.addEventListener("click", () => {
-              setPrayerUI(item);
-              praySavedPill.textContent = `Loaded: ${item.date}`;
-            });
-            praySavedList.appendChild(btn);
-          });
-      }
-
-      async function generatePrayerHelp() {
-        btnGenPrayHelp.disabled = true;
-        btnGenPrayHelp.textContent = "Getting help…";
-
-        try {
-          const res = await fetch("/daily_prayer", { method: "POST" });
-          const data = await res.json();
-          const parsed = safeJSONFromModel(data.json || "");
-
-          if (!parsed) {
-            assistAdoration.innerHTML = `<strong>Alyana starter:</strong> Could not load help.`;
-            assistConfession.innerHTML = `<strong>Alyana starter:</strong> Please try again.`;
-            assistThanksgiving.innerHTML = `<strong>Alyana starter:</strong> —`;
-            assistSupplication.innerHTML = `<strong>Alyana starter:</strong> —`;
-            return;
-          }
-
-          assistAdoration.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(parsed.example_adoration || "—")}`;
-          assistConfession.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(parsed.example_confession || "—")}`;
-          assistThanksgiving.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(parsed.example_thanksgiving || "—")}`;
-          assistSupplication.innerHTML = `<strong>Alyana starter:</strong> ${escapeHTML(parsed.example_supplication || "—")}`;
-
-          praySavedPill.textContent = "Starter help loaded (not saved yet)";
-        } catch (err) {
-          console.error(err);
-          assistAdoration.innerHTML = `<strong>Alyana starter:</strong> Error loading help.`;
-          assistConfession.innerHTML = `<strong>Alyana starter:</strong> Please try again.`;
-        } finally {
-          btnGenPrayHelp.disabled = false;
-          btnGenPrayHelp.textContent = "Get Starter Help";
-        }
-      }
-
-      function saveCurrentPrayer() {
-        const date = todayKey();
-
-        const current = {
-          date,
-          adoration: prayYourAdoration.value || "",
-          confession: prayYourConfession.value || "",
-          thanksgiving: prayYourThanksgiving.value || "",
-          supplication: prayYourSupplication.value || "",
-          notes: prayNotes.value || ""
-        };
-
-        const hasAny =
-          current.adoration.trim() || current.confession.trim() ||
-          current.thanksgiving.trim() || current.supplication.trim();
-
-        if (!hasAny) {
-          alert("Write your prayer first (or at least one section).");
-          return;
-        }
-
-        const list = loadList(PRAY_STORAGE_KEY);
-        const idx = list.findIndex(x => x.date === date);
-        if (idx >= 0) list[idx] = current;
-        else list.push(current);
-
-        saveList(PRAY_STORAGE_KEY, list);
-        renderPraySavedList();
-        praySavedPill.textContent = `Saved: ${date}`;
-        alert("Saved.");
-      }
-
-      btnGenPrayHelp.addEventListener("click", generatePrayerHelp);
-      btnSavePray.addEventListener("click", saveCurrentPrayer);
-      btnClearPray.addEventListener("click", clearPrayerUI);
-      renderPraySavedList();
-
-      // default starter placeholders
-      clearPrayerUI();
-    </script>
-  </body>
-</html>
