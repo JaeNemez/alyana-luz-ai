@@ -296,3 +296,4 @@ def daily_prayer():
         contents=prompt,
     )
     return {"json": (response.text or "").strip()}
+
