@@ -192,12 +192,10 @@
         border: 1px solid rgba(255,255,255,0.10);
         background: rgba(15,23,42,0.50);
       }
-
       .bubble-row { display: flex; width: 100%; }
       .bubble-row.user { justify-content: flex-end; }
       .bubble-row.bot { justify-content: flex-start; }
       .bubble-row.system { justify-content: center; }
-
       .bubble {
         max-width: 84%;
         padding: 10px 14px;
@@ -224,7 +222,6 @@
         font-size: 12px;
         text-align: center;
       }
-
       .chat-form {
         padding: 12px 14px;
         border-top: 1px solid rgba(255,255,255,0.08);
@@ -409,9 +406,7 @@
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Devotional</h3>
-                  <div class="muted">
-                    Alyana provides Scripture + a brief explanation. Then you write your own explanation, application, and prayer.
-                  </div>
+                  <div class="muted">Alyana provides Scripture + a brief explanation. Then you write your own explanation, application, and prayer.</div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -443,22 +438,22 @@
               <div class="divider"></div>
 
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">3) My Explanation (write what you think it means)</div>
-                <textarea id="devMyExplain" placeholder="Write your understanding of the scripture…"></textarea>
+                <div class="muted" style="margin-bottom:6px;">3) My Explanation</div>
+                <textarea id="devMyExplain" placeholder="Write what you think the scripture means…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">4) My Application (how will I apply this today?)</div>
-                <textarea id="devMyApply" placeholder="Write how you can apply this scripture to your life…"></textarea>
+                <div class="muted" style="margin-bottom:6px;">4) My Application</div>
+                <textarea id="devMyApply" placeholder="How can you apply this scripture today?"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" style="margin-bottom:6px;">5) My Prayer</div>
-                <textarea id="devMyPrayer" placeholder="Write a prayer about this scripture…"></textarea>
+                <textarea id="devMyPrayer" placeholder="Write your prayer about the scripture…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">6) Reflection (notes / what stood out)</div>
+                <div class="muted" style="margin-bottom:6px;">6) Reflection</div>
                 <textarea id="devReflection" placeholder="Reflection…"></textarea>
               </div>
 
@@ -474,9 +469,7 @@
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
-                  <div class="muted">
-                    ACTS format. Alyana can generate short starters if you need help, then you write your own prayer.
-                  </div>
+                  <div class="muted">ACTS format. Alyana can generate short starters if you need help. Then you write your own prayer.</div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -498,407 +491,20 @@
               <div class="block" style="margin-top:12px;">
                 <div class="muted" style="margin-bottom:6px;">Starter (Adoration) — optional help</div>
                 <div id="pAStarter" style="white-space:pre-wrap;">—</div>
-                <div class="small-note">Now write your own Adoration:</div>
+                <div class="small-note">Write your own Adoration:</div>
                 <textarea id="pAUser" placeholder="Adoration (your words)…"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" style="margin-bottom:6px;">Starter (Confession) — optional help</div>
                 <div id="pCStarter" style="white-space:pre-wrap;">—</div>
-                <div class="small-note">Now write your own Confession:</div>
+                <div class="small-note">Write your own Confession:</div>
                 <textarea id="pCUser" placeholder="Confession (your words)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Starter (Thanksgiving) — optional help</div>
-                <div id="pTStarter" style="white-space:pre-wrap;">—</div>
-                <div class="small-note">Now write your own Thanksgiving:</div>
-                <textarea id="pTUser" placeholder="Thanksgiving (your words)…"></textarea>
-              </div>
+                <div class="muted" style="margin-bottom:6px;">Starter (Th
 
-              <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Starter (Supplication) — optional help</div>
-                <div id="pSStarter" style="white-space:pre-wrap;">—</div>
-                <div class="small-note">Now write your own Supplication:</div>
-                <textarea id="pSUser" placeholder="Supplication (your words)…"></textarea>
-              </div>
-
-              <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Notes (optional)</div>
-                <textarea id="pNotes" placeholder="Notes…"></textarea>
-              </div>
-
-              <div class="small-note" id="prayerSaveStatus">Not saved yet.</div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
-
-    <script>
-      // ------------------------------
-      // Helpers
-      // ------------------------------
-      function safeJSONFromModel(text) {
-        if (!text) return null;
-        let t = String(text).trim();
-        t = t.replace(/```json/gi, "```");
-        if (t.includes("```")) {
-          const parts = t.split("```");
-          if (parts.length >= 3) t = parts[1].trim();
-          else t = t.replace(/```/g, "").trim();
-        }
-        const first = t.indexOf("{");
-        const last = t.lastIndexOf("}");
-        if (first >= 0 && last > first) t = t.slice(first, last + 1);
-        try { return JSON.parse(t); } catch { return null; }
-      }
-
-      function looksSpanish(s) {
-        const t = (s || "").toLowerCase();
-        if (/[áéíóúñü¿¡]/i.test(t)) return true;
-        const hits = ["que","porque","para","pero","gracias","dios","señor","hoy","oración","oracion","versículo","versiculo","biblia"];
-        let score = 0;
-        hits.forEach(w => { if (t.includes(" " + w + " ") || t.startsWith(w + " ") || t.endsWith(" " + w)) score++; });
-        return score >= 2;
-      }
-
-      async function apiJSON(url, opts) {
-        const res = await fetch(url, opts);
-        if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
-        return await res.json();
-      }
-
-      function todayKey() {
-        // local device date key
-        const d = new Date();
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        return `${yyyy}-${mm}-${dd}`;
-      }
-
-      // ------------------------------
-      // Support button
-      // ------------------------------
-      document.getElementById("supportBtn").addEventListener("click", () => {
-        window.open("https://buy.stripe.com/", "_blank");
-      });
-
-      // ------------------------------
-      // Tabs
-      // ------------------------------
-      const sections = Array.from(document.querySelectorAll(".app-section"));
-      const menuButtons = Array.from(document.querySelectorAll(".menu-btn"));
-      function showSection(id) {
-        sections.forEach(s => s.classList.toggle("active", s.id === id));
-        menuButtons.forEach(b => b.classList.toggle("active", b.dataset.target === id));
-      }
-      menuButtons.forEach(btn => btn.addEventListener("click", () => showSection(btn.dataset.target)));
-      showSection("chatSection");
-
-      // ------------------------------
-      // TTS: Lock to 2 voices only
-      // ------------------------------
-      const TTS = { voices: [], ready: false, isSpeaking: false };
-      const ttsStatus = document.getElementById("ttsStatus");
-      const chatVoicePill = document.getElementById("chatVoicePill");
-
-      function refreshVoices() {
-        if (!("speechSynthesis" in window)) return;
-        TTS.voices = window.speechSynthesis.getVoices() || [];
-        TTS.ready = TTS.voices.length > 0;
-        updateVoicePills();
-      }
-
-      function pickVoice(langKey) {
-        const voices = (TTS.voices && TTS.voices.length)
-          ? TTS.voices
-          : ("speechSynthesis" in window ? window.speechSynthesis.getVoices() : []);
-
-        if (langKey === "es") {
-          const v =
-            voices.find(v => (v.lang === "es-MX") && (v.name || "").toLowerCase().includes("paulina")) ||
-            voices.find(v => (v.lang || "").toLowerCase() === "es-mx") ||
-            voices.find(v => (v.lang || "").toLowerCase().startsWith("es"));
-          return { voice: v || null, lang: "es-MX", label: "Paulina (es-MX)" };
-        }
-
-        const v =
-          voices.find(v => (v.lang === "en-AU") && (v.name || "").toLowerCase().includes("karen")) ||
-          voices.find(v => (v.lang || "").toLowerCase() === "en-au") ||
-          voices.find(v => (v.lang || "").toLowerCase().startsWith("en"));
-        return { voice: v || null, lang: "en-AU", label: "Karen (en-AU)" };
-      }
-
-      function stopSpeaking() {
-        if (!("speechSynthesis" in window)) return;
-        window.speechSynthesis.cancel();
-        TTS.isSpeaking = false;
-        updateVoicePills();
-      }
-
-      function chunkText(text, maxLen = 220) {
-        const t = String(text || "").trim();
-        if (!t) return [];
-        const parts = [];
-        let cur = "";
-        for (const token of t.split(/\s+/)) {
-          if ((cur + " " + token).trim().length > maxLen) {
-            parts.push(cur.trim());
-            cur = token;
-          } else {
-            cur = (cur + " " + token).trim();
-          }
-        }
-        if (cur.trim()) parts.push(cur.trim());
-        return parts;
-      }
-
-      function speakText(text, langKey) {
-        if (!("speechSynthesis" in window)) {
-          alert("Speech synthesis is not supported in this browser.");
-          return;
-        }
-        stopSpeaking();
-
-        const { voice, lang } = pickVoice(langKey) || {};
-        const chunks = chunkText(text, 220);
-        if (!chunks.length) return;
-
-        TTS.isSpeaking = true;
-        updateVoicePills();
-
-        let idx = 0;
-        const speakNext = () => {
-          if (!TTS.isSpeaking) return;
-          if (idx >= chunks.length) {
-            TTS.isSpeaking = false;
-            updateVoicePills();
-            return;
-          }
-          const u = new SpeechSynthesisUtterance(chunks[idx]);
-          u.lang = lang || (langKey === "es" ? "es-MX" : "en-AU");
-          if (voice) u.voice = voice;
-          u.rate = 0.95;
-
-          u.onend = () => { idx++; speakNext(); };
-          u.onerror = () => { idx++; speakNext(); };
-          window.speechSynthesis.speak(u);
-        };
-
-        speakNext();
-      }
-
-      function updateVoicePills() {
-        const ready = ("speechSynthesis" in window) ? (TTS.ready ? "ready" : "loading…") : "not supported";
-        if (ttsStatus) ttsStatus.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
-        if (chatVoicePill) chatVoicePill.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
-      }
-
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.onvoiceschanged = () => refreshVoices();
-        setTimeout(refreshVoices, 250);
-        setTimeout(refreshVoices, 1200);
-      } else {
-        if (ttsStatus) ttsStatus.textContent = "Voice: not supported";
-        if (chatVoicePill) chatVoicePill.textContent = "Voice: not supported";
-      }
-
-      // ------------------------------
-      // CHAT + Chat Log
-      // ------------------------------
-      const chatLangSelect = document.getElementById("chatLangSelect");
-
-      const chatEl = document.getElementById("chat");
-      const chatForm = document.getElementById("chatForm");
-      const chatInput = document.getElementById("chatInput");
-      const chatSendBtn = document.getElementById("chatSendBtn");
-      const chatListenBtn = document.getElementById("chatListenBtn");
-      const chatNewBtn = document.getElementById("chatNewBtn");
-      const chatSaveBtn = document.getElementById("chatSaveBtn");
-      const chatSavedList = document.getElementById("chatSavedList");
-
-      const CHAT_STORAGE = "alyana_chat_logs_v1";
-      const chatHistory = []; // { role: "user"|"assistant", text }
-      let lastBotMessage = "";
-
-      function addBubble(text, who="bot") {
-        const row = document.createElement("div");
-        row.className = "bubble-row " + who;
-
-        const b = document.createElement("div");
-        b.className = "bubble " + (who === "user" ? "user" : who === "system" ? "system" : "bot");
-        b.textContent = text;
-
-        row.appendChild(b);
-        chatEl.appendChild(row);
-        chatEl.scrollTop = chatEl.scrollHeight;
-        return b;
-      }
-
-      function addWelcome() {
-        addBubble('Hi! Try "Read John 1:1", "Verses about forgiveness", or "Pray with me about school".', "system");
-      }
-
-      function loadChatLogs() {
-        try { return JSON.parse(localStorage.getItem(CHAT_STORAGE) || "[]"); }
-        catch { return []; }
-      }
-      function saveChatLogs(list) {
-        localStorage.setItem(CHAT_STORAGE, JSON.stringify(list));
-      }
-
-      function renderChatSavedList() {
-        const list = loadChatLogs();
-        chatSavedList.innerHTML = "";
-        if (!list.length) {
-          chatSavedList.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
-          return;
-        }
-
-        list
-          .slice()
-          .sort((a,b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
-          .forEach(item => {
-            const wrap = document.createElement("div");
-            wrap.style.display = "flex";
-            wrap.style.gap = "8px";
-            wrap.style.marginTop = "8px";
-
-            const btn = document.createElement("button");
-            btn.className = "btn btn-ghost";
-            btn.style.flex = "1";
-            btn.style.textAlign = "left";
-            btn.textContent = `${item.title || "Chat"} — ${item.createdAt || ""}`;
-            btn.addEventListener("click", () => {
-              stopSpeaking();
-              chatHistory.length = 0;
-              chatEl.innerHTML = "";
-              (item.messages || []).forEach(m => {
-                chatHistory.push(m);
-                addBubble(m.text, m.role === "user" ? "user" : "bot");
-                if (m.role === "assistant") lastBotMessage = m.text;
-              });
-              if (!chatHistory.length) addWelcome();
-            });
-
-            const del = document.createElement("button");
-            del.className = "btn btn-danger";
-            del.textContent = "Delete";
-            del.style.width = "92px";
-            del.addEventListener("click", () => {
-              const next = loadChatLogs().filter(x => x.id !== item.id);
-              saveChatLogs(next);
-              renderChatSavedList();
-            });
-
-            wrap.appendChild(btn);
-            wrap.appendChild(del);
-            chatSavedList.appendChild(wrap);
-          });
-      }
-
-      function saveCurrentChat() {
-        const msgs = chatHistory.slice();
-        if (!msgs.length) {
-          alert("Nothing to save yet.");
-          return;
-        }
-        const createdAt = new Date().toISOString().slice(0,16).replace("T"," ");
-        const title = (msgs.find(m => m.role === "user")?.text || "Chat").slice(0, 48);
-
-        const item = {
-          id: "chat_" + Date.now(),
-          createdAt,
-          title,
-          messages: msgs
-        };
-
-        const list = loadChatLogs();
-        list.push(item);
-        saveChatLogs(list);
-        renderChatSavedList();
-        alert("Saved chat.");
-      }
-
-      function resolveChatLangForListen() {
-        const sel = chatLangSelect.value;
-        if (sel === "en" || sel === "es") return sel;
-
-        // Auto: based on what the user typed last
-        const lastUser = [...chatHistory].reverse().find(m => m.role === "user")?.text || "";
-        return looksSpanish(lastUser) ? "es" : "en";
-      }
-
-      addWelcome();
-      renderChatSavedList();
-
-      chatForm.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const userText = chatInput.value.trim();
-        if (!userText) return;
-
-        addBubble(userText, "user");
-        chatInput.value = "";
-        chatInput.focus();
-        chatHistory.push({ role: "user", text: userText });
-
-        const loading = addBubble("Thinking…", "bot");
-        chatSendBtn.disabled = true;
-
-        try {
-          const historyText = chatHistory
-            .map(m => (m.role === "user" ? `User: ${m.text}` : `Alyana: ${m.text}`))
-            .join("\n");
-
-          const fullPrompt = historyText + "\n\nContinue responding as Alyana Luz, a gentle Bible AI assistant.";
-
-          const data = await apiJSON("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: fullPrompt })
-          });
-
-          const text = data.message || "Sorry, I couldn't respond right now.";
-          loading.textContent = text;
-
-          chatHistory.push({ role: "assistant", text });
-          lastBotMessage = text;
-        } catch (err) {
-          console.error(err);
-          loading.textContent = "Network error talking to the Bible AI server.";
-        } finally {
-          chatSendBtn.disabled = false;
-        }
-      });
-
-      chatNewBtn.addEventListener("click", () => {
-        stopSpeaking();
-        chatHistory.length = 0;
-        chatEl.innerHTML = "";
-        lastBotMessage = "";
-        addWelcome();
-        chatInput.focus();
-      });
-
-      chatSaveBtn.addEventListener("click", saveCurrentChat);
-
-      chatListenBtn.addEventListener("click", () => {
-        if (!lastBotMessage) {
-          alert("Nothing to read yet.");
-          return;
-        }
-
-        const langKey = resolveChatLangForListen();
-
-        let txt = lastBotMessage;
-        if (langKey === "es") {
-          txt = txt.replace(/\b(KJV|NKJV|NIV|ESV|NASB|CSB|AMP|MSG)\b/gi, "").trim();
-        }
-
-        if (TTS.isSpeaking) stopSpeaking();
-        else speakText(txt,
 
 
 
