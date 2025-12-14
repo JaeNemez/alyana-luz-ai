@@ -424,16 +424,22 @@
                   <h3 style="margin:0 0 6px 0;">Devotional</h3>
                   <div class="muted">Alyana gives Scripture + a brief explanation. You write your own explanation, application, and prayer.</div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+
+                <!-- UPDATED CONTROLS -->
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
-                    <select id="devotionalLang">
-                      <option value="en" selected>English (Karen)</option>
-                      <option value="es">Spanish (Paulina)</option>
+                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+                    <select id="devUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
                     </select>
                   </label>
+
+                  <span class="pill" id="devStreakPill">Streak: 0</span>
+                  <button class="btn btn-ghost" id="devStreakBtn" type="button">I did it today</button>
+
                   <button class="btn btn-primary" id="devotionalBtn" type="button">Generate</button>
-                  <button class="btn btn-ghost" id="devotionalListenBtn" type="button">Listen</button>
+                  <button class="btn btn-green" id="devSaveBtn" type="button">Save</button>
                 </div>
               </div>
 
@@ -469,6 +475,15 @@
                 <textarea id="devotionalReflection" placeholder="Reflection…"></textarea>
               </div>
             </div>
+
+            <!-- SAVED DEVOTIONALS -->
+            <div class="card">
+              <h4>Saved Devotionals</h4>
+              <div class="muted">Load or delete past devotionals saved on this device.</div>
+              <div class="saved-list" id="devSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved devotionals yet.</small>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -481,16 +496,22 @@
                   <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
                   <div class="muted">Alyana gives short starters. You write your own ACTS prayer.</div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+
+                <!-- UPDATED CONTROLS -->
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
-                    <select id="prayerLang">
-                      <option value="en" selected>English (Karen)</option>
-                      <option value="es">Spanish (Paulina)</option>
+                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+                    <select id="prUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
                     </select>
                   </label>
+
+                  <span class="pill" id="prStreakPill">Streak: 0</span>
+                  <button class="btn btn-ghost" id="prStreakBtn" type="button">I did it today</button>
+
                   <button class="btn btn-primary" id="prayerBtn" type="button">Generate Starters</button>
-                  <button class="btn btn-ghost" id="prayerListenBtn" type="button">Listen Starters</button>
+                  <button class="btn btn-green" id="prSaveBtn" type="button">Save</button>
                 </div>
               </div>
 
@@ -527,15 +548,24 @@
                 <textarea id="prayerNotes" placeholder="Notes…"></textarea>
               </div>
             </div>
+
+            <!-- SAVED PRAYERS -->
+            <div class="card">
+              <h4>Saved Prayers</h4>
+              <div class="muted">Load or delete past prayers saved on this device.</div>
+              <div class="saved-list" id="prSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved prayers yet.</small>
+              </div>
+            </div>
           </div>
         </section>
       </div>
     </div>
 
-    <!-- IMPORTANT: this must point to your JS file -->
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
