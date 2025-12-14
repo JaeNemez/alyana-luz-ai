@@ -24,10 +24,9 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
 
-# Optional: still mount /static, but we ALSO add explicit routes below
+# Serve the entire frontend folder under /static (optional but helpful)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
 
 # --------------------
 # Gemini (AI)
@@ -35,11 +34,59 @@ if os.path.isdir(FRONTEND_DIR):
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
 
 class ChatIn(BaseModel):
     prompt: str
 
 
+def _require_ai():
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).",
+        )
+
+
+def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
+    """
+    Gemini can occasionally return UNAVAILABLE/503 when overloaded.
+    We retry a few times with backoff. 429 is returned to client.
+    """
+    last_error = None
+    for attempt in range(tries):
+        try:
+            resp = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=full_prompt,
+            )
+            return resp.text or ""
+        except Exception as e:
+            last_error = e
+            msg = repr(e)
+
+            # Overloaded / temporary service issues
+            if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
+                time.sleep(1 + attempt)
+                continue
+
+            # Rate limits / quota
+            if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
+                raise HTTPException(
+                    status_code=429,
+                    detail="Alyana reached the AI limit right now. Please try again later.",
+                )
+
+            break
+
+    print("Gemini error after retries:", repr(last_error))
+    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+
+
+# =========================
+# Frontend serving
+# =========================
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
     if not os.path.exists(INDEX_PATH):
@@ -54,12 +101,32 @@ async def serve_frontend():
     )
 
 
-# HARD GUARANTEE: serve app.js even if StaticFiles/mount fails
-@app.get("/static/app.js", include_in_schema=False)
-async def serve_app_js():
+# IMPORTANT: your index.html uses <script src="/app.js" defer></script>
+# So we MUST serve it at /app.js reliably.
+@app.get("/app.js", include_in_schema=False)
+async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
         return PlainTextResponse(
-            f"Missing {APPJS_PATH}. Create frontend/app.js in your repo.",
+            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js",
+            status_code=404,
+        )
+    return FileResponse(
+        APPJS_PATH,
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+# Optional: also allow /static/app.js (if you ever switch your HTML)
+@app.get("/static/app.js", include_in_schema=False)
+async def serve_app_js_static():
+    if not os.path.exists(APPJS_PATH):
+        return PlainTextResponse(
+            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js",
             status_code=404,
         )
     return FileResponse(
@@ -81,6 +148,9 @@ def health():
         "frontend_dir": FRONTEND_DIR,
         "index_exists": os.path.exists(INDEX_PATH),
         "appjs_exists": os.path.exists(APPJS_PATH),
+        "db_exists": os.path.exists(os.path.join(BASE_DIR, "data", "bible.db")),
+        "ai_configured": bool(API_KEY),
+        "model": MODEL_NAME,
     }
 
 
@@ -185,14 +255,16 @@ def bible_health():
         ).fetchall()
         table_names = [t["name"] for t in tables]
         if "books" not in table_names or "verses" not in table_names:
-            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
+            raise HTTPException(
+                status_code=500, detail=f"Missing tables. Found: {table_names}"
+            )
 
         vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
         needed = {"book_id", "chapter", "verse", "text"}
         if not needed.issubset(vcols):
             raise HTTPException(
                 status_code=500,
-                detail=f"verses table missing columns. Found: {sorted(vcols)}"
+                detail=f"verses table missing columns. Found: {sorted(vcols)}",
             )
 
         count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
@@ -221,11 +293,13 @@ def bible_books():
 
         books = []
         for r in rows:
-            books.append({
-                "id": int(r["id"]),
-                "name": str(r["name"]),
-                "key": str(r["book_key"]) if "book_key" in r.keys() else None
-            })
+            books.append(
+                {
+                    "id": int(r["id"]),
+                    "name": str(r["name"]),
+                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
+                }
+            )
 
         return {"books": books}
     finally:
@@ -243,7 +317,9 @@ def bible_chapters(book: str):
         ).fetchall()
         chapters = [int(r["chapter"]) for r in rows]
         if not chapters:
-            raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
+            raise HTTPException(
+                status_code=404, detail=f"No chapters for book_id={book_id}"
+            )
         return {"book_id": book_id, "chapters": chapters}
     finally:
         con.close()
@@ -262,7 +338,9 @@ def bible_verses(book: str, chapter: int):
         ).fetchall()
         verses = [int(r["verse"]) for r in rows]
         if not verses:
-            raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
+            raise HTTPException(
+                status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}"
+            )
         return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
     finally:
         con.close()
@@ -321,7 +399,11 @@ def bible_passage(
             raise HTTPException(status_code=404, detail="No passage text returned")
 
         text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-        ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
+        ref = (
+            f"{book_name} {chapter}:{start}"
+            if start == end
+            else f"{book_name} {chapter}:{start}-{end}"
+        )
         return {"reference": ref, "text": text}
     finally:
         con.close()
@@ -330,11 +412,6 @@ def bible_passage(
 # =========================
 # AI endpoints (Gemini)
 # =========================
-def _require_ai():
-    if not client:
-        raise HTTPException(status_code=503, detail="AI key not configured (GEMINI_API_KEY missing).")
-
-
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
@@ -345,35 +422,57 @@ def chat(body: ChatIn):
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
         "for something technical. Keep answers concise but caring."
     )
-    full_prompt = f"{system_prompt}\n\nUser: {body.prompt}"
-
-    last_error = None
-    for attempt in range(3):
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=full_prompt,
-            )
-            text = response.text or "Sorry, I couldn't think of anything to say."
-            return {"status": "success", "message": text}
-        except Exception as e:
-            last_error = e
-            msg = repr(e)
-            if "UNAVAILABLE" in msg or "503" in msg or "overloaded" in msg:
-                time.sleep(1 + attempt)
-                continue
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                raise HTTPException(status_code=429, detail="Alyana reached today's free AI limit. Please try again later.")
-            break
-
-    print("Gemini error after retries:", repr(last_error))
-    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
+    text = _generate_text_with_retries(full_prompt)
+    if not text:
+        text = "Sorry, I couldn't respond right now."
+    return {"status": "success", "message": text}
 
 
+@app.post("/devotional")
+def devotional():
+    _require_ai()
+
+    # Your app.js expects: { json: "<string containing JSON>" }
+    prompt = (
+        "You are Alyana Luz. Create a devotional in STRICT JSON ONLY.\n"
+        "Return exactly this JSON shape:\n"
+        "{\n"
+        '  "scripture": "Book Chapter:Verse(s) — verse text",\n'
+        '  "brief_explanation": "2-4 sentences explaining it simply"\n'
+        "}\n"
+        "Rules:\n"
+        "- Output ONLY valid JSON (no markdown fences).\n"
+        "- Keep it gentle and practical.\n"
+    )
+
+    text = _generate_text_with_retries(prompt)
+    if not text:
+        raise HTTPException(status_code=503, detail="AI returned empty devotional.")
+    return {"status": "success", "json": text}
 
 
+@app.post("/daily_prayer")
+def daily_prayer():
+    _require_ai()
 
+    # Your app.js expects: { json: "<string containing JSON>" }
+    prompt = (
+        "You are Alyana Luz. Generate ACTS prayer starters in STRICT JSON ONLY.\n"
+        "Return exactly this JSON shape:\n"
+        "{\n"
+        '  "example_adoration": "1-2 short sentences",\n'
+        '  "example_confession": "1-2 short sentences",\n'
+        '  "example_thanksgiving": "1-2 short sentences",\n'
+        '  "example_supplication": "1-2 short sentences"\n'
+        "}\n"
+        "Rules:\n"
+        "- Output ONLY valid JSON (no markdown fences).\n"
+        "- Starters should help someone begin, not be a full long prayer.\n"
+        "- Keep it warm and simple.\n"
+    )
 
-
-
-
+    text = _generate_text_with_retries(prompt)
+    if not text:
+        raise HTTPException(status_code=503, detail="AI returned empty daily prayer.")
+    return {"status": "success", "json": text}
