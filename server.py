@@ -7,6 +7,7 @@ from typing import Optional, Dict, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from google import genai
@@ -14,6 +15,9 @@ from google import genai
 load_dotenv()
 
 app = FastAPI(title="Alyana Luz · Bible AI")
+
+# Serve frontend assets (JS/CSS/etc)
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 # --------------------
 # Gemini (AI)
@@ -28,7 +32,15 @@ class ChatIn(BaseModel):
 
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
-    return FileResponse("frontend/index.html")
+    # Force no-cache so you don't get stuck on old JS/HTML after deploy
+    return FileResponse(
+        "frontend/index.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/health")
@@ -287,10 +299,6 @@ def _require_ai():
         raise HTTPException(status_code=503, detail="AI key not configured (GEMINI_API_KEY missing).")
 
 
-def _clean_model_text(t: str) -> str:
-    return (t or "").replace("\ufeff", "").strip()
-
-
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
@@ -310,7 +318,7 @@ def chat(body: ChatIn):
                 model="gemini-2.5-flash",
                 contents=full_prompt,
             )
-            text = _clean_model_text(response.text) or "Sorry, I couldn't think of anything to say."
+            text = response.text or "Sorry, I couldn't think of anything to say."
             return {"status": "success", "message": text}
         except Exception as e:
             last_error = e
@@ -328,45 +336,28 @@ def chat(body: ChatIn):
 
 @app.post("/devotional")
 def devotional():
-    """
-    Frontend expects: { json: "<json-string>" }
-    keys: scripture, brief_explanation
-    """
     _require_ai()
-
     prompt = (
         "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
         "scripture: a short scripture reference + verse text (1-3 verses max)\n"
         "brief_explanation: 2-4 sentences explaining it simply\n"
         "Choose an encouraging, Christ-centered theme.\n"
     )
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return {"json": _clean_model_text(response.text)}
+    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    return {"json": (response.text or "").strip()}
 
 
 @app.post("/daily_prayer")
 def daily_prayer():
-    """
-    Frontend expects: { json: "<json-string>" }
-    keys: example_adoration, example_confession, example_thanksgiving, example_supplication
-    """
     _require_ai()
-
     prompt = (
         "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
         "example_adoration, example_confession, example_thanksgiving, example_supplication.\n"
         "Each value should be 1-2 sentences, warm and biblically grounded.\n"
     )
+    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+    return {"json": (response.text or "").strip()}
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return {"json": _clean_model_text(response.text)}
 
 
 
