@@ -224,7 +224,83 @@
   <body>
     <div class="app">
       <header>
-        <h1><sp
+        <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
+        <small>pray • learn • walk in the Light</small>
+      </header>
+
+      <div class="top-cta">
+        <button class="support-btn" id="supportBtn" type="button" title="Support Alyana Luz">
+          ❤️ Support Alyana Luz
+        </button>
+        <p class="support-note">
+          Your support helps maintain and grow Alyana Luz — keeping development moving and this ministry available for everyone.
+        </p>
+        <span class="pill" id="jsStatus">JS: loading…</span>
+      </div>
+
+      <nav class="menu-bar">
+        <button class="menu-btn" data-target="chatSection" type="button">Chat</button>
+        <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button">Daily Prayer</button>
+      </nav>
+
+      <div class="main">
+        <section id="chatSection" class="app-section active">
+          <div class="chat-layout">
+            <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
+              <div class="row" style="align-items:center; margin-bottom:10px;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 4px 0;">Chat</h3>
+                  <div class="muted">Saved chat logs are stored on this device.</div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
+                    <select id="chatLangSelect">
+                      <option value="auto" selected>Auto (based on what they type)</option>
+                      <option value="en">English (Karen — en-AU)</option>
+                      <option value="es">Spanish (Paulina — es-MX)</option>
+                    </select>
+                  </label>
+                  <span class="pill" id="chatVoicePill">Voice: ready</span>
+                </div>
+              </div>
+
+              <div id="chat"></div>
+
+              <form id="chatForm" class="chat-form">
+                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
+                <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
+                <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
+                <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
+              </form>
+            </div>
+
+            <div class="card" style="overflow:auto;">
+              <h4 style="margin-bottom:6px;">Saved Chats</h4>
+              <div class="muted">Load or delete any saved chat.</div>
+              <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved chats yet.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- You can paste your full Bible/Devotional/Prayer sections back in later.
+             This file is focused on fixing the "buttons dead" problem reliably. -->
+        <section id="bibleSection" class="app-section"><div class="section-body"><div class="card"><h3>Read Bible</h3><div class="muted">Section loaded.</div></div></div></section>
+        <section id="devotionalSection" class="app-section"><div class="section-body"><div class="card"><h3>Devotional</h3><div class="muted">Section loaded.</div></div></div></section>
+        <section id="prayerSection" class="app-section"><div class="section-body"><div class="card"><h3>Daily Prayer</h3><div class="muted">Section loaded.</div></div></div></section>
+      </div>
+    </div>
+
+    <!-- External JS (prevents inline-script blocking and caching issues) -->
+    <script src="/static/app.js?v=20251214_fix1"></script>
+  </body>
+</html>
+
 
 
 
