@@ -6,7 +6,7 @@ from typing import Optional, Dict, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -16,8 +16,18 @@ load_dotenv()
 
 app = FastAPI(title="Alyana Luz · Bible AI")
 
-# Serve frontend assets (JS/CSS/etc)
-app.mount("/static", StaticFiles(directory="frontend"), name="static")
+# --------------------
+# Paths (ABSOLUTE)
+# --------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
+APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
+
+# Optional: still mount /static, but we ALSO add explicit routes below
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
 
 # --------------------
 # Gemini (AI)
@@ -32,9 +42,29 @@ class ChatIn(BaseModel):
 
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
-    # Force no-cache so you don't get stuck on old JS/HTML after deploy
+    if not os.path.exists(INDEX_PATH):
+        return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
     return FileResponse(
-        "frontend/index.html",
+        INDEX_PATH,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
+# HARD GUARANTEE: serve app.js even if StaticFiles/mount fails
+@app.get("/static/app.js", include_in_schema=False)
+async def serve_app_js():
+    if not os.path.exists(APPJS_PATH):
+        return PlainTextResponse(
+            f"Missing {APPJS_PATH}. Create frontend/app.js in your repo.",
+            status_code=404,
+        )
+    return FileResponse(
+        APPJS_PATH,
+        media_type="application/javascript",
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
@@ -45,13 +75,19 @@ async def serve_frontend():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "commit": os.getenv("RENDER_GIT_COMMIT", "unknown")}
+    return {
+        "status": "ok",
+        "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
+        "frontend_dir": FRONTEND_DIR,
+        "index_exists": os.path.exists(INDEX_PATH),
+        "appjs_exists": os.path.exists(APPJS_PATH),
+    }
 
 
 # =========================
 # Bible Reader (LOCAL DB)
 # =========================
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bible.db")
+DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
 
 
 def _db():
@@ -333,30 +369,6 @@ def chat(body: ChatIn):
     print("Gemini error after retries:", repr(last_error))
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
 
-
-@app.post("/devotional")
-def devotional():
-    _require_ai()
-    prompt = (
-        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
-        "scripture: a short scripture reference + verse text (1-3 verses max)\n"
-        "brief_explanation: 2-4 sentences explaining it simply\n"
-        "Choose an encouraging, Christ-centered theme.\n"
-    )
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-    return {"json": (response.text or "").strip()}
-
-
-@app.post("/daily_prayer")
-def daily_prayer():
-    _require_ai()
-    prompt = (
-        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
-        "example_adoration, example_confession, example_thanksgiving, example_supplication.\n"
-        "Each value should be 1-2 sentences, warm and biblically grounded.\n"
-    )
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-    return {"json": (response.text or "").strip()}
 
 
 
