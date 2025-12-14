@@ -123,7 +123,7 @@
         outline: none;
         font-size: 14px;
       }
-      textarea { min-height: 110px; resize: vertical; }
+      textarea { min-height: 120px; resize: vertical; }
 
       .btn {
         padding: 10px 14px;
@@ -138,6 +138,36 @@
       .btn-green { background: #22c55e; color: #052e12; }
       .btn-ghost { background: rgba(255,255,255,0.10); color: white; }
       .btn:disabled { opacity: 0.6; cursor: default; }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .small-note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
+      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
+
+      .block {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .block + .block { margin-top: 10px; }
+
+      .divider {
+        height: 1px;
+        background: rgba(255,255,255,0.10);
+        margin: 14px 0;
+      }
 
       /* CHAT */
       .chat-layout {
@@ -205,29 +235,6 @@
       }
       .chat-form input[type="text"] { border-radius: 999px; flex: 1; min-width: 240px; }
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
-
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-size: 12px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
-      .small-note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
-      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
-      .block {
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 14px;
-        padding: 12px;
-      }
-      .block + .block { margin-top: 10px; }
     </style>
   </head>
 
@@ -402,9 +409,12 @@
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Devotional</h3>
-                  <div class="muted">Generate a short scripture devotional.</div>
+                  <div class="muted">
+                    Alyana provides Scripture + a brief explanation. Then you write your own explanation, application, and prayer.
+                  </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
                     <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
                     <select id="devotionalLang">
@@ -412,20 +422,47 @@
                       <option value="es">Spanish (Paulina)</option>
                     </select>
                   </label>
+
                   <button class="btn btn-primary" id="devotionalBtn" type="button">Generate</button>
+                  <button class="btn btn-green" id="devotionalSaveBtn" type="button">Save Today</button>
+                  <button class="btn btn-danger" id="devotionalClearBtn" type="button">Clear</button>
                   <button class="btn btn-ghost" id="devotionalListenBtn" type="button">Listen</button>
                 </div>
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="muted" style="margin-bottom:6px;">Scripture</div>
+                <div class="muted" style="margin-bottom:6px;">1) Scripture (Alyana)</div>
                 <div id="devotionalScripture" style="white-space:pre-wrap;">—</div>
               </div>
 
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Explanation</div>
+                <div class="muted" style="margin-bottom:6px;">2) Brief Explanation (Alyana)</div>
                 <div id="devotionalExplain" style="white-space:pre-wrap;">—</div>
               </div>
+
+              <div class="divider"></div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">3) My Explanation (write what you think it means)</div>
+                <textarea id="devMyExplain" placeholder="Write your understanding of the scripture…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">4) My Application (how will I apply this today?)</div>
+                <textarea id="devMyApply" placeholder="Write how you can apply this scripture to your life…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">5) My Prayer</div>
+                <textarea id="devMyPrayer" placeholder="Write a prayer about this scripture…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">6) Reflection (notes / what stood out)</div>
+                <textarea id="devReflection" placeholder="Reflection…"></textarea>
+              </div>
+
+              <div class="small-note" id="devSaveStatus">Not saved yet.</div>
             </div>
           </div>
         </section>
@@ -437,9 +474,12 @@
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
-                  <div class="muted">Generate a simple prayer structure (ACTS-style).</div>
+                  <div class="muted">
+                    ACTS format. Alyana can generate short starters if you need help, then you write your own prayer.
+                  </div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
                     <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
                     <select id="prayerLang">
@@ -447,27 +487,48 @@
                       <option value="es">Spanish (Paulina)</option>
                     </select>
                   </label>
-                  <button class="btn btn-primary" id="prayerBtn" type="button">Generate</button>
+
+                  <button class="btn btn-primary" id="prayerBtn" type="button">Generate Starters</button>
+                  <button class="btn btn-green" id="prayerSaveBtn" type="button">Save Today</button>
+                  <button class="btn btn-danger" id="prayerClearBtn" type="button">Clear</button>
                   <button class="btn btn-ghost" id="prayerListenBtn" type="button">Listen</button>
                 </div>
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="muted" style="margin-bottom:6px;">Adoration</div>
-                <div id="pA" style="white-space:pre-wrap;">—</div>
+                <div class="muted" style="margin-bottom:6px;">Starter (Adoration) — optional help</div>
+                <div id="pAStarter" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own Adoration:</div>
+                <textarea id="pAUser" placeholder="Adoration (your words)…"></textarea>
               </div>
+
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Confession</div>
-                <div id="pC" style="white-space:pre-wrap;">—</div>
+                <div class="muted" style="margin-bottom:6px;">Starter (Confession) — optional help</div>
+                <div id="pCStarter" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own Confession:</div>
+                <textarea id="pCUser" placeholder="Confession (your words)…"></textarea>
               </div>
+
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Thanksgiving</div>
-                <div id="pT" style="white-space:pre-wrap;">—</div>
+                <div class="muted" style="margin-bottom:6px;">Starter (Thanksgiving) — optional help</div>
+                <div id="pTStarter" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own Thanksgiving:</div>
+                <textarea id="pTUser" placeholder="Thanksgiving (your words)…"></textarea>
               </div>
+
               <div class="block">
-                <div class="muted" style="margin-bottom:6px;">Supplication</div>
-                <div id="pS" style="white-space:pre-wrap;">—</div>
+                <div class="muted" style="margin-bottom:6px;">Starter (Supplication) — optional help</div>
+                <div id="pSStarter" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own Supplication:</div>
+                <textarea id="pSUser" placeholder="Supplication (your words)…"></textarea>
               </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Notes (optional)</div>
+                <textarea id="pNotes" placeholder="Notes…"></textarea>
+              </div>
+
+              <div class="small-note" id="prayerSaveStatus">Not saved yet.</div>
             </div>
           </div>
         </section>
@@ -506,6 +567,15 @@
         const res = await fetch(url, opts);
         if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
         return await res.json();
+      }
+
+      function todayKey() {
+        // local device date key
+        const d = new Date();
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${yyyy}-${mm}-${dd}`;
       }
 
       // ------------------------------
@@ -623,7 +693,7 @@
       function updateVoicePills() {
         const ready = ("speechSynthesis" in window) ? (TTS.ready ? "ready" : "loading…") : "not supported";
         if (ttsStatus) ttsStatus.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
-        chatVoicePill.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
+        if (chatVoicePill) chatVoicePill.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
       }
 
       if ("speechSynthesis" in window) {
@@ -632,7 +702,7 @@
         setTimeout(refreshVoices, 1200);
       } else {
         if (ttsStatus) ttsStatus.textContent = "Voice: not supported";
-        chatVoicePill.textContent = "Voice: not supported";
+        if (chatVoicePill) chatVoicePill.textContent = "Voice: not supported";
       }
 
       // ------------------------------
@@ -822,325 +892,14 @@
 
         const langKey = resolveChatLangForListen();
 
-        // Keep Spanish pure: remove obvious English version tags if they appear
         let txt = lastBotMessage;
         if (langKey === "es") {
           txt = txt.replace(/\b(KJV|NKJV|NIV|ESV|NASB|CSB|AMP|MSG)\b/gi, "").trim();
         }
 
         if (TTS.isSpeaking) stopSpeaking();
-        else speakText(txt, langKey);
-      });
+        else speakText(txt,
 
-      // ------------------------------
-      // DEVOTIONAL
-      // ------------------------------
-      const devotionalBtn = document.getElementById("devotionalBtn");
-      const devotionalListenBtn = document.getElementById("devotionalListenBtn");
-      const devotionalLang = document.getElementById("devotionalLang");
-      const devotionalScripture = document.getElementById("devotionalScripture");
-      const devotionalExplain = document.getElementById("devotionalExplain");
-      let devotionalLastText = "";
-
-      devotionalBtn.addEventListener("click", async () => {
-        devotionalBtn.disabled = true;
-        devotionalScripture.textContent = "Loading…";
-        devotionalExplain.textContent = "Loading…";
-        devotionalLastText = "";
-
-        try {
-          const data = await apiJSON("/devotional", { method: "POST" });
-          const obj = safeJSONFromModel(data.json || "");
-          if (!obj) throw new Error("Bad JSON from model");
-
-          devotionalScripture.textContent = obj.scripture || "—";
-          devotionalExplain.textContent = obj.brief_explanation || "—";
-          devotionalLastText = `${obj.scripture || ""}\n\n${obj.brief_explanation || ""}`.trim();
-        } catch (e) {
-          console.error(e);
-          devotionalScripture.textContent = "Error generating devotional.";
-          devotionalExplain.textContent = "Please try again.";
-        } finally {
-          devotionalBtn.disabled = false;
-        }
-      });
-
-      devotionalListenBtn.addEventListener("click", () => {
-        if (!devotionalLastText) {
-          alert("Generate a devotional first.");
-          return;
-        }
-        const langKey = devotionalLang.value || "en";
-        if (TTS.isSpeaking) stopSpeaking();
-        else speakText(devotionalLastText, langKey);
-      });
-
-      // ------------------------------
-      // DAILY PRAYER
-      // ------------------------------
-      const prayerBtn = document.getElementById("prayerBtn");
-      const prayerListenBtn = document.getElementById("prayerListenBtn");
-      const prayerLang = document.getElementById("prayerLang");
-      const pA = document.getElementById("pA");
-      const pC = document.getElementById("pC");
-      const pT = document.getElementById("pT");
-      const pS = document.getElementById("pS");
-      let prayerLastText = "";
-
-      prayerBtn.addEventListener("click", async () => {
-        prayerBtn.disabled = true;
-        pA.textContent = "Loading…";
-        pC.textContent = "Loading…";
-        pT.textContent = "Loading…";
-        pS.textContent = "Loading…";
-        prayerLastText = "";
-
-        try {
-          const data = await apiJSON("/daily_prayer", { method: "POST" });
-          const obj = safeJSONFromModel(data.json || "");
-          if (!obj) throw new Error("Bad JSON from model");
-
-          pA.textContent = obj.example_adoration || "—";
-          pC.textContent = obj.example_confession || "—";
-          pT.textContent = obj.example_thanksgiving || "—";
-          pS.textContent = obj.example_supplication || "—";
-
-          prayerLastText = [
-            "Adoration: " + (obj.example_adoration || ""),
-            "Confession: " + (obj.example_confession || ""),
-            "Thanksgiving: " + (obj.example_thanksgiving || ""),
-            "Supplication: " + (obj.example_supplication || "")
-          ].join("\n\n").trim();
-        } catch (e) {
-          console.error(e);
-          pA.textContent = "Error generating prayer.";
-          pC.textContent = "Please try again.";
-          pT.textContent = "—";
-          pS.textContent = "—";
-        } finally {
-          prayerBtn.disabled = false;
-        }
-      });
-
-      prayerListenBtn.addEventListener("click", () => {
-        if (!prayerLastText) {
-          alert("Generate a daily prayer first.");
-          return;
-        }
-        const langKey = prayerLang.value || "en";
-        if (TTS.isSpeaking) stopSpeaking();
-        else speakText(prayerLastText, langKey);
-      });
-
-      // ------------------------------
-      // BIBLE READER (dropdowns + toggle listen)
-      // ------------------------------
-      const bibleDbStatus = document.getElementById("bibleDbStatus");
-      const bookSelect = document.getElementById("bookSelect");
-      const chapterSelect = document.getElementById("chapterSelect");
-      const verseStartSelect = document.getElementById("verseStartSelect");
-      const verseEndSelect = document.getElementById("verseEndSelect");
-      const fullChapterChk = document.getElementById("fullChapter");
-      const listenBtn = document.getElementById("listenBible");
-      const stopBtn = document.getElementById("stopBible");
-      const readingVoice = document.getElementById("readingVoice");
-      const versionSelect = document.getElementById("versionSelect");
-
-      let currentBibleSpeaking = false;
-
-      function fillSelect(selectEl, items, { placeholder = null, labelKey = null, valueKey = null } = {}) {
-        selectEl.innerHTML = "";
-        if (placeholder) {
-          const o = document.createElement("option");
-          o.value = "";
-          o.textContent = placeholder;
-          selectEl.appendChild(o);
-        }
-        items.forEach(it => {
-          const o = document.createElement("option");
-          if (valueKey && it && typeof it === "object") o.value = String(it[valueKey]);
-          else o.value = String(it);
-          if (labelKey && it && typeof it === "object") o.textContent = String(it[labelKey]);
-          else o.textContent = String(it);
-          selectEl.appendChild(o);
-        });
-      }
-
-      async function loadBibleHealth() {
-        try {
-          const data = await apiJSON("/bible/health");
-          bibleDbStatus.textContent = `OK — verses: ${data.verse_count} — db: ${data.db_path}`;
-        } catch (e) {
-          console.error(e);
-          bibleDbStatus.textContent = "Bible DB error. Make sure data/bible.db exists on the server.";
-        }
-      }
-
-      async function loadBooks() {
-        const data = await apiJSON("/bible/books");
-        const books = data.books || [];
-        fillSelect(bookSelect, books, { placeholder: "Select a book…", labelKey: "name", valueKey: "id" });
-      }
-
-      async function loadChapters(bookId) {
-        const data = await apiJSON(`/bible/chapters?book=${encodeURIComponent(bookId)}`);
-        fillSelect(chapterSelect, (data.chapters || []), { placeholder: "Chapter…" });
-      }
-
-      async function loadVerses(bookId, chapter) {
-        const data = await apiJSON(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`);
-        const verses = data.verses || [];
-        fillSelect(verseStartSelect, verses, { placeholder: "Start…" });
-        fillSelect(verseEndSelect, verses, { placeholder: "(optional)" });
-      }
-
-      bookSelect.addEventListener("change", async () => {
-        stopSpeaking();
-        currentBibleSpeaking = false;
-        listenBtn.textContent = "Listen";
-
-        const bookId = bookSelect.value;
-        if (!bookId) return;
-
-        try {
-          await loadChapters(bookId);
-          const first = chapterSelect.options[1]?.value || "";
-          if (first) {
-            chapterSelect.value = first;
-            await loadVerses(bookId, first);
-          }
-        } catch (e) {
-          console.error(e);
-          alert("Could not load chapters for that book.");
-        }
-      });
-
-      chapterSelect.addEventListener("change", async () => {
-        stopSpeaking();
-        currentBibleSpeaking = false;
-        listenBtn.textContent = "Listen";
-
-        const bookId = bookSelect.value;
-        const ch = chapterSelect.value;
-        if (!bookId || !ch) return;
-
-        try {
-          await loadVerses(bookId, ch);
-        } catch (e) {
-          console.error(e);
-          alert("Could not load verses for that chapter.");
-        }
-      });
-
-      fullChapterChk.addEventListener("change", () => {
-        const on = fullChapterChk.checked;
-        verseStartSelect.disabled = on;
-        verseEndSelect.disabled = on;
-      });
-
-      async function fetchPassageText() {
-        const bookId = bookSelect.value;
-        const chapter = chapterSelect.value;
-        if (!bookId || !chapter) throw new Error("Missing book/chapter");
-
-        if (fullChapterChk.checked) {
-          const data = await apiJSON(`/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=true`);
-          return { reference: data.reference || "", text: data.text || "" };
-        }
-
-        const vStart = verseStartSelect.value;
-        const vEnd = verseEndSelect.value;
-        if (!vStart) throw new Error("Missing start verse");
-
-        const end = (vEnd && Number(vEnd) >= Number(vStart)) ? vEnd : vStart;
-
-        const data = await apiJSON(`/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(vStart)}&end=${encodeURIComponent(end)}`);
-        return { reference: data.reference || "", text: data.text || "" };
-      }
-
-      listenBtn.addEventListener("click", async () => {
-        try {
-          if (!("speechSynthesis" in window)) {
-            alert("Speech synthesis is not supported in this browser.");
-            return;
-          }
-
-          if (currentBibleSpeaking || TTS.isSpeaking) {
-            stopSpeaking();
-            currentBibleSpeaking = false;
-            listenBtn.textContent = "Listen";
-            return;
-          }
-
-          const { reference, text } = await fetchPassageText();
-          if (!text) {
-            alert("No text returned.");
-            return;
-          }
-
-          const langKey = readingVoice.value || "en";
-
-          let spokenText = "";
-          if (langKey === "es") {
-            spokenText = String(text)
-              .replace(/\b(KJV|NKJV|NIV|ESV|NASB|CSB|AMP|MSG)\b/gi, "")
-              .trim();
-          } else {
-            const version = versionSelect.value || "KJV";
-            spokenText = `${version}. ${reference}. ${text}`.trim();
-          }
-
-          currentBibleSpeaking = true;
-          listenBtn.textContent = "Stop";
-          speakText(spokenText, langKey);
-
-          const watch = setInterval(() => {
-            if (!TTS.isSpeaking) {
-              clearInterval(watch);
-              currentBibleSpeaking = false;
-              listenBtn.textContent = "Listen";
-            }
-          }, 250);
-
-        } catch (e) {
-          console.error(e);
-          alert("Could not read passage. Make sure book/chapter/verses are selected.");
-        }
-      });
-
-      stopBtn.addEventListener("click", () => {
-        stopSpeaking();
-        currentBibleSpeaking = false;
-        listenBtn.textContent = "Listen";
-      });
-
-      // Init Bible + DB health
-      (async function initBible() {
-        try {
-          await loadBibleHealth();
-          await loadBooks();
-
-          const firstBook = bookSelect.options[1]?.value || "";
-          if (firstBook) {
-            bookSelect.value = firstBook;
-            await loadChapters(firstBook);
-            const firstCh = chapterSelect.options[1]?.value || "";
-            if (firstCh) {
-              chapterSelect.value = firstCh;
-              await loadVerses(firstBook, firstCh);
-            }
-          }
-
-          fullChapterChk.dispatchEvent(new Event("change"));
-          updateVoicePills();
-        } catch (e) {
-          console.error(e);
-          updateVoicePills();
-        }
-      })();
-    </script>
-  </body>
-</html>
 
 
 
