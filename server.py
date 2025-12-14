@@ -2,7 +2,7 @@ import os
 import re
 import time
 import sqlite3
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -38,7 +38,7 @@ def health():
 
 # =========================
 # Bible Reader (LOCAL DB)
-# Your DB schema (confirmed):
+# DB schema (confirmed):
 #   tables: books, verses
 #   verses columns: book_id, chapter, verse, text
 # =========================
@@ -59,38 +59,24 @@ def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
 
 
 def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
-    """
-    We don't assume exact books table column names.
-    We'll auto-detect the best candidates for:
-      - id column
-      - display name column
-      - optional key/slug column (if exists)
-    """
     cols = [c.lower() for c in _get_table_columns(con, "books")]
 
-    # id column
     id_col = None
     for cand in ["id", "book_id", "pk"]:
         if cand in cols:
             id_col = cand
             break
     if not id_col:
-        # fallback: first integer primary key
-        # pragma table_info includes pk flag, but we already only captured names
-        # so we just try common 'id'
         id_col = "id" if "id" in cols else cols[0]
 
-    # name column
     name_col = None
     for cand in ["name", "book", "title", "label"]:
         if cand in cols:
             name_col = cand
             break
     if not name_col:
-        # fallback: second column if exists, else first
         name_col = cols[1] if len(cols) > 1 else cols[0]
 
-    # key/slug column (optional)
     key_col = None
     for cand in ["key", "slug", "code", "abbr", "short_name", "shortname"]:
         if cand in cols:
@@ -107,17 +93,10 @@ def _normalize_book_key(book: str) -> str:
 
 
 def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
-    """
-    Accepts:
-      - numeric book id: "10"
-      - name: "Genesis"
-      - key/slug: "2samuel", "songofsolomon"
-    """
     raw = (book or "").strip()
     if not raw:
         raise HTTPException(status_code=400, detail="Missing book")
 
-    # numeric id
     if raw.isdigit():
         return int(raw)
 
@@ -125,10 +104,8 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     id_col = mapping["id_col"]
     name_col = mapping["name_col"]
     key_col = mapping["key_col"]
-
     norm = _normalize_book_key(raw)
 
-    # Try exact name match (case-insensitive)
     row = con.execute(
         f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1",
         (raw,),
@@ -136,7 +113,6 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     if row:
         return int(row["id"])
 
-    # Try normalized compare (remove spaces) against name
     row = con.execute(
         f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1",
         (norm,),
@@ -144,7 +120,6 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     if row:
         return int(row["id"])
 
-    # If key/slug column exists, try it
     if key_col:
         row = con.execute(
             f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1",
@@ -160,7 +135,6 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
 def bible_health():
     con = _db()
     try:
-        # Check required tables
         tables = con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         ).fetchall()
@@ -168,7 +142,6 @@ def bible_health():
         if "books" not in table_names or "verses" not in table_names:
             raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
 
-        # Check required columns in verses
         vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
         needed = {"book_id", "chapter", "verse", "text"}
         if not needed.issubset(vcols):
@@ -192,7 +165,6 @@ def bible_books():
         name_col = mapping["name_col"]
         key_col = mapping["key_col"]
 
-        # Provide id + label + key (if exists) so frontend can display nicely and query reliably.
         if key_col:
             rows = con.execute(
                 f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
@@ -259,10 +231,6 @@ def bible_passage(
     start: int = 1,
     end: Optional[int] = None,
 ):
-    """
-    Frontend will call:
-      /bible/passage?book=<book_id_or_name_or_key>&chapter=...&full_chapter=true|false&start=...&end=...
-    """
     if chapter < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter")
 
@@ -270,7 +238,6 @@ def bible_passage(
     try:
         book_id = _resolve_book_id(con, book)
 
-        # get book name for reference
         mapping = _get_books_table_mapping(con)
         id_col = mapping["id_col"]
         name_col = mapping["name_col"]
@@ -356,6 +323,50 @@ def chat(body: ChatIn):
 
     print("Gemini error after retries:", repr(last_error))
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+
+
+@app.post("/devotional")
+def devotional():
+    """
+    Frontend expects: { json: "<json-string>" }
+    keys: scripture, brief_explanation
+    """
+    _require_ai()
+
+    prompt = (
+        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
+        "scripture: a short scripture reference + verse text (1-3 verses max)\n"
+        "brief_explanation: 2-4 sentences explaining it simply\n"
+        "Choose an encouraging, Christ-centered theme.\n"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    return {"json": (response.text or "").strip()}
+
+
+@app.post("/daily_prayer")
+def daily_prayer():
+    """
+    Frontend expects: { json: "<json-string>" }
+    keys: example_adoration, example_confession, example_thanksgiving, example_supplication
+    """
+    _require_ai()
+
+    prompt = (
+        "Return ONLY valid JSON (no markdown, no code fences) with keys:\n"
+        "example_adoration, example_confession, example_thanksgiving, example_supplication.\n"
+        "Each value should be 1-2 sentences, warm and biblically grounded.\n"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    return {"json": (response.text or "").strip()}
+
 
 
 
