@@ -38,9 +38,6 @@ def health():
 
 # =========================
 # Bible Reader (LOCAL DB)
-# DB schema (confirmed):
-#   tables: books, verses
-#   verses columns: book_id, chapter, verse, text
 # =========================
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "bible.db")
 
@@ -290,6 +287,10 @@ def _require_ai():
         raise HTTPException(status_code=503, detail="AI key not configured (GEMINI_API_KEY missing).")
 
 
+def _clean_model_text(t: str) -> str:
+    return (t or "").replace("\ufeff", "").strip()
+
+
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
@@ -309,7 +310,7 @@ def chat(body: ChatIn):
                 model="gemini-2.5-flash",
                 contents=full_prompt,
             )
-            text = response.text or "Sorry, I couldn't think of anything to say."
+            text = _clean_model_text(response.text) or "Sorry, I couldn't think of anything to say."
             return {"status": "success", "message": text}
         except Exception as e:
             last_error = e
@@ -344,7 +345,7 @@ def devotional():
         model="gemini-2.5-flash",
         contents=prompt,
     )
-    return {"json": (response.text or "").strip()}
+    return {"json": _clean_model_text(response.text)}
 
 
 @app.post("/daily_prayer")
@@ -365,7 +366,8 @@ def daily_prayer():
         model="gemini-2.5-flash",
         contents=prompt,
     )
-    return {"json": (response.text or "").strip()}
+    return {"json": _clean_model_text(response.text)}
+
 
 
 
