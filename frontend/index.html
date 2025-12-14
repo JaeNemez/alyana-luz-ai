@@ -85,13 +85,10 @@
         background: rgba(255,255,255,0.09);
         color: #f9fafb;
         box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-        transition: transform 0.08s ease, background 0.12s ease;
       }
-      .menu-btn:hover { background: rgba(255,255,255,0.13); }
       .menu-btn.active {
         background: #f97316;
         color: #ffffff;
-        transform: translateY(-1px);
       }
 
       .main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
@@ -204,8 +201,9 @@
         display: flex;
         gap: 10px;
         background: rgba(15,23,42,0.92);
+        flex-wrap: wrap;
       }
-      .chat-form input[type="text"] { border-radius: 999px; }
+      .chat-form input[type="text"] { border-radius: 999px; flex: 1; min-width: 240px; }
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
       .pill {
@@ -218,12 +216,11 @@
         border: 1px solid rgba(255,255,255,0.12);
         font-size: 12px;
         font-weight: 800;
+        white-space: nowrap;
       }
+
       .small-note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
-
       .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
-
-      .block-title { font-weight: 900; margin-bottom: 8px; }
       .block {
         background: rgba(255,255,255,0.06);
         border: 1px solid rgba(255,255,255,0.10);
@@ -253,6 +250,8 @@
       <nav class="menu-bar">
         <button class="menu-btn" data-target="chatSection" type="button">Chat</button>
         <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button">Daily Prayer</button>
       </nav>
 
       <div class="main">
@@ -265,7 +264,16 @@
                   <h3 style="margin:0 0 4px 0;">Chat</h3>
                   <div class="muted">Saved chat logs are stored on this device.</div>
                 </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
+                    <select id="chatLangSelect">
+                      <option value="auto" selected>Auto (based on what they type)</option>
+                      <option value="en">English (Karen — en-AU)</option>
+                      <option value="es">Spanish (Paulina — es-MX)</option>
+                    </select>
+                  </label>
                   <span class="pill" id="chatVoicePill">Voice: loading…</span>
                 </div>
               </div>
@@ -376,13 +384,90 @@
               </div>
 
               <div class="small-note">
-                If Spanish ever flips to English, it means mixed-language text was spoken. This UI prevents that.
+                Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
               </div>
             </div>
 
             <div class="card">
               <h4>Bible DB Status</h4>
               <div class="muted" id="bibleDbStatus">Checking…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DEVOTIONAL -->
+        <section id="devotionalSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;">Devotional</h3>
+                  <div class="muted">Generate a short scripture devotional.</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
+                    <select id="devotionalLang">
+                      <option value="en" selected>English (Karen)</option>
+                      <option value="es">Spanish (Paulina)</option>
+                    </select>
+                  </label>
+                  <button class="btn btn-primary" id="devotionalBtn" type="button">Generate</button>
+                  <button class="btn btn-ghost" id="devotionalListenBtn" type="button">Listen</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" style="margin-bottom:6px;">Scripture</div>
+                <div id="devotionalScripture" style="white-space:pre-wrap;">—</div>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Explanation</div>
+                <div id="devotionalExplain" style="white-space:pre-wrap;">—</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DAILY PRAYER -->
+        <section id="prayerSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
+                  <div class="muted">Generate a simple prayer structure (ACTS-style).</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
+                    <select id="prayerLang">
+                      <option value="en" selected>English (Karen)</option>
+                      <option value="es">Spanish (Paulina)</option>
+                    </select>
+                  </label>
+                  <button class="btn btn-primary" id="prayerBtn" type="button">Generate</button>
+                  <button class="btn btn-ghost" id="prayerListenBtn" type="button">Listen</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" style="margin-bottom:6px;">Adoration</div>
+                <div id="pA" style="white-space:pre-wrap;">—</div>
+              </div>
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Confession</div>
+                <div id="pC" style="white-space:pre-wrap;">—</div>
+              </div>
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Thanksgiving</div>
+                <div id="pT" style="white-space:pre-wrap;">—</div>
+              </div>
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Supplication</div>
+                <div id="pS" style="white-space:pre-wrap;">—</div>
+              </div>
             </div>
           </div>
         </section>
@@ -417,8 +502,8 @@
         return score >= 2;
       }
 
-      async function apiJSON(url) {
-        const res = await fetch(url);
+      async function apiJSON(url, opts) {
+        const res = await fetch(url, opts);
         if (!res.ok) throw new Error(`API ${res.status} for ${url}`);
         return await res.json();
       }
@@ -445,7 +530,7 @@
       // ------------------------------
       // TTS: Lock to 2 voices only
       // ------------------------------
-      const TTS = { voices: [], ready: false, isSpeaking: false, currentUtterances: [] };
+      const TTS = { voices: [], ready: false, isSpeaking: false };
       const ttsStatus = document.getElementById("ttsStatus");
       const chatVoicePill = document.getElementById("chatVoicePill");
 
@@ -480,12 +565,10 @@
         if (!("speechSynthesis" in window)) return;
         window.speechSynthesis.cancel();
         TTS.isSpeaking = false;
-        TTS.currentUtterances = [];
         updateVoicePills();
       }
 
-      // Chunking prevents long-utterance dropouts; also keeps language pinned per chunk.
-      function chunkText(text, maxLen = 240) {
+      function chunkText(text, maxLen = 220) {
         const t = String(text || "").trim();
         if (!t) return [];
         const parts = [];
@@ -509,9 +592,8 @@
         }
         stopSpeaking();
 
-        const { voice, lang } = pickVoice(langKey);
+        const { voice, lang } = pickVoice(langKey) || {};
         const chunks = chunkText(text, 220);
-
         if (!chunks.length) return;
 
         TTS.isSpeaking = true;
@@ -526,14 +608,13 @@
             return;
           }
           const u = new SpeechSynthesisUtterance(chunks[idx]);
-          u.lang = lang;
+          u.lang = lang || (langKey === "es" ? "es-MX" : "en-AU");
           if (voice) u.voice = voice;
           u.rate = 0.95;
-          u.pitch = 1.0;
+
           u.onend = () => { idx++; speakNext(); };
           u.onerror = () => { idx++; speakNext(); };
           window.speechSynthesis.speak(u);
-          TTS.currentUtterances.push(u);
         };
 
         speakNext();
@@ -541,24 +622,24 @@
 
       function updateVoicePills() {
         const ready = ("speechSynthesis" in window) ? (TTS.ready ? "ready" : "loading…") : "not supported";
-        ttsStatus.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
+        if (ttsStatus) ttsStatus.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
         chatVoicePill.textContent = `Voice: ${ready}${TTS.isSpeaking ? " (speaking)" : ""}`;
       }
 
       if ("speechSynthesis" in window) {
-        window.speechSynthesis.onvoiceschanged = () => {
-          refreshVoices();
-        };
+        window.speechSynthesis.onvoiceschanged = () => refreshVoices();
         setTimeout(refreshVoices, 250);
         setTimeout(refreshVoices, 1200);
       } else {
-        ttsStatus.textContent = "Voice: not supported";
+        if (ttsStatus) ttsStatus.textContent = "Voice: not supported";
         chatVoicePill.textContent = "Voice: not supported";
       }
 
       // ------------------------------
       // CHAT + Chat Log
       // ------------------------------
+      const chatLangSelect = document.getElementById("chatLangSelect");
+
       const chatEl = document.getElementById("chat");
       const chatForm = document.getElementById("chatForm");
       const chatInput = document.getElementById("chatInput");
@@ -621,7 +702,6 @@
             btn.style.textAlign = "left";
             btn.textContent = `${item.title || "Chat"} — ${item.createdAt || ""}`;
             btn.addEventListener("click", () => {
-              // load chat
               stopSpeaking();
               chatHistory.length = 0;
               chatEl.innerHTML = "";
@@ -672,6 +752,15 @@
         alert("Saved chat.");
       }
 
+      function resolveChatLangForListen() {
+        const sel = chatLangSelect.value;
+        if (sel === "en" || sel === "es") return sel;
+
+        // Auto: based on what the user typed last
+        const lastUser = [...chatHistory].reverse().find(m => m.role === "user")?.text || "";
+        return looksSpanish(lastUser) ? "es" : "en";
+      }
+
       addWelcome();
       renderChatSavedList();
 
@@ -695,14 +784,13 @@
 
           const fullPrompt = historyText + "\n\nContinue responding as Alyana Luz, a gentle Bible AI assistant.";
 
-          const res = await fetch("/chat", {
+          const data = await apiJSON("/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: fullPrompt })
           });
 
-          const data = await res.json();
-          const text = data.message || data.prayer || JSON.stringify(data, null, 2);
+          const text = data.message || "Sorry, I couldn't respond right now.";
           loading.textContent = text;
 
           chatHistory.push({ role: "assistant", text });
@@ -731,11 +819,10 @@
           alert("Nothing to read yet.");
           return;
         }
-        // Auto choose voice based on the last USER message (your request)
-        const lastUser = [...chatHistory].reverse().find(m => m.role === "user")?.text || "";
-        const langKey = looksSpanish(lastUser) ? "es" : "en";
 
-        // IMPORTANT: For Spanish, do not allow mixed-language prefixes.
+        const langKey = resolveChatLangForListen();
+
+        // Keep Spanish pure: remove obvious English version tags if they appear
         let txt = lastBotMessage;
         if (langKey === "es") {
           txt = txt.replace(/\b(KJV|NKJV|NIV|ESV|NASB|CSB|AMP|MSG)\b/gi, "").trim();
@@ -746,10 +833,109 @@
       });
 
       // ------------------------------
+      // DEVOTIONAL
+      // ------------------------------
+      const devotionalBtn = document.getElementById("devotionalBtn");
+      const devotionalListenBtn = document.getElementById("devotionalListenBtn");
+      const devotionalLang = document.getElementById("devotionalLang");
+      const devotionalScripture = document.getElementById("devotionalScripture");
+      const devotionalExplain = document.getElementById("devotionalExplain");
+      let devotionalLastText = "";
+
+      devotionalBtn.addEventListener("click", async () => {
+        devotionalBtn.disabled = true;
+        devotionalScripture.textContent = "Loading…";
+        devotionalExplain.textContent = "Loading…";
+        devotionalLastText = "";
+
+        try {
+          const data = await apiJSON("/devotional", { method: "POST" });
+          const obj = safeJSONFromModel(data.json || "");
+          if (!obj) throw new Error("Bad JSON from model");
+
+          devotionalScripture.textContent = obj.scripture || "—";
+          devotionalExplain.textContent = obj.brief_explanation || "—";
+          devotionalLastText = `${obj.scripture || ""}\n\n${obj.brief_explanation || ""}`.trim();
+        } catch (e) {
+          console.error(e);
+          devotionalScripture.textContent = "Error generating devotional.";
+          devotionalExplain.textContent = "Please try again.";
+        } finally {
+          devotionalBtn.disabled = false;
+        }
+      });
+
+      devotionalListenBtn.addEventListener("click", () => {
+        if (!devotionalLastText) {
+          alert("Generate a devotional first.");
+          return;
+        }
+        const langKey = devotionalLang.value || "en";
+        if (TTS.isSpeaking) stopSpeaking();
+        else speakText(devotionalLastText, langKey);
+      });
+
+      // ------------------------------
+      // DAILY PRAYER
+      // ------------------------------
+      const prayerBtn = document.getElementById("prayerBtn");
+      const prayerListenBtn = document.getElementById("prayerListenBtn");
+      const prayerLang = document.getElementById("prayerLang");
+      const pA = document.getElementById("pA");
+      const pC = document.getElementById("pC");
+      const pT = document.getElementById("pT");
+      const pS = document.getElementById("pS");
+      let prayerLastText = "";
+
+      prayerBtn.addEventListener("click", async () => {
+        prayerBtn.disabled = true;
+        pA.textContent = "Loading…";
+        pC.textContent = "Loading…";
+        pT.textContent = "Loading…";
+        pS.textContent = "Loading…";
+        prayerLastText = "";
+
+        try {
+          const data = await apiJSON("/daily_prayer", { method: "POST" });
+          const obj = safeJSONFromModel(data.json || "");
+          if (!obj) throw new Error("Bad JSON from model");
+
+          pA.textContent = obj.example_adoration || "—";
+          pC.textContent = obj.example_confession || "—";
+          pT.textContent = obj.example_thanksgiving || "—";
+          pS.textContent = obj.example_supplication || "—";
+
+          prayerLastText = [
+            "Adoration: " + (obj.example_adoration || ""),
+            "Confession: " + (obj.example_confession || ""),
+            "Thanksgiving: " + (obj.example_thanksgiving || ""),
+            "Supplication: " + (obj.example_supplication || "")
+          ].join("\n\n").trim();
+        } catch (e) {
+          console.error(e);
+          pA.textContent = "Error generating prayer.";
+          pC.textContent = "Please try again.";
+          pT.textContent = "—";
+          pS.textContent = "—";
+        } finally {
+          prayerBtn.disabled = false;
+        }
+      });
+
+      prayerListenBtn.addEventListener("click", () => {
+        if (!prayerLastText) {
+          alert("Generate a daily prayer first.");
+          return;
+        }
+        const langKey = prayerLang.value || "en";
+        if (TTS.isSpeaking) stopSpeaking();
+        else speakText(prayerLastText, langKey);
+      });
+
+      // ------------------------------
       // BIBLE READER (dropdowns + toggle listen)
       // ------------------------------
       const bibleDbStatus = document.getElementById("bibleDbStatus");
-
       const bookSelect = document.getElementById("bookSelect");
       const chapterSelect = document.getElementById("chapterSelect");
       const verseStartSelect = document.getElementById("verseStartSelect");
@@ -818,7 +1004,7 @@
 
         try {
           await loadChapters(bookId);
-          const first = chapterSelect.options[1]?.value || chapterSelect.options[0]?.value || "";
+          const first = chapterSelect.options[1]?.value || "";
           if (first) {
             chapterSelect.value = first;
             await loadVerses(bookId, first);
@@ -855,7 +1041,6 @@
       async function fetchPassageText() {
         const bookId = bookSelect.value;
         const chapter = chapterSelect.value;
-
         if (!bookId || !chapter) throw new Error("Missing book/chapter");
 
         if (fullChapterChk.checked) {
@@ -880,7 +1065,6 @@
             return;
           }
 
-          // Toggle behavior
           if (currentBibleSpeaking || TTS.isSpeaking) {
             stopSpeaking();
             currentBibleSpeaking = false;
@@ -898,21 +1082,18 @@
 
           let spokenText = "";
           if (langKey === "es") {
-            // Absolute rule: Spanish voice gets ONLY verse text, no English prefix.
-            spokenText = text
+            spokenText = String(text)
               .replace(/\b(KJV|NKJV|NIV|ESV|NASB|CSB|AMP|MSG)\b/gi, "")
-              .replace(/\s+/g, " ")
               .trim();
           } else {
             const version = versionSelect.value || "KJV";
-            spokenText = `${version}. ${reference}. ${text}`;
+            spokenText = `${version}. ${reference}. ${text}`.trim();
           }
 
           currentBibleSpeaking = true;
           listenBtn.textContent = "Stop";
           speakText(spokenText, langKey);
 
-          // best-effort: update button when speech stops
           const watch = setInterval(() => {
             if (!TTS.isSpeaking) {
               clearInterval(watch);
@@ -939,12 +1120,11 @@
           await loadBibleHealth();
           await loadBooks();
 
-          // auto-select first book if available
-          const firstBook = bookSelect.options[1]?.value || bookSelect.options[0]?.value || "";
+          const firstBook = bookSelect.options[1]?.value || "";
           if (firstBook) {
             bookSelect.value = firstBook;
             await loadChapters(firstBook);
-            const firstCh = chapterSelect.options[1]?.value || chapterSelect.options[0]?.value || "";
+            const firstCh = chapterSelect.options[1]?.value || "";
             if (firstCh) {
               chapterSelect.value = firstCh;
               await loadVerses(firstBook, firstCh);
@@ -955,12 +1135,13 @@
           updateVoicePills();
         } catch (e) {
           console.error(e);
-          ttsStatus.textContent = "Voice: ready";
+          updateVoicePills();
         }
       })();
     </script>
   </body>
 </html>
+
 
 
 
