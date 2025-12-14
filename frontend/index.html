@@ -35,10 +35,24 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
+        position: relative;
       }
       header h1 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 8px; }
       header h1 span.emoji { font-size: 22px; }
       header small { color: #c4b5fd; font-size: 12px; }
+
+      .js-pill {
+        position: absolute;
+        right: 16px;
+        top: 14px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
 
       .top-cta {
         padding: 10px 24px 14px;
@@ -139,19 +153,6 @@
       .btn-ghost { background: rgba(255,255,255,0.10); color: white; }
       .btn:disabled { opacity: 0.6; cursor: default; }
 
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-size: 12px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
       /* CHAT */
       .chat-layout {
         flex: 1;
@@ -218,6 +219,34 @@
       }
       .chat-form input[type="text"] { border-radius: 999px; flex: 1; min-width: 240px; }
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .small-note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
+      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
+      .block {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.10);
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .block + .block { margin-top: 10px; }
+      .divider {
+        height: 1px;
+        background: rgba(255,255,255,0.08);
+        margin: 12px 0;
+      }
     </style>
   </head>
 
@@ -226,6 +255,7 @@
       <header>
         <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
         <small>pray • learn • walk in the Light</small>
+        <span class="js-pill" id="jsStatus">JS: loading…</span>
       </header>
 
       <div class="top-cta">
@@ -235,7 +265,6 @@
         <p class="support-note">
           Your support helps maintain and grow Alyana Luz — keeping development moving and this ministry available for everyone.
         </p>
-        <span class="pill" id="jsStatus">JS: loading…</span>
       </div>
 
       <nav class="menu-bar">
@@ -246,6 +275,7 @@
       </nav>
 
       <div class="main">
+        <!-- CHAT -->
         <section id="chatSection" class="app-section active">
           <div class="chat-layout">
             <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
@@ -264,7 +294,7 @@
                       <option value="es">Spanish (Paulina — es-MX)</option>
                     </select>
                   </label>
-                  <span class="pill" id="chatVoicePill">Voice: ready</span>
+                  <span class="pill" id="chatVoicePill">Voice: loading…</span>
                 </div>
               </div>
 
@@ -273,6 +303,7 @@
               <form id="chatForm" class="chat-form">
                 <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
                 <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
+                <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
                 <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
                 <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
               </form>
@@ -288,18 +319,224 @@
           </div>
         </section>
 
-        <!-- You can paste your full Bible/Devotional/Prayer sections back in later.
-             This file is focused on fixing the "buttons dead" problem reliably. -->
-        <section id="bibleSection" class="app-section"><div class="section-body"><div class="card"><h3>Read Bible</h3><div class="muted">Section loaded.</div></div></div></section>
-        <section id="devotionalSection" class="app-section"><div class="section-body"><div class="card"><h3>Devotional</h3><div class="muted">Section loaded.</div></div></div></section>
-        <section id="prayerSection" class="app-section"><div class="section-body"><div class="card"><h3>Daily Prayer</h3><div class="muted">Section loaded.</div></div></div></section>
+        <!-- BIBLE READER -->
+        <section id="bibleSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2; min-width:260px;">
+                  <h3 style="margin-bottom:6px;">Bible Reader (Listen)</h3>
+                  <div class="muted">Pick a book/chapter and verse range, or Full Chapter.</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end;">
+                  <span class="pill" id="ttsStatus">Voice: loading…</span>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px;">
+                <div style="flex:2;">
+                  <label>Book</label>
+                  <select id="bookSelect">
+                    <option value="">Loading…</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Chapter</label>
+                  <select id="chapterSelect">
+                    <option value="">—</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Verse (start)</label>
+                  <select id="verseStartSelect">
+                    <option value="">—</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label>Verse (end)</label>
+                  <select id="verseEndSelect">
+                    <option value="">(optional)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px; align-items:flex-end;">
+                <div>
+                  <label>Reader Language</label>
+                  <select id="readingVoice">
+                    <option value="en" selected>English (Karen — en-AU)</option>
+                    <option value="es">Spanish (Paulina — es-MX)</option>
+                  </select>
+                  <div class="small-note">Only two voices, locked for consistency.</div>
+                </div>
+
+                <div style="min-width:220px;">
+                  <label style="display:flex; gap:10px; align-items:center;">
+                    <input type="checkbox" id="fullChapter" />
+                    Full Chapter
+                  </label>
+                  <div class="small-note">If Full Chapter is on, verses are ignored.</div>
+                </div>
+
+                <div>
+                  <label>Version label (English only)</label>
+                  <select id="versionSelect">
+                    <option value="KJV" selected>KJV</option>
+                    <option value="NKJV">NKJV</option>
+                    <option value="NIV">NIV</option>
+                    <option value="NLT">NLT</option>
+                    <option value="ESV">ESV</option>
+                    <option value="NASB">NASB</option>
+                    <option value="CSB">CSB</option>
+                    <option value="AMP">AMP</option>
+                    <option value="MSG">MSG</option>
+                  </select>
+                  <div class="small-note">For Spanish voice, we do not speak the version label.</div>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px;">
+                <button class="btn btn-primary" id="listenBible" type="button">Listen</button>
+                <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
+              </div>
+
+              <div class="small-note">
+                Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
+              </div>
+            </div>
+
+            <div class="card">
+              <h4>Bible DB Status</h4>
+              <div class="muted" id="bibleDbStatus">Checking…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DEVOTIONAL -->
+        <section id="devotionalSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;">Devotional</h3>
+                  <div class="muted">Alyana gives Scripture + a brief explanation. You write your own explanation, application, and prayer.</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
+                    <select id="devotionalLang">
+                      <option value="en" selected>English (Karen)</option>
+                      <option value="es">Spanish (Paulina)</option>
+                    </select>
+                  </label>
+                  <button class="btn btn-primary" id="devotionalBtn" type="button">Generate</button>
+                  <button class="btn btn-ghost" id="devotionalListenBtn" type="button">Listen</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" style="margin-bottom:6px;">1) Scripture</div>
+                <div id="devotionalScripture" style="white-space:pre-wrap;">—</div>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">2) Alyana’s Brief Explanation</div>
+                <div id="devotionalExplain" style="white-space:pre-wrap;">—</div>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">3) My Explanation (write what YOU think it means)</div>
+                <textarea id="devotionalMyExplanation" placeholder="What do I think this Scripture is saying?"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">4) My Application (how I can apply it today)</div>
+                <textarea id="devotionalMyApplication" placeholder="How can I live this out today?"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">5) My Prayer (pray about this Scripture)</div>
+                <textarea id="devotionalMyPrayer" placeholder="Lord, help me…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">6) Reflection (notes / what God is teaching me)</div>
+                <textarea id="devotionalReflection" placeholder="Reflection…"></textarea>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DAILY PRAYER -->
+        <section id="prayerSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
+                  <div class="muted">Alyana gives short starters. You write your own ACTS prayer.</div>
+                </div>
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;">Listen Language</span>
+                    <select id="prayerLang">
+                      <option value="en" selected>English (Karen)</option>
+                      <option value="es">Spanish (Paulina)</option>
+                    </select>
+                  </label>
+                  <button class="btn btn-primary" id="prayerBtn" type="button">Generate Starters</button>
+                  <button class="btn btn-ghost" id="prayerListenBtn" type="button">Listen Starters</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" style="margin-bottom:6px;">Alyana Starter — Adoration</div>
+                <div id="pA" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own:</div>
+                <textarea id="myAdoration" placeholder="Adoration (praise God for who He is)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Alyana Starter — Confession</div>
+                <div id="pC" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own:</div>
+                <textarea id="myConfession" placeholder="Confession (what I need to confess)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Alyana Starter — Thanksgiving</div>
+                <div id="pT" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own:</div>
+                <textarea id="myThanksgiving" placeholder="Thanksgiving (what I’m grateful for)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Alyana Starter — Supplication</div>
+                <div id="pS" style="white-space:pre-wrap;">—</div>
+                <div class="small-note">Now write your own:</div>
+                <textarea id="mySupplication" placeholder="Supplication (requests for myself/others)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" style="margin-bottom:6px;">Notes</div>
+                <textarea id="prayerNotes" placeholder="Notes…"></textarea>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
 
-    <!-- External JS (prevents inline-script blocking and caching issues) -->
-    <script src="/static/app.js"></script>
+    <!-- IMPORTANT: this must point to your JS file -->
+    <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
