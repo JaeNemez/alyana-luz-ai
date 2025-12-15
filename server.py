@@ -41,6 +41,10 @@ class ChatIn(BaseModel):
     prompt: str
 
 
+class LangIn(BaseModel):
+    lang: str = "en"
+
+
 def _require_ai():
     if not client:
         raise HTTPException(
@@ -102,7 +106,6 @@ async def serve_frontend():
 
 
 # IMPORTANT: your index.html uses <script src="/app.js" defer></script>
-# So we MUST serve it at /app.js reliably.
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
@@ -121,7 +124,6 @@ async def serve_app_js_root():
     )
 
 
-# Optional: also allow /static/app.js (if you ever switch your HTML)
 @app.get("/static/app.js", include_in_schema=False)
 async def serve_app_js_static():
     if not os.path.exists(APPJS_PATH):
@@ -375,104 +377,5 @@ def bible_passage(
                 "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
                 (book_id, int(chapter)),
             ).fetchall()
-            if not rows:
-                raise HTTPException(status_code=404, detail="No chapter text")
-            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-            return {"reference": f"{book_name} {chapter}", "text": text}
+            if not
 
-        if start < 1:
-            raise HTTPException(status_code=400, detail="Invalid start verse")
-        if end is None or end < start:
-            end = start
-
-        rows = con.execute(
-            """
-            SELECT verse, text
-            FROM verses
-            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
-            ORDER BY verse
-            """,
-            (book_id, int(chapter), int(start), int(end)),
-        ).fetchall()
-
-        if not rows:
-            raise HTTPException(status_code=404, detail="No passage text returned")
-
-        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-        ref = (
-            f"{book_name} {chapter}:{start}"
-            if start == end
-            else f"{book_name} {chapter}:{start}-{end}"
-        )
-        return {"reference": ref, "text": text}
-    finally:
-        con.close()
-
-
-# =========================
-# AI endpoints (Gemini)
-# =========================
-@app.post("/chat")
-def chat(body: ChatIn):
-    _require_ai()
-
-    system_prompt = (
-        "You are Alyana Luz, a warm, scripture-focused assistant. "
-        "You pray with the user, suggest Bible passages, and explain verses. "
-        "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
-    )
-    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
-    text = _generate_text_with_retries(full_prompt)
-    if not text:
-        text = "Sorry, I couldn't respond right now."
-    return {"status": "success", "message": text}
-
-
-@app.post("/devotional")
-def devotional():
-    _require_ai()
-
-    # Your app.js expects: { json: "<string containing JSON>" }
-    prompt = (
-        "You are Alyana Luz. Create a devotional in STRICT JSON ONLY.\n"
-        "Return exactly this JSON shape:\n"
-        "{\n"
-        '  "scripture": "Book Chapter:Verse(s) — verse text",\n'
-        '  "brief_explanation": "2-4 sentences explaining it simply"\n'
-        "}\n"
-        "Rules:\n"
-        "- Output ONLY valid JSON (no markdown fences).\n"
-        "- Keep it gentle and practical.\n"
-    )
-
-    text = _generate_text_with_retries(prompt)
-    if not text:
-        raise HTTPException(status_code=503, detail="AI returned empty devotional.")
-    return {"status": "success", "json": text}
-
-
-@app.post("/daily_prayer")
-def daily_prayer():
-    _require_ai()
-
-    # Your app.js expects: { json: "<string containing JSON>" }
-    prompt = (
-        "You are Alyana Luz. Generate ACTS prayer starters in STRICT JSON ONLY.\n"
-        "Return exactly this JSON shape:\n"
-        "{\n"
-        '  "example_adoration": "1-2 short sentences",\n'
-        '  "example_confession": "1-2 short sentences",\n'
-        '  "example_thanksgiving": "1-2 short sentences",\n'
-        '  "example_supplication": "1-2 short sentences"\n'
-        "}\n"
-        "Rules:\n"
-        "- Output ONLY valid JSON (no markdown fences).\n"
-        "- Starters should help someone begin, not be a full long prayer.\n"
-        "- Keep it warm and simple.\n"
-    )
-
-    text = _generate_text_with_retries(prompt)
-    if not text:
-        raise HTTPException(status_code=503, detail="AI returned empty daily prayer.")
-    return {"status": "success", "json": text}
