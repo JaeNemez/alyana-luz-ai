@@ -4,6 +4,8 @@ import time
 import sqlite3
 from typing import Optional, Dict, List
 
+from db import get_verse, get_chapter  # ✅ NEW: use your db.py functions
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -419,6 +421,23 @@ def bible_passage(
         con.close()
 
 
+# ✅ NEW: simple verse endpoint using db.py (shorter URL than /bible/passage)
+@app.get("/verse")
+def verse(book: str, chapter: int, verse: int):
+    """
+    Example:
+      /verse?book=Genesis&chapter=1&verse=1
+    """
+    if chapter < 1 or verse < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter or verse")
+
+    text = get_verse(book, int(chapter), int(verse))
+    if not text:
+        raise HTTPException(status_code=404, detail="Verse not found")
+
+    return {"book": book, "chapter": int(chapter), "verse": int(verse), "text": text}
+
+
 # =========================
 # AI endpoints (Gemini)
 # =========================
@@ -448,76 +467,4 @@ def devotional(body: Optional[LangIn] = None):
     if lang == "es":
         prompt = (
             "Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.\n"
-            "Devuelve exactamente esta forma:\n"
-            "{\n"
-            '  \"scripture\": \"Libro Capítulo:Verso(s) — texto del verso\",\n'
-            '  \"brief_explanation\": \"2-4 oraciones explicándolo de forma simple\"\n'
-            "}\n"
-            "Reglas:\n"
-            "- Devuelve SOLO JSON válido (sin markdown).\n"
-            "- Todo en español.\n"
-            "- Tono cálido, práctico y breve.\n"
-        )
-    else:
-        prompt = (
-            "You are Alyana Luz. Create a devotional in STRICT JSON ONLY.\n"
-            "Return exactly this JSON shape:\n"
-            "{\n"
-            '  \"scripture\": \"Book Chapter:Verse(s) — verse text\",\n'
-            '  \"brief_explanation\": \"2-4 sentences explaining it simply\"\n'
-            "}\n"
-            "Rules:\n"
-            "- Output ONLY valid JSON (no markdown fences).\n"
-            "- Keep it gentle and practical.\n"
-        )
-
-    text = _generate_text_with_retries(prompt)
-    if not text:
-        raise HTTPException(status_code=503, detail="AI returned empty devotional.")
-    return {"status": "success", "json": text}
-
-
-@app.post("/daily_prayer")
-def daily_prayer(body: Optional[LangIn] = None):
-    _require_ai()
-    lang = _norm_lang(body.lang if body else "en")
-
-    # Your app.js expects: { json: "<string containing JSON>" }
-    if lang == "es":
-        prompt = (
-            "Eres Alyana Luz. Genera inicios de oración ACTS en JSON ESTRICTO SOLAMENTE.\n"
-            "Devuelve exactamente esta forma:\n"
-            "{\n"
-            '  \"example_adoration\": \"1-2 oraciones cortas\",\n'
-            '  \"example_confession\": \"1-2 oraciones cortas\",\n'
-            '  \"example_thanksgiving\": \"1-2 oraciones cortas\",\n'
-            '  \"example_supplication\": \"1-2 oraciones cortas\"\n'
-            "}\n"
-            "Reglas:\n"
-            "- Devuelve SOLO JSON válido (sin markdown).\n"
-            "- Solo inicios para ayudar a empezar (no una oración larga).\n"
-            "- Todo en español.\n"
-            "- Tono cálido y simple.\n"
-        )
-    else:
-        prompt = (
-            "You are Alyana Luz. Generate ACTS prayer starters in STRICT JSON ONLY.\n"
-            "Return exactly this JSON shape:\n"
-            "{\n"
-            '  \"example_adoration\": \"1-2 short sentences\",\n'
-            '  \"example_confession\": \"1-2 short sentences\",\n'
-            '  \"example_thanksgiving\": \"1-2 short sentences\",\n'
-            '  \"example_supplication\": \"1-2 short sentences\"\n'
-            "}\n"
-            "Rules:\n"
-            "- Output ONLY valid JSON (no markdown fences).\n"
-            "- Starters should help someone begin, not be a full long prayer.\n"
-            "- Keep it warm and simple.\n"
-        )
-
-    text = _generate_text_with_retries(prompt)
-    if not text:
-        raise HTTPException(status_code=503, detail="AI returned empty daily prayer.")
-    return {"status": "success", "json": text}
-
-
+            "Devuelve exact
