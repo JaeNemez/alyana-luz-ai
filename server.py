@@ -33,7 +33,6 @@ if os.path.isdir(FRONTEND_DIR):
 # --------------------
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
-
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
@@ -42,7 +41,7 @@ class ChatIn(BaseModel):
 
 
 class LangIn(BaseModel):
-    lang: str = "en"
+    lang: Optional[str] = "en"  # "en" or "es"
 
 
 def _require_ai():
@@ -88,6 +87,13 @@ def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
 
 
+def _norm_lang(lang: Optional[str]) -> str:
+    l = (lang or "en").strip().lower()
+    if l.startswith("es"):
+        return "es"
+    return "en"
+
+
 # =========================
 # Frontend serving
 # =========================
@@ -106,6 +112,7 @@ async def serve_frontend():
 
 
 # IMPORTANT: your index.html uses <script src="/app.js" defer></script>
+# So we MUST serve it at /app.js reliably.
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
@@ -124,6 +131,7 @@ async def serve_app_js_root():
     )
 
 
+# Optional: also allow /static/app.js (if you ever switch your HTML)
 @app.get("/static/app.js", include_in_schema=False)
 async def serve_app_js_static():
     if not os.path.exists(APPJS_PATH):
@@ -377,5 +385,139 @@ def bible_passage(
                 "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
                 (book_id, int(chapter)),
             ).fetchall()
-            if not
+            if not rows:
+                raise HTTPException(status_code=404, detail="No chapter text")
+            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+            return {"reference": f"{book_name} {chapter}", "text": text}
+
+        if start < 1:
+            raise HTTPException(status_code=400, detail="Invalid start verse")
+        if end is None or end < start:
+            end = start
+
+        rows = con.execute(
+            """
+            SELECT verse, text
+            FROM verses
+            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
+            ORDER BY verse
+            """,
+            (book_id, int(chapter), int(start), int(end)),
+        ).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No passage text returned")
+
+        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+        ref = (
+            f"{book_name} {chapter}:{start}"
+            if start == end
+            else f"{book_name} {chapter}:{start}-{end}"
+        )
+        return {"reference": ref, "text": text}
+    finally:
+        con.close()
+
+
+# =========================
+# AI endpoints (Gemini)
+# =========================
+@app.post("/chat")
+def chat(body: ChatIn):
+    _require_ai()
+
+    system_prompt = (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring."
+    )
+    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
+    text = _generate_text_with_retries(full_prompt)
+    if not text:
+        text = "Sorry, I couldn't respond right now."
+    return {"status": "success", "message": text}
+
+
+@app.post("/devotional")
+def devotional(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    # Your app.js expects: { json: "<string containing JSON>" }
+    if lang == "es":
+        prompt = (
+            "Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.\n"
+            "Devuelve exactamente esta forma:\n"
+            "{\n"
+            '  \"scripture\": \"Libro Capítulo:Verso(s) — texto del verso\",\n'
+            '  \"brief_explanation\": \"2-4 oraciones explicándolo de forma simple\"\n'
+            "}\n"
+            "Reglas:\n"
+            "- Devuelve SOLO JSON válido (sin markdown).\n"
+            "- Todo en español.\n"
+            "- Tono cálido, práctico y breve.\n"
+        )
+    else:
+        prompt = (
+            "You are Alyana Luz. Create a devotional in STRICT JSON ONLY.\n"
+            "Return exactly this JSON shape:\n"
+            "{\n"
+            '  \"scripture\": \"Book Chapter:Verse(s) — verse text\",\n'
+            '  \"brief_explanation\": \"2-4 sentences explaining it simply\"\n'
+            "}\n"
+            "Rules:\n"
+            "- Output ONLY valid JSON (no markdown fences).\n"
+            "- Keep it gentle and practical.\n"
+        )
+
+    text = _generate_text_with_retries(prompt)
+    if not text:
+        raise HTTPException(status_code=503, detail="AI returned empty devotional.")
+    return {"status": "success", "json": text}
+
+
+@app.post("/daily_prayer")
+def daily_prayer(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    # Your app.js expects: { json: "<string containing JSON>" }
+    if lang == "es":
+        prompt = (
+            "Eres Alyana Luz. Genera inicios de oración ACTS en JSON ESTRICTO SOLAMENTE.\n"
+            "Devuelve exactamente esta forma:\n"
+            "{\n"
+            '  \"example_adoration\": \"1-2 oraciones cortas\",\n'
+            '  \"example_confession\": \"1-2 oraciones cortas\",\n'
+            '  \"example_thanksgiving\": \"1-2 oraciones cortas\",\n'
+            '  \"example_supplication\": \"1-2 oraciones cortas\"\n'
+            "}\n"
+            "Reglas:\n"
+            "- Devuelve SOLO JSON válido (sin markdown).\n"
+            "- Solo inicios para ayudar a empezar (no una oración larga).\n"
+            "- Todo en español.\n"
+            "- Tono cálido y simple.\n"
+        )
+    else:
+        prompt = (
+            "You are Alyana Luz. Generate ACTS prayer starters in STRICT JSON ONLY.\n"
+            "Return exactly this JSON shape:\n"
+            "{\n"
+            '  \"example_adoration\": \"1-2 short sentences\",\n'
+            '  \"example_confession\": \"1-2 short sentences\",\n'
+            '  \"example_thanksgiving\": \"1-2 short sentences\",\n'
+            '  \"example_supplication\": \"1-2 short sentences\"\n'
+            "}\n"
+            "Rules:\n"
+            "- Output ONLY valid JSON (no markdown fences).\n"
+            "- Starters should help someone begin, not be a full long prayer.\n"
+            "- Keep it warm and simple.\n"
+        )
+
+    text = _generate_text_with_retries(prompt)
+    if not text:
+        raise HTTPException(status_code=503, detail="AI returned empty daily prayer.")
+    return {"status": "success", "json": text}
+
 
