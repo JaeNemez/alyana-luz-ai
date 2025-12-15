@@ -102,3 +102,6 @@ uvicorn==0.38.0
 watchdog==6.0.0
 websockets==15.0.1
 zipp==3.23.0
+stripe==12.5.0
+passlib[bcrypt]==1.7.4
+python-jose==3.3.0
