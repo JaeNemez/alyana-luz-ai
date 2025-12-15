@@ -126,7 +126,7 @@
   if (supportBtn) supportBtn.addEventListener("click", () => window.open("https://buy.stripe.com/", "_blank"));
 
   // ------------------------------
-  // TTS (2 voices) - keep for Chat + Bible Reader
+  // TTS (2 voices) - Chat + Bible Reader only
   // ------------------------------
   const TTS = { voices: [], ready: false, isSpeaking: false };
   const ttsStatus = $("ttsStatus");
@@ -621,7 +621,7 @@
   })();
 
   // ==================================================
-  // DEVOTIONAL (UPDATED: no listen, add save/streak/list)
+  // DEVOTIONAL (UPDATED: no listen, add save/streak/list + bilingual UI hints)
   // ==================================================
   const devotionalBtn = $("devotionalBtn");
   const devUiLang = $("devUiLang");
@@ -632,6 +632,48 @@
 
   const devotionalScripture = $("devotionalScripture");
   const devotionalExplain = $("devotionalExplain");
+
+  // UI text nodes we will swap EN/ES if present
+  const devDesc = document.querySelector("#devotionalSection .muted"); // first muted under title
+  const devLabel3 = document.querySelector('#devotionalSection .block:nth-of-type(3) .muted');
+  const devLabel4 = document.querySelector('#devotionalSection .block:nth-of-type(4) .muted');
+  const devLabel5 = document.querySelector('#devotionalSection .block:nth-of-type(5) .muted');
+  const devLabel6 = document.querySelector('#devotionalSection .block:nth-of-type(6) .muted');
+
+  function applyDevUiLang() {
+    const lang = devUiLang?.value || "en";
+    if (devDesc) {
+      devDesc.textContent = (lang === "es")
+        ? "Alyana te da un versículo + una breve explicación. Tú escribes tu propia explicación, aplicación y oración."
+        : "Alyana gives Scripture + a brief explanation. You write your own explanation, application, and prayer.";
+    }
+    if (devStreakBtn) devStreakBtn.textContent = (lang === "es") ? "Lo hice hoy" : "I did it today";
+    if (devSaveBtn) devSaveBtn.textContent = (lang === "es") ? "Guardar" : "Save";
+
+    // These labels are optional; if your DOM structure changes, it won’t break anything.
+    if (devLabel3) devLabel3.textContent = (lang === "es")
+      ? "3) Mi explicación (escribe lo que TÚ crees que significa)"
+      : "3) My Explanation (write what YOU think it means)";
+    if (devLabel4) devLabel4.textContent = (lang === "es")
+      ? "4) Mi aplicación (cómo lo puedo aplicar hoy)"
+      : "4) My Application (how I can apply it today)";
+    if (devLabel5) devLabel5.textContent = (lang === "es")
+      ? "5) Mi oración (ora sobre este pasaje)"
+      : "5) My Prayer (pray about this Scripture)";
+    if (devLabel6) devLabel6.textContent = (lang === "es")
+      ? "6) Reflexión (notas / lo que Dios me está enseñando)"
+      : "6) Reflection (notes / what God is teaching me)";
+
+    const t1 = $("devotionalMyExplanation");
+    const t2 = $("devotionalMyApplication");
+    const t3 = $("devotionalMyPrayer");
+    const t4 = $("devotionalReflection");
+
+    if (t1) t1.placeholder = (lang === "es") ? "¿Qué creo que está diciendo este pasaje?" : "What do I think this Scripture is saying?";
+    if (t2) t2.placeholder = (lang === "es") ? "¿Cómo puedo vivir esto hoy?" : "How can I live this out today?";
+    if (t3) t3.placeholder = (lang === "es") ? "Señor, ayúdame…" : "Lord, help me…";
+    if (t4) t4.placeholder = (lang === "es") ? "Reflexión…" : "Reflection…";
+  }
 
   function refreshDevStreakUI() {
     const s = loadObj(DEV_STREAK, { count: 0, last: null });
@@ -669,7 +711,10 @@
           if ($("devotionalMyApplication")) $("devotionalMyApplication").value = item.my_application || "";
           if ($("devotionalMyPrayer")) $("devotionalMyPrayer").value = item.my_prayer || "";
           if ($("devotionalReflection")) $("devotionalReflection").value = item.reflection || "";
-          if (devUiLang && item.lang) devUiLang.value = item.lang;
+          if (devUiLang && item.lang) {
+            devUiLang.value = item.lang;
+            applyDevUiLang();
+          }
         });
 
         const del = document.createElement("button");
@@ -736,7 +781,7 @@
     try {
       const lang = devUiLang?.value || "en";
 
-      // Try sending lang (works if server supports it). If not, we fallback to old POST.
+      // Server supports {"lang": "..."} now; if not, fallback to old style.
       let data;
       try {
         data = await apiJSON("/devotional", {
@@ -744,8 +789,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ lang })
         });
-      } catch (e) {
-        // Fallback to old style (no body)
+      } catch {
         data = await apiJSON("/devotional", { method: "POST" });
       }
 
@@ -763,6 +807,7 @@
     }
   }
 
+  if (devUiLang) devUiLang.addEventListener("change", applyDevUiLang);
   if (devotionalBtn) devotionalBtn.addEventListener("click", generateDevotional);
   if (devSaveBtn) devSaveBtn.addEventListener("click", saveDevotionalEntry);
   if (devStreakBtn) devStreakBtn.addEventListener("click", () => {
@@ -770,11 +815,12 @@
     refreshDevStreakUI();
   });
 
+  applyDevUiLang();
   renderDevSaved();
   refreshDevStreakUI();
 
   // ==================================================
-  // DAILY PRAYER (UPDATED: no listen, add save/streak/list)
+  // DAILY PRAYER (UPDATED: no listen, add save/streak/list + bilingual UI hints)
   // ==================================================
   const prayerBtn = $("prayerBtn");
   const prUiLang = $("prUiLang");
@@ -787,6 +833,35 @@
   const pC = $("pC");
   const pT = $("pT");
   const pS = $("pS");
+
+  // UI instruction under title (first .muted in prayer section)
+  const prDesc = document.querySelector("#prayerSection .muted");
+
+  function applyPrUiLang() {
+    const lang = prUiLang?.value || "en";
+
+    if (prDesc) {
+      prDesc.textContent = (lang === "es")
+        ? "Alyana te da frases cortas para empezar. Tú escribes tu oración ACTS."
+        : "Alyana gives short starters. You write your own ACTS prayer.";
+    }
+
+    if (prStreakBtn) prStreakBtn.textContent = (lang === "es") ? "Lo hice hoy" : "I did it today";
+    if (prSaveBtn) prSaveBtn.textContent = (lang === "es") ? "Guardar" : "Save";
+    if (prayerBtn) prayerBtn.textContent = (lang === "es") ? "Generar frases" : "Generate Starters";
+
+    const ta1 = $("myAdoration");
+    const ta2 = $("myConfession");
+    const ta3 = $("myThanksgiving");
+    const ta4 = $("mySupplication");
+    const notes = $("prayerNotes");
+
+    if (ta1) ta1.placeholder = (lang === "es") ? "Adoración (alaba a Dios por quién es)…" : "Adoration (praise God for who He is)…";
+    if (ta2) ta2.placeholder = (lang === "es") ? "Confesión (lo que necesito confesar)…" : "Confession (what I need to confess)…";
+    if (ta3) ta3.placeholder = (lang === "es") ? "Acción de gracias (por lo que estoy agradecido)…" : "Thanksgiving (what I’m grateful for)…";
+    if (ta4) ta4.placeholder = (lang === "es") ? "Súplica (peticiones por mí/otros)…" : "Supplication (requests for myself/others)…";
+    if (notes) notes.placeholder = (lang === "es") ? "Notas…" : "Notes…";
+  }
 
   function refreshPrStreakUI() {
     const s = loadObj(PR_STREAK, { count: 0, last: null });
@@ -829,7 +904,10 @@
           if ($("mySupplication")) $("mySupplication").value = item.my_supplication || "";
           if ($("prayerNotes")) $("prayerNotes").value = item.notes || "";
 
-          if (prUiLang && item.lang) prUiLang.value = item.lang;
+          if (prUiLang && item.lang) {
+            prUiLang.value = item.lang;
+            applyPrUiLang();
+          }
         });
 
         const del = document.createElement("button");
@@ -909,7 +987,7 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ lang })
         });
-      } catch (e) {
+      } catch {
         data = await apiJSON("/daily_prayer", { method: "POST" });
       }
 
@@ -931,6 +1009,7 @@
     }
   }
 
+  if (prUiLang) prUiLang.addEventListener("change", applyPrUiLang);
   if (prayerBtn) prayerBtn.addEventListener("click", generatePrayerStarters);
   if (prSaveBtn) prSaveBtn.addEventListener("click", savePrayerEntry);
   if (prStreakBtn) prStreakBtn.addEventListener("click", () => {
@@ -938,9 +1017,11 @@
     refreshPrStreakUI();
   });
 
+  applyPrUiLang();
   renderPrSaved();
   refreshPrStreakUI();
 
 })();
+
 
 
