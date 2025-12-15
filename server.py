@@ -464,7 +464,16 @@ def devotional(body: Optional[LangIn] = None):
     lang = _norm_lang(body.lang if body else "en")
 
     # Your app.js expects: { json: "<string containing JSON>" }
-    if lang == "es":
-        prompt = (
-            "Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.\n"
-            "Devuelve exact
+        if lang == "es":
+        prompt = '''
+Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.
+Devuelve exactamente esta forma:
+{
+  "scripture": "Libro Capítulo:Verso(s) — texto del verso",
+  "brief_explanation": "2-4 oraciones explicándolo de forma simple"
+}
+Reglas:
+- Devuelve SOLO JSON válido (sin markdown).
+- Todo en español.
+- Tono cálido, práctico y breve.
+'''.strip()
