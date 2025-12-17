@@ -13,8 +13,6 @@ from dotenv import load_dotenv
 import stripe
 from google import genai
 
-from db import get_verse  # keep your db.py helper
-
 load_dotenv()
 
 app = FastAPI(title="Alyana Luz · Bible AI")
@@ -27,7 +25,6 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
 
-# Serve the entire frontend folder under /static (optional but helpful)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
@@ -36,7 +33,7 @@ if os.path.isdir(FRONTEND_DIR):
 # --------------------
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()  # add later
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()  # (optional for later)
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 
 if STRIPE_SECRET_KEY:
@@ -48,6 +45,7 @@ if STRIPE_SECRET_KEY:
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
 
 # =========================
 # Models
@@ -61,7 +59,6 @@ class LangIn(BaseModel):
 
 
 class CheckoutIn(BaseModel):
-    # later we can attach this to a real logged-in user id/email
     email: Optional[str] = None
 
 
@@ -86,7 +83,7 @@ def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
             last_error = e
             msg = repr(e)
 
-            # Overloaded / temporary service issues
+            # Temporary overloads
             if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
                 time.sleep(1 + attempt)
                 continue
@@ -137,8 +134,6 @@ async def serve_frontend():
     )
 
 
-# IMPORTANT: your index.html uses <script src="/app.js" defer></script>
-# So we MUST serve it at /app.js reliably.
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
@@ -157,7 +152,6 @@ async def serve_app_js_root():
     )
 
 
-# Optional: also allow /static/app.js (if you ever switch your HTML)
 @app.get("/static/app.js", include_in_schema=False)
 async def serve_app_js_static():
     return await serve_app_js_root()
@@ -168,7 +162,6 @@ def health():
     return {
         "status": "ok",
         "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
-        "frontend_dir": FRONTEND_DIR,
         "index_exists": os.path.exists(INDEX_PATH),
         "appjs_exists": os.path.exists(APPJS_PATH),
         "db_exists": os.path.exists(os.path.join(BASE_DIR, "data", "bible.db")),
@@ -182,10 +175,10 @@ def health():
 # Stripe Checkout (subscription)
 # =========================
 @app.post("/stripe/create-checkout-session")
-def create_checkout_session(body: CheckoutIn = CheckoutIn()):
+def create_checkout_session(body: CheckoutIn):
     """
     Creates a Stripe Checkout Session for a subscription.
-    Your frontend should call this, then redirect to session.url.
+    Your frontend calls this, then redirects to session.url.
     """
     _require_stripe_ready()
 
@@ -195,7 +188,7 @@ def create_checkout_session(body: CheckoutIn = CheckoutIn()):
             line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
             success_url=f"{APP_BASE_URL}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
             cancel_url=f"{APP_BASE_URL}/billing/cancel",
-            customer_email=body.email if body and body.email else None,
+            customer_email=body.email if body.email else None,
             allow_promotion_codes=True,
         )
         return {"url": session.url, "id": session.id}
@@ -205,7 +198,7 @@ def create_checkout_session(body: CheckoutIn = CheckoutIn()):
 
 @app.get("/billing/success", include_in_schema=False)
 def billing_success(session_id: str):
-    # For now just redirect back home. Later we’ll verify subscription and unlock features.
+    # Later we’ll verify subscription & unlock features (webhook recommended).
     return RedirectResponse(url="/")
 
 
@@ -214,7 +207,7 @@ def billing_cancel():
     return RedirectResponse(url="/")
 
 
-# NOTE: Webhook will come next (recommended for real unlock logic)
+# Webhook (later, recommended for real unlock logic)
 # @app.post("/stripe/webhook")
 # async def stripe_webhook(request: Request):
 #     ...
@@ -242,16 +235,11 @@ def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
 def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     cols = [c.lower() for c in _get_table_columns(con, "books")]
 
-    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (
-        cols[0] if cols else "id"
-    )
+    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
     name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
         cols[1] if len(cols) > 1 else cols[0]
     )
-    key_col = next(
-        (c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols),
-        "",
-    )
+    key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
 
     return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
 
@@ -305,9 +293,7 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
 def bible_health():
     con = _db()
     try:
-        tables = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        ).fetchall()
+        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
         table_names = [t["name"] for t in tables]
         if "books" not in table_names or "verses" not in table_names:
             raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
@@ -315,10 +301,7 @@ def bible_health():
         vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
         needed = {"book_id", "chapter", "verse", "text"}
         if not needed.issubset(vcols):
-            raise HTTPException(
-                status_code=500,
-                detail=f"verses table missing columns. Found: {sorted(vcols)}",
-            )
+            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
 
         count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
         return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
@@ -331,11 +314,25 @@ def verse(book: str, chapter: int, verse: int):
     if chapter < 1 or verse < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter or verse")
 
-    text = get_verse(book, int(chapter), int(verse))
-    if not text:
-        raise HTTPException(status_code=404, detail="Verse not found")
+    con = _db()
+    try:
+        book_id = _resolve_book_id(con, book)
+        row = con.execute(
+            """
+            SELECT text
+            FROM verses
+            WHERE book_id=? AND chapter=? AND verse=?
+            LIMIT 1
+            """,
+            (book_id, int(chapter), int(verse)),
+        ).fetchone()
 
-    return {"book": book, "chapter": int(chapter), "verse": int(verse), "text": text}
+        if not row:
+            raise HTTPException(status_code=404, detail="Verse not found")
+
+        return {"book": book, "chapter": int(chapter), "verse": int(verse), "text": str(row["text"])}
+    finally:
+        con.close()
 
 
 # =========================
@@ -351,6 +348,7 @@ def chat(body: ChatIn):
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
         "for something technical. Keep answers concise but caring."
     )
+
     full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
     text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "message": text}
