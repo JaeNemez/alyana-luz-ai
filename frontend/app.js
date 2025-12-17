@@ -120,11 +120,47 @@
   showSection("chatSection");
 
   // ------------------------------
-  // Support button
-  // ------------------------------
-  const supportBtn = $("supportBtn");
-  if (supportBtn) supportBtn.addEventListener("click", () => window.open("https://buy.stripe.com/", "_blank"));
+// Support button (Stripe Checkout)
+// ------------------------------
+const supportBtn = $("supportBtn");
 
+async function startStripeCheckout() {
+  if (!supportBtn) return;
+
+  const originalText = supportBtn.textContent;
+  supportBtn.disabled = true;
+  supportBtn.textContent = "Redirecting to secure checkout…";
+
+  try {
+    const res = await fetch("/stripe/create-checkout-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // You can pass email later if you add a field. For now keep empty.
+      body: JSON.stringify({})
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`Checkout error ${res.status}: ${txt}`);
+    }
+
+    const data = await res.json();
+    if (!data.url) throw new Error("No checkout URL returned by server.");
+
+    // Redirect current tab to Stripe Checkout
+    window.location.href = data.url;
+  } catch (err) {
+    console.error(err);
+    alert("Sorry — checkout failed. Please try again.");
+    supportBtn.disabled = false;
+    supportBtn.textContent = originalText || "❤️ Support Alyana Luz";
+  }
+}
+
+if (supportBtn) {
+  supportBtn.addEventListener("click", startStripeCheckout);
+}
+  
   // ------------------------------
   // TTS (2 voices) - Chat + Bible Reader only
   // ------------------------------
