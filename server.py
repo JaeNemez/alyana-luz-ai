@@ -221,4 +221,126 @@ def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (cols[1] if len(cols) > 1 else cols[0])
     key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
 
-    return {"id
+    return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
+
+def _normalize_book_key(book: str) -> str:
+    b = (book or "").strip().lower()
+    b = re.sub(r"\s+", "", b)
+    return b
+
+def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
+    raw = (book or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Missing book")
+
+    if raw.isdigit():
+        return int(raw)
+
+    mapping = _get_books_table_mapping(con)
+    id_col = mapping["id_col"]
+    name_col = mapping["name_col"]
+    key_col = mapping["key_col"]
+    norm = _normalize_book_key(raw)
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1",
+        (raw,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1",
+        (norm,),
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    if key_col:
+        row = con.execute(
+            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1",
+            (norm,),
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
+
+@app.get("/bible/health")
+def bible_health():
+    con = _db()
+    try:
+        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        table_names = [t["name"] for t in tables]
+        if "books" not in table_names or "verses" not in table_names:
+            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
+
+        vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
+        needed = {"book_id", "chapter", "verse", "text"}
+        if not needed.issubset(vcols):
+            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
+
+        count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
+        return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
+    finally:
+        con.close()
+
+@app.get("/verse")
+def verse(book: str, chapter: int, verse: int):
+    if chapter < 1 or verse < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter or verse")
+    text = get_verse(book, int(chapter), int(verse))
+    if not text:
+        raise HTTPException(status_code=404, detail="Verse not found")
+    return {"book": book, "chapter": int(chapter), "verse": int(verse), "text": text}
+
+# =========================
+# AI endpoints (Gemini)
+# =========================
+@app.post("/chat")
+def chat(body: ChatIn):
+    _require_ai()
+    system_prompt = (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring."
+    )
+    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
+    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
+    return {"status": "success", "message": text}
+
+@app.post("/devotional")
+def devotional(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    if lang == "es":
+        prompt = """
+Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.
+Devuelve exactamente esta forma:
+{
+  "scripture": "Libro Capítulo:Verso(s) — texto del verso",
+  "brief_explanation": "2-4 oraciones explicándolo de forma simple"
+}
+Reglas:
+- Devuelve SOLO JSON válido (sin markdown).
+- Todo en español.
+- Tono cálido, práctico y breve.
+""".strip()
+    else:
+        prompt = """
+You are Alyana Luz. Create a devotional in STRICT JSON ONLY.
+Return exactly this shape:
+{
+  "scripture": "Book Chapter:Verse(s) — verse text",
+  "brief_explanation": "2-4 sentences explaining it simply"
+}
+Rules:
+- Return ONLY valid JSON (no markdown).
+- Everything in English.
+- Warm, practical, brief.
+""".strip()
+
+    text = _generate_text_with_retries(prompt) or "{}"
+    return {"json": text}
