@@ -49,6 +49,7 @@ def _require_stripe_ready():
 
 # --------------------
 # Simple subscription store (SQLite)
+# NOTE: On Render, use a Persistent Disk or this file may reset on redeploy.
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs.db")
 
@@ -124,7 +125,6 @@ def _is_active_subscriber(email: str) -> bool:
     if not row:
         return False
     status = (row.get("status") or "").lower()
-    # common “good” statuses
     return status in ("active", "trialing")
 
 # --------------------
@@ -226,15 +226,9 @@ class PortalIn(BaseModel):
 
 @app.post("/stripe/create-checkout-session")
 def create_checkout_session(body: CheckoutIn):
-    """
-    Creates a Stripe Checkout Session in subscription mode.
-    Frontend: POST here, then redirect to returned session URL.
-    """
     _require_stripe_ready()
 
     email = (body.email or "").strip().lower() if body else ""
-    # If you don’t have login yet, you can still ask user for email later.
-    # For now, email is optional; Stripe can collect it on Checkout.
 
     try:
         session = stripe.checkout.Session.create(
@@ -251,12 +245,6 @@ def create_checkout_session(body: CheckoutIn):
 
 @app.post("/stripe/create-portal-session")
 def create_portal_session(body: PortalIn):
-    """
-    Sends the user to Stripe Customer Portal so they can:
-    - cancel
-    - update card
-    - download invoices
-    """
     _require_stripe_ready()
     email = (body.email or "").strip().lower()
     if not email:
@@ -276,11 +264,8 @@ def create_portal_session(body: PortalIn):
         raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
 
 @app.get("/billing/success", include_in_schema=False)
-def billing_success(session_id: str):
-    """
-    After successful Checkout, user lands here.
-    We can optionally look up session quickly (not required; webhook is the source of truth).
-    """
+def billing_success(session_id: str = ""):
+    # Webhook is the source of truth. This page just returns user to app.
     return RedirectResponse(url="/")
 
 @app.get("/billing/cancel", include_in_schema=False)
@@ -289,10 +274,6 @@ def billing_cancel():
 
 @app.get("/billing/status")
 def billing_status(email: str):
-    """
-    Simple “are they active?” endpoint.
-    Frontend can call this to unlock premium features.
-    """
     email = (email or "").strip().lower()
     if not email:
         raise HTTPException(400, "Missing email")
@@ -306,10 +287,6 @@ def billing_status(email: str):
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
-    """
-    IMPORTANT: This is what makes subscription unlock reliable.
-    Stripe calls this endpoint when payments happen / subscription changes.
-    """
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(500, "Missing STRIPE_WEBHOOK_SECRET in environment.")
 
@@ -324,13 +301,21 @@ async def stripe_webhook(request: Request):
     event_type = event["type"]
     data = event["data"]["object"]
 
+    print("Stripe webhook received:", event_type)
+
     # 1) Checkout completed (subscription created)
     if event_type == "checkout.session.completed":
-        # data is a Checkout Session
         customer_id = data.get("customer")
         subscription_id = data.get("subscription")
-        email = (data.get("customer_details", {}) or {}).get("email") or data.get("customer_email") or ""
-        email = (email or "").strip().lower()
+
+        email = (
+            (data.get("customer_details", {}) or {}).get("email")
+            or data.get("customer_email")
+            or ""
+        ).strip().lower()
+
+        if not email:
+            print("⚠️ checkout.session.completed had no email; session:", data.get("id"))
 
         status = None
         current_period_end = None
@@ -341,15 +326,17 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # 2) Subscription updates (status changes, renewals, cancellations)
-    elif event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
-        # data is a Subscription
+    # 2) Subscription lifecycle
+    elif event_type in (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    ):
         subscription_id = data.get("id")
         customer_id = data.get("customer")
         status = data.get("status")
         current_period_end = data.get("current_period_end")
 
-        # get email from customer
         email = ""
         if customer_id:
             cust = stripe.Customer.retrieve(customer_id)
@@ -357,8 +344,8 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # 3) Invoice paid (also a reliable signal for active)
-    elif event_type == "invoice.paid":
+    # 3) Invoice payment succeeded (IMPORTANT)
+    elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
         customer_id = data.get("customer")
         subscription_id = data.get("subscription")
 
@@ -376,7 +363,19 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # Always return 200 so Stripe knows we received it
+    # 4) Invoice payment failed (lock premium)
+    elif event_type == "invoice.payment_failed":
+        customer_id = data.get("customer")
+        subscription_id = data.get("subscription")
+
+        email = ""
+        if customer_id:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = (cust.get("email") or "").strip().lower()
+
+        # Mark as past_due (or unpaid). This makes billing/status return active=false.
+        _subs_upsert(email, customer_id, subscription_id, "past_due", None)
+
     return {"received": True, "type": event_type}
 
 # =========================
@@ -614,4 +613,5 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
