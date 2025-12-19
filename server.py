@@ -8,7 +8,7 @@ import sqlite3
 from typing import Optional, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,10 +38,16 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
+
+# Used to sign the auth cookie (NOT a Stripe key)
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+
+# Optional: allow cookies on localhost if you ever test locally
+DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
+
 
 def _require_stripe_ready():
     if not STRIPE_SECRET_KEY:
@@ -51,9 +57,11 @@ def _require_stripe_ready():
     if not APP_BASE_URL:
         raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
 
+
 def _require_jwt_secret():
     if not JWT_SECRET or len(JWT_SECRET) < 32:
         raise HTTPException(500, "Missing/weak JWT_SECRET. Set a long random string (32+ chars).")
+
 
 # --------------------
 # Very small signed-token helper (cookie auth)
@@ -62,13 +70,16 @@ def _require_jwt_secret():
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
+
 def _b64url_decode(s: str) -> bytes:
     pad = "=" * (-len(s) % 4)
     return base64.urlsafe_b64decode((s + pad).encode())
 
+
 def _sign(data: bytes) -> str:
     sig = hmac.new(JWT_SECRET.encode(), data, hashlib.sha256).digest()
     return _b64url(sig)
+
 
 def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     _require_jwt_secret()
@@ -76,6 +87,7 @@ def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     payload = f"{email}|{now + exp_seconds}".encode()
     token = _b64url(payload) + "." + _sign(payload)
     return token
+
 
 def _read_token(token: str) -> Optional[dict]:
     try:
@@ -94,33 +106,44 @@ def _read_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
+
 AUTH_COOKIE_NAME = "alyana_auth"
 
-def _set_auth_cookie(resp: RedirectResponse, email: str):
+
+def _set_auth_cookie(resp: Response, email: str):
     token = _make_token(email)
+
+    # On Render you want secure cookies.
+    # If you ever test localhost, set DEV_TRUST_LOCAL=true to allow secure=False.
+    secure_cookie = True if not DEV_TRUST_LOCAL else False
+
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=True,      # Render is HTTPS
+        secure=secure_cookie,
         samesite="lax",
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
 
-def _clear_auth_cookie(resp: JSONResponse):
+
+def _clear_auth_cookie(resp: Response):
     resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
     return resp
+
 
 def get_current_email(request: Request) -> Optional[str]:
     token = request.cookies.get(AUTH_COOKIE_NAME)
     parsed = _read_token(token) if token else None
     return parsed["email"] if parsed else None
 
+
 # --------------------
 # Simple subscription store (SQLite)
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs.db")
+
 
 def _subs_db():
     os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
@@ -128,10 +151,12 @@ def _subs_db():
     con.row_factory = sqlite3.Row
     return con
 
+
 def _subs_init():
     con = _subs_db()
     try:
-        con.execute("""
+        con.execute(
+            """
         CREATE TABLE IF NOT EXISTS subscribers (
             email TEXT PRIMARY KEY,
             stripe_customer_id TEXT,
@@ -140,12 +165,15 @@ def _subs_init():
             current_period_end INTEGER,
             updated_at INTEGER
         )
-        """)
+        """
+        )
         con.commit()
     finally:
         con.close()
 
+
 _subs_init()
+
 
 def _subs_upsert(
     email: str,
@@ -178,6 +206,7 @@ def _subs_upsert(
     finally:
         con.close()
 
+
 def _subs_get(email: str) -> Optional[dict]:
     email = (email or "").strip().lower()
     if not email:
@@ -189,6 +218,7 @@ def _subs_get(email: str) -> Optional[dict]:
     finally:
         con.close()
 
+
 def _is_active_subscriber(email: str) -> bool:
     row = _subs_get(email)
     if not row:
@@ -196,13 +226,16 @@ def _is_active_subscriber(email: str) -> bool:
     status = (row.get("status") or "").lower()
     return status in ("active", "trialing")
 
+
 def require_active_user(request: Request) -> str:
     email = get_current_email(request)
     if not email:
         raise HTTPException(401, "Not logged in.")
     if not _is_active_subscriber(email):
-        raise HTTPException(402, "Subscription inactive. Please subscribe.")
+        # 403 makes more sense than 402 for "not authorized"
+        raise HTTPException(403, "Subscription inactive. Please subscribe.")
     return email
+
 
 # --------------------
 # Gemini (AI)
@@ -211,11 +244,14 @@ API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+
 class ChatIn(BaseModel):
     prompt: str
 
+
 class LangIn(BaseModel):
     lang: Optional[str] = "en"
+
 
 def _require_ai():
     if not client:
@@ -223,6 +259,7 @@ def _require_ai():
             status_code=503,
             detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).",
         )
+
 
 def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     last_error = None
@@ -248,9 +285,11 @@ def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     print("Gemini error after retries:", repr(last_error))
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
 
+
 def _norm_lang(lang: Optional[str]) -> str:
     l = (lang or "en").strip().lower()
     return "es" if l.startswith("es") else "en"
+
 
 # =========================
 # Frontend serving
@@ -264,19 +303,24 @@ async def serve_frontend():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
+
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+        return PlainTextResponse(
+            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404
+        )
     return FileResponse(
         APPJS_PATH,
         media_type="application/javascript",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
+
 @app.get("/static/app.js", include_in_schema=False)
 async def serve_app_js_static():
     return await serve_app_js_root()
+
 
 @app.get("/health")
 def health():
@@ -293,15 +337,17 @@ def health():
         "subs_db_exists": os.path.exists(SUB_DB_PATH),
     }
 
+
 # =========================
 # Stripe Subscription Billing
 # =========================
 class CheckoutIn(BaseModel):
     email: Optional[str] = None
 
+
 class PortalIn(BaseModel):
-    # if user is logged in we don't need this; kept for fallback
     email: Optional[str] = None
+
 
 @app.post("/stripe/create-checkout-session")
 def create_checkout_session(body: CheckoutIn):
@@ -321,6 +367,7 @@ def create_checkout_session(body: CheckoutIn):
         return {"url": session.url, "id": session.id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
+
 
 @app.post("/stripe/create-portal-session")
 def create_portal_session(request: Request, body: PortalIn):
@@ -344,6 +391,7 @@ def create_portal_session(request: Request, body: PortalIn):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
 
+
 @app.get("/billing/success", include_in_schema=False)
 def billing_success(session_id: str):
     """
@@ -354,17 +402,20 @@ def billing_success(session_id: str):
     _require_jwt_secret()
 
     try:
-        session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
-        # Prefer verified customer email from session
-        email = ""
-        if session.get("customer_details") and session["customer_details"].get("email"):
-            email = session["customer_details"]["email"]
-        elif session.get("customer_email"):
-            email = session["customer_email"]
-        email = (email or "").strip().lower()
+        session = stripe.checkout.Session.retrieve(session_id)
 
-        customer_id = session.get("customer")
-        subscription_id = session.get("subscription")
+        # Email
+        email = (
+            (session.get("customer_details") or {}).get("email")
+            or session.get("customer_email")
+            or ""
+        ).strip().lower()
+
+        # Normalize IDs (Stripe may return IDs as strings, or objects if expanded)
+        customer = session.get("customer")
+        subscription = session.get("subscription")
+        customer_id = customer.get("id") if isinstance(customer, dict) else customer
+        subscription_id = subscription.get("id") if isinstance(subscription, dict) else subscription
 
         status = None
         current_period_end = None
@@ -373,7 +424,7 @@ def billing_success(session_id: str):
             status = sub.get("status")
             current_period_end = sub.get("current_period_end")
 
-        # Update local DB (webhook is still source of truth, but this helps immediately)
+        # Update local DB (webhook is source of truth; this helps immediately)
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
         resp = RedirectResponse(url="/")
@@ -381,13 +432,14 @@ def billing_success(session_id: str):
             _set_auth_cookie(resp, email)
         return resp
 
-    except Exception as e:
-        # If Stripe can't retrieve session, still send home
-        return RedirectResponse(url=f"/?billing=success_error")
+    except Exception:
+        return RedirectResponse(url="/?billing=success_error")
+
 
 @app.get("/billing/cancel", include_in_schema=False)
 def billing_cancel():
     return RedirectResponse(url="/?billing=cancel")
+
 
 @app.get("/me")
 def me(request: Request):
@@ -409,10 +461,12 @@ def me(request: Request):
         "current_period_end": (row.get("current_period_end") if row else None),
     }
 
+
 @app.post("/logout")
 def logout():
     resp = JSONResponse({"ok": True})
     return _clear_auth_cookie(resp)
+
 
 @app.get("/billing/status")
 def billing_status(email: str):
@@ -429,6 +483,7 @@ def billing_status(email: str):
         "status": (row.get("status") if row else None),
         "current_period_end": (row.get("current_period_end") if row else None),
     }
+
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
@@ -494,6 +549,7 @@ async def stripe_webhook(request: Request):
 
     return {"received": True, "type": event_type}
 
+
 # =========================
 # Premium-protected example endpoint
 # =========================
@@ -510,10 +566,12 @@ def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_ac
     text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "email": email, "message": text}
 
+
 # =========================
 # Bible Reader (LOCAL DB)
 # =========================
 DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
+
 
 def _db():
     if not os.path.exists(DB_PATH):
@@ -522,9 +580,11 @@ def _db():
     con.row_factory = sqlite3.Row
     return con
 
+
 def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
     rows = con.execute(f"PRAGMA table_info({table})").fetchall()
     return [r["name"] for r in rows]
+
 
 def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     cols = [c.lower() for c in _get_table_columns(con, "books")]
@@ -533,10 +593,12 @@ def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
     return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
 
+
 def _normalize_book_key(book: str) -> str:
     b = (book or "").strip().lower()
     b = re.sub(r"\s+", "", b)
     return b
+
 
 def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     raw = (book or "").strip()
@@ -567,6 +629,7 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
 
     raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
 
+
 @app.get("/bible/health")
 def bible_health():
     con = _db()
@@ -585,6 +648,7 @@ def bible_health():
         return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
     finally:
         con.close()
+
 
 @app.get("/bible/books")
 def bible_books():
@@ -612,6 +676,7 @@ def bible_books():
     finally:
         con.close()
 
+
 @app.get("/bible/chapters")
 def bible_chapters(book: str):
     con = _db()
@@ -624,6 +689,7 @@ def bible_chapters(book: str):
         return {"book_id": book_id, "chapters": chapters}
     finally:
         con.close()
+
 
 @app.get("/bible/verses")
 def bible_verses(book: str, chapter: int):
@@ -639,6 +705,7 @@ def bible_verses(book: str, chapter: int):
         return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
     finally:
         con.close()
+
 
 @app.get("/bible/passage")
 def bible_passage(
@@ -695,8 +762,9 @@ def bible_passage(
     finally:
         con.close()
 
+
 # =========================
-# Free chat (optional) + Devotional (kept)
+# Free chat + Devotional
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
@@ -710,6 +778,7 @@ def chat(body: ChatIn):
     full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
     text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "message": text}
+
 
 @app.post("/devotional")
 def devotional(body: Optional[LangIn] = None):
