@@ -1,7 +1,14 @@
 import os
 import re
 import time
+import json
+import hmac
+import base64
+import hashlib
+import secrets
 import sqlite3
+import smtplib
+from email.message import EmailMessage
 from typing import Optional, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request
@@ -29,12 +36,22 @@ if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # --------------------
+# ENV
+# --------------------
+APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
+DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
+
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+if not JWT_SECRET:
+    # Keep running, but auth endpoints will raise a clear error
+    pass
+
+# --------------------
 # Stripe config (from ENV)
 # --------------------
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
-APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -47,20 +64,67 @@ def _require_stripe_ready():
     if not APP_BASE_URL:
         raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
 
-# --------------------
-# Simple subscription store (SQLite)
-# NOTE: On Render, use a Persistent Disk or this file may reset on redeploy.
-# --------------------
-SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs.db")
+def _require_auth_ready():
+    if not APP_BASE_URL:
+        raise HTTPException(500, "Missing APP_BASE_URL in environment.")
+    if not JWT_SECRET:
+        raise HTTPException(500, "Missing JWT_SECRET in environment (required for magic-link auth).")
 
-def _subs_db():
-    os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
+# --------------------
+# Email (optional) for magic links
+# If not configured, DEV mode will return link in JSON
+# --------------------
+MAIL_HOST = os.getenv("MAIL_HOST", "").strip()
+MAIL_PORT = int(os.getenv("MAIL_PORT", "587").strip() or "587")
+MAIL_USER = os.getenv("MAIL_USER", "").strip()
+MAIL_PASS = os.getenv("MAIL_PASS", "").strip()
+MAIL_FROM = os.getenv("MAIL_FROM", "").strip() or MAIL_USER
+
+def _email_configured() -> bool:
+    return bool(MAIL_HOST and MAIL_USER and MAIL_PASS and MAIL_FROM)
+
+def _send_magic_link_email(to_email: str, link: str):
+    """
+    Sends the login link by SMTP.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = "Your Alyana Luz login link"
+    msg["From"] = MAIL_FROM
+    msg["To"] = to_email
+
+    msg.set_content(
+        f"""Hi!
+
+Here’s your secure login link for Alyana Luz:
+
+{link}
+
+This link expires in 15 minutes and can only be used once.
+
+If you didn’t request this, you can ignore this email.
+"""
+    )
+
+    with smtplib.SMTP(MAIL_HOST, MAIL_PORT) as server:
+        server.starttls()
+        server.login(MAIL_USER, MAIL_PASS)
+        server.send_message(msg)
+
+# ==============================
+# Local storage (SQLite) - subscriptions + auth tokens
+# ==============================
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+SUB_DB_PATH = os.path.join(DATA_DIR, "subs.db")
+
+def _db_con():
     con = sqlite3.connect(SUB_DB_PATH)
     con.row_factory = sqlite3.Row
     return con
 
-def _subs_init():
-    con = _subs_db()
+def _db_init():
+    con = _db_con()
     try:
         con.execute("""
         CREATE TABLE IF NOT EXISTS subscribers (
@@ -72,25 +136,30 @@ def _subs_init():
             updated_at INTEGER
         )
         """)
+        con.execute("""
+        CREATE TABLE IF NOT EXISTS login_tokens (
+            token_hash TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            used_at INTEGER
+        )
+        """)
         con.commit()
     finally:
         con.close()
 
-_subs_init()
+_db_init()
 
-def _subs_upsert(
-    email: str,
-    customer_id: Optional[str],
-    subscription_id: Optional[str],
-    status: Optional[str],
-    current_period_end: Optional[int],
-):
+def _subs_upsert(email: str,
+                 customer_id: Optional[str],
+                 subscription_id: Optional[str],
+                 status: Optional[str],
+                 current_period_end: Optional[int]):
     email = (email or "").strip().lower()
     if not email:
         return
-
     now = int(time.time())
-    con = _subs_db()
+    con = _db_con()
     try:
         con.execute(
             """
@@ -113,7 +182,7 @@ def _subs_get(email: str) -> Optional[dict]:
     email = (email or "").strip().lower()
     if not email:
         return None
-    con = _subs_db()
+    con = _db_con()
     try:
         row = con.execute("SELECT * FROM subscribers WHERE email=?", (email,)).fetchone()
         return dict(row) if row else None
@@ -127,9 +196,127 @@ def _is_active_subscriber(email: str) -> bool:
     status = (row.get("status") or "").lower()
     return status in ("active", "trialing")
 
-# --------------------
+# ==============================
+# Magic-link auth (secure, single-use)
+# ==============================
+SESSION_COOKIE = "alyana_session"
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+def _sign(payload: dict, secret: str, ttl_seconds: int) -> str:
+    """
+    Returns a compact signed token: base64url(payload_json).base64url(signature)
+    Signature = HMAC-SHA256(payload_part, secret)
+    Payload contains exp
+    """
+    now = int(time.time())
+    payload = dict(payload or {})
+    payload["iat"] = now
+    payload["exp"] = now + int(ttl_seconds)
+
+    payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_part = _b64url(payload_json)
+
+    sig = hmac.new(secret.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
+    sig_part = _b64url(sig)
+
+    return f"{payload_part}.{sig_part}"
+
+def _verify(token: str, secret: str) -> Optional[dict]:
+    try:
+        payload_part, sig_part = token.split(".", 1)
+        expected = hmac.new(secret.encode("utf-8"), payload_part.encode("utf-8"), hashlib.sha256).digest()
+        if not hmac.compare_digest(_b64url(expected), sig_part):
+            return None
+        payload = json.loads(_b64url_decode(payload_part).decode("utf-8"))
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+def _token_hash(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+def _store_login_token(email: str, raw_token: str, expires_at: int):
+    con = _db_con()
+    try:
+        con.execute(
+            "INSERT INTO login_tokens (token_hash, email, expires_at, used_at) VALUES (?, ?, ?, NULL)",
+            (_token_hash(raw_token), email, expires_at),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+def _consume_login_token(raw_token: str) -> Optional[str]:
+    """
+    Marks token as used if valid and returns email; otherwise None.
+    Enforces single-use and expiration.
+    """
+    th = _token_hash(raw_token)
+    now = int(time.time())
+    con = _db_con()
+    try:
+        row = con.execute(
+            "SELECT token_hash, email, expires_at, used_at FROM login_tokens WHERE token_hash=?",
+            (th,),
+        ).fetchone()
+
+        if not row:
+            return None
+
+        if row["used_at"] is not None:
+            return None
+
+        if int(row["expires_at"]) < now:
+            return None
+
+        con.execute("UPDATE login_tokens SET used_at=? WHERE token_hash=?", (now, th))
+        con.commit()
+        return (row["email"] or "").strip().lower()
+    finally:
+        con.close()
+
+def _set_session_cookie(resp: JSONResponse, email: str):
+    """
+    Session token is signed and stored in cookie.
+    """
+    _require_auth_ready()
+    session_token = _sign({"email": email}, JWT_SECRET, ttl_seconds=60 * 60 * 24 * 30)  # 30 days
+    resp.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_token,
+        httponly=True,
+        secure=True,       # requires https (Render provides)
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+    )
+
+def _clear_session_cookie(resp: JSONResponse):
+    resp.delete_cookie(key=SESSION_COOKIE, path="/")
+
+def _get_current_user_email(request: Request) -> Optional[str]:
+    if not JWT_SECRET:
+        return None
+    token = request.cookies.get(SESSION_COOKIE)
+    if not token:
+        return None
+    payload = _verify(token, JWT_SECRET)
+    if not payload:
+        return None
+    email = (payload.get("email") or "").strip().lower()
+    return email or None
+
+# =========================
 # Gemini (AI)
-# --------------------
+# =========================
 API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -212,7 +399,105 @@ def health():
         "model": MODEL_NAME,
         "stripe_configured": bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL),
         "webhook_configured": bool(STRIPE_WEBHOOK_SECRET),
+        "auth_configured": bool(JWT_SECRET and APP_BASE_URL),
+        "email_configured": _email_configured(),
         "subs_db_exists": os.path.exists(SUB_DB_PATH),
+    }
+
+# =========================
+# AUTH (Magic link)
+# =========================
+class AuthRequestIn(BaseModel):
+    email: str
+
+@app.post("/auth/request-link")
+def auth_request_link(body: AuthRequestIn):
+    """
+    Request a magic login link.
+    In production, this should email the link.
+    In DEV (or if SMTP not configured), returns link in JSON so you can test.
+    """
+    _require_auth_ready()
+
+    email = (body.email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "Please enter a valid email.")
+
+    raw = secrets.token_urlsafe(32)  # random single-use token
+    expires_at = int(time.time()) + 15 * 60  # 15 minutes
+    _store_login_token(email, raw, expires_at)
+
+    link = f"{APP_BASE_URL}/auth/verify?token={raw}"
+
+    # If email configured -> send it. Otherwise return link for testing.
+    if _email_configured():
+        try:
+            _send_magic_link_email(email, link)
+        except Exception as e:
+            raise HTTPException(500, f"Failed to send email: {str(e)}")
+        return {"ok": True, "message": "Login link sent. Check your email."}
+
+    # DEV / no SMTP: return link to test immediately
+    if DEV_TRUST_LOCAL or True:
+        return {
+            "ok": True,
+            "message": "DEV mode: email not configured, returning login link.",
+            "login_link": link,
+            "expires_in_seconds": 15 * 60
+        }
+
+@app.get("/auth/verify", include_in_schema=False)
+def auth_verify(token: str, request: Request):
+    """
+    User clicks the email link -> we validate token once, set session cookie, redirect to /
+    """
+    _require_auth_ready()
+    token = (token or "").strip()
+    if not token:
+        raise HTTPException(400, "Missing token")
+
+    email = _consume_login_token(token)
+    if not email:
+        # expired / already used / invalid
+        return RedirectResponse(url="/?login=failed")
+
+    resp = RedirectResponse(url="/?login=ok")
+    # RedirectResponse doesn't have set_cookie reliably in some setups; use JSONResponse fallback pattern:
+    # But Starlette supports set_cookie on Response, so we can set on resp directly.
+    session_token = _sign({"email": email}, JWT_SECRET, ttl_seconds=60 * 60 * 24 * 30)
+    resp.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+        path="/",
+    )
+    return resp
+
+@app.post("/auth/logout")
+def auth_logout():
+    resp = JSONResponse({"ok": True})
+    _clear_session_cookie(resp)
+    return resp
+
+@app.get("/auth/me")
+def auth_me(request: Request):
+    """
+    Frontend calls this to know if user is logged in and if subscription is active.
+    """
+    email = _get_current_user_email(request)
+    if not email:
+        return {"logged_in": False, "email": None, "active": False, "status": None}
+
+    row = _subs_get(email)
+    return {
+        "logged_in": True,
+        "email": email,
+        "active": _is_active_subscriber(email),
+        "status": (row.get("status") if row else None),
+        "current_period_end": (row.get("current_period_end") if row else None),
     }
 
 # =========================
@@ -221,14 +506,17 @@ def health():
 class CheckoutIn(BaseModel):
     email: Optional[str] = None
 
-class PortalIn(BaseModel):
-    email: str
-
 @app.post("/stripe/create-checkout-session")
-def create_checkout_session(body: CheckoutIn):
+def create_checkout_session(body: CheckoutIn, request: Request):
+    """
+    Creates a Stripe Checkout Session in subscription mode.
+    If user is logged in, prefer session email.
+    Otherwise, let Stripe collect email during checkout.
+    """
     _require_stripe_ready()
 
-    email = (body.email or "").strip().lower() if body else ""
+    session_email = _get_current_user_email(request)
+    email = (session_email or (body.email or "")).strip().lower()
 
     try:
         session = stripe.checkout.Session.create(
@@ -241,44 +529,30 @@ def create_checkout_session(body: CheckoutIn):
         )
         return {"url": session.url, "id": session.id}
     except Exception as e:
+        # Helpful debug for you (shows Stripe reason in Render logs)
         raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
 
-@app.post("/stripe/create-portal-session")
-def create_portal_session(body: PortalIn):
-    _require_stripe_ready()
-    email = (body.email or "").strip().lower()
-    if not email:
-        raise HTTPException(400, "Missing email")
-
-    row = _subs_get(email)
-    if not row or not row.get("stripe_customer_id"):
-        raise HTTPException(404, "No Stripe customer found for that email yet.")
-
-    try:
-        portal = stripe.billing_portal.Session.create(
-            customer=row["stripe_customer_id"],
-            return_url=f"{APP_BASE_URL}/",
-        )
-        return {"url": portal.url}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
-
 @app.get("/billing/success", include_in_schema=False)
-def billing_success(session_id: str = ""):
-    # Webhook is the source of truth. This page just returns user to app.
-    return RedirectResponse(url="/")
+def billing_success(session_id: str):
+    return RedirectResponse(url="/?billing=ok")
 
 @app.get("/billing/cancel", include_in_schema=False)
 def billing_cancel():
-    return RedirectResponse(url="/")
+    return RedirectResponse(url="/?billing=cancel")
 
 @app.get("/billing/status")
-def billing_status(email: str):
-    email = (email or "").strip().lower()
+def billing_status(request: Request):
+    """
+    IMPORTANT: No email param anymore (prevents spoofing).
+    Uses logged-in session email.
+    """
+    email = _get_current_user_email(request)
     if not email:
-        raise HTTPException(400, "Missing email")
+        return {"logged_in": False, "active": False, "status": None, "current_period_end": None}
+
     row = _subs_get(email)
     return {
+        "logged_in": True,
         "email": email,
         "active": _is_active_subscriber(email),
         "status": (row.get("status") if row else None),
@@ -287,6 +561,9 @@ def billing_status(email: str):
 
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
+    """
+    Stripe calls this endpoint when payments happen / subscription changes.
+    """
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(500, "Missing STRIPE_WEBHOOK_SECRET in environment.")
 
@@ -301,21 +578,12 @@ async def stripe_webhook(request: Request):
     event_type = event["type"]
     data = event["data"]["object"]
 
-    print("Stripe webhook received:", event_type)
-
     # 1) Checkout completed (subscription created)
     if event_type == "checkout.session.completed":
         customer_id = data.get("customer")
         subscription_id = data.get("subscription")
-
-        email = (
-            (data.get("customer_details", {}) or {}).get("email")
-            or data.get("customer_email")
-            or ""
-        ).strip().lower()
-
-        if not email:
-            print("⚠️ checkout.session.completed had no email; session:", data.get("id"))
+        email = (data.get("customer_details", {}) or {}).get("email") or data.get("customer_email") or ""
+        email = (email or "").strip().lower()
 
         status = None
         current_period_end = None
@@ -326,12 +594,8 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # 2) Subscription lifecycle
-    elif event_type in (
-        "customer.subscription.created",
-        "customer.subscription.updated",
-        "customer.subscription.deleted",
-    ):
+    # 2) Subscription updates
+    elif event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
         subscription_id = data.get("id")
         customer_id = data.get("customer")
         status = data.get("status")
@@ -344,8 +608,8 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # 3) Invoice payment succeeded (IMPORTANT)
-    elif event_type in ("invoice.paid", "invoice.payment_succeeded"):
+    # 3) Invoice paid
+    elif event_type == "invoice.paid":
         customer_id = data.get("customer")
         subscription_id = data.get("subscription")
 
@@ -363,25 +627,12 @@ async def stripe_webhook(request: Request):
 
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    # 4) Invoice payment failed (lock premium)
-    elif event_type == "invoice.payment_failed":
-        customer_id = data.get("customer")
-        subscription_id = data.get("subscription")
-
-        email = ""
-        if customer_id:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = (cust.get("email") or "").strip().lower()
-
-        # Mark as past_due (or unpaid). This makes billing/status return active=false.
-        _subs_upsert(email, customer_id, subscription_id, "past_due", None)
-
     return {"received": True, "type": event_type}
 
 # =========================
 # Bible Reader (LOCAL DB)
 # =========================
-DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
+DB_PATH = os.path.join(DATA_DIR, "bible.db")
 
 def _db():
     if not os.path.exists(DB_PATH):
@@ -613,5 +864,3 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
-
-
