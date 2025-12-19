@@ -8,7 +8,7 @@ import sqlite3
 from typing import Optional, Dict, List
 
 from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -38,12 +38,7 @@ STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
-
-# Used to sign the auth cookie (NOT a Stripe key)
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
-
-# Optional: allow cookies on localhost if you ever test locally
-DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -110,25 +105,20 @@ def _read_token(token: str) -> Optional[dict]:
 AUTH_COOKIE_NAME = "alyana_auth"
 
 
-def _set_auth_cookie(resp: Response, email: str):
+def _set_auth_cookie(resp: RedirectResponse, email: str):
     token = _make_token(email)
-
-    # On Render you want secure cookies.
-    # If you ever test localhost, set DEV_TRUST_LOCAL=true to allow secure=False.
-    secure_cookie = True if not DEV_TRUST_LOCAL else False
-
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=secure_cookie,
+        secure=True,      # Render is HTTPS
         samesite="lax",
         max_age=60 * 60 * 24 * 7,
         path="/",
     )
 
 
-def _clear_auth_cookie(resp: Response):
+def _clear_auth_cookie(resp: JSONResponse):
     resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
     return resp
 
@@ -155,8 +145,7 @@ def _subs_db():
 def _subs_init():
     con = _subs_db()
     try:
-        con.execute(
-            """
+        con.execute("""
         CREATE TABLE IF NOT EXISTS subscribers (
             email TEXT PRIMARY KEY,
             stripe_customer_id TEXT,
@@ -165,8 +154,7 @@ def _subs_init():
             current_period_end INTEGER,
             updated_at INTEGER
         )
-        """
-        )
+        """)
         con.commit()
     finally:
         con.close()
@@ -232,8 +220,7 @@ def require_active_user(request: Request) -> str:
     if not email:
         raise HTTPException(401, "Not logged in.")
     if not _is_active_subscriber(email):
-        # 403 makes more sense than 402 for "not authorized"
-        raise HTTPException(403, "Subscription inactive. Please subscribe.")
+        raise HTTPException(402, "Subscription inactive. Please subscribe.")
     return email
 
 
@@ -307,9 +294,7 @@ async def serve_frontend():
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(
-            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404
-        )
+        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
     return FileResponse(
         APPJS_PATH,
         media_type="application/javascript",
@@ -373,7 +358,6 @@ def create_checkout_session(body: CheckoutIn):
 def create_portal_session(request: Request, body: PortalIn):
     _require_stripe_ready()
 
-    # Prefer logged-in email from cookie
     email = get_current_email(request) or ((body.email or "").strip().lower() if body else "")
     if not email:
         raise HTTPException(400, "Missing email (not logged in).")
@@ -402,20 +386,16 @@ def billing_success(session_id: str):
     _require_jwt_secret()
 
     try:
-        session = stripe.checkout.Session.retrieve(session_id)
+        session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
+        email = ""
+        if session.get("customer_details") and session["customer_details"].get("email"):
+            email = session["customer_details"]["email"]
+        elif session.get("customer_email"):
+            email = session["customer_email"]
+        email = (email or "").strip().lower()
 
-        # Email
-        email = (
-            (session.get("customer_details") or {}).get("email")
-            or session.get("customer_email")
-            or ""
-        ).strip().lower()
-
-        # Normalize IDs (Stripe may return IDs as strings, or objects if expanded)
-        customer = session.get("customer")
-        subscription = session.get("subscription")
-        customer_id = customer.get("id") if isinstance(customer, dict) else customer
-        subscription_id = subscription.get("id") if isinstance(subscription, dict) else subscription
+        customer_id = session.get("customer")
+        subscription_id = session.get("subscription")
 
         status = None
         current_period_end = None
@@ -424,7 +404,6 @@ def billing_success(session_id: str):
             status = sub.get("status")
             current_period_end = sub.get("current_period_end")
 
-        # Update local DB (webhook is source of truth; this helps immediately)
         _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
         resp = RedirectResponse(url="/")
@@ -444,19 +423,33 @@ def billing_cancel():
 @app.get("/me")
 def me(request: Request):
     """
-    Frontend can call this to know:
-    - who is logged in
-    - are they active
+    Who is logged in, are they active, and when it renews.
     """
     email = get_current_email(request)
     if not email:
-        return {"logged_in": False, "email": None, "active": False, "status": None}
+        return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
 
-    row = _subs_get(email)
+    row = _subs_get(email) or {}
+    active = _is_active_subscriber(email)
+
+    # If DB missing current_period_end, fetch once from Stripe (best-effort)
+    cpe = row.get("current_period_end")
+    sub_id = row.get("stripe_subscription_id")
+    if (cpe is None) and sub_id:
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            status = sub.get("status")
+            cpe = sub.get("current_period_end")
+            _subs_upsert(email, row.get("stripe_customer_id"), sub_id, status, cpe)
+            row = _subs_get(email) or row
+            active = _is_active_subscriber(email)
+        except Exception:
+            pass
+
     return {
         "logged_in": True,
         "email": email,
-        "active": _is_active_subscriber(email),
+        "active": active,
         "status": (row.get("status") if row else None),
         "current_period_end": (row.get("current_period_end") if row else None),
     }
@@ -466,23 +459,6 @@ def me(request: Request):
 def logout():
     resp = JSONResponse({"ok": True})
     return _clear_auth_cookie(resp)
-
-
-@app.get("/billing/status")
-def billing_status(email: str):
-    """
-    Kept for compatibility; but /me is better once cookie login is used.
-    """
-    email = (email or "").strip().lower()
-    if not email:
-        raise HTTPException(400, "Missing email")
-    row = _subs_get(email)
-    return {
-        "email": email,
-        "active": _is_active_subscriber(email),
-        "status": (row.get("status") if row else None),
-        "current_period_end": (row.get("current_period_end") if row else None),
-    }
 
 
 @app.post("/stripe/webhook")
@@ -551,7 +527,7 @@ async def stripe_webhook(request: Request):
 
 
 # =========================
-# Premium-protected example endpoint
+# Premium-protected endpoint
 # =========================
 @app.post("/premium/chat")
 def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
@@ -589,7 +565,9 @@ def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
 def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     cols = [c.lower() for c in _get_table_columns(con, "books")]
     id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
-    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (cols[1] if len(cols) > 1 else cols[0])
+    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
+        cols[1] if len(cols) > 1 else cols[0]
+    )
     key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
     return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
 
@@ -614,16 +592,22 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     key_col = mapping["key_col"]
     norm = _normalize_book_key(raw)
 
-    row = con.execute(f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)).fetchone()
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)
+    ).fetchone()
     if row:
         return int(row["id"])
 
-    row = con.execute(f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)).fetchone()
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)
+    ).fetchone()
     if row:
         return int(row["id"])
 
     if key_col:
-        row = con.execute(f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)).fetchone()
+        row = con.execute(
+            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)
+        ).fetchone()
         if row:
             return int(row["id"])
 
@@ -660,17 +644,21 @@ def bible_books():
         key_col = mapping["key_col"]
 
         if key_col:
-            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}").fetchall()
+            rows = con.execute(
+                f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
+            ).fetchall()
         else:
             rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
 
         books = []
         for r in rows:
-            books.append({
-                "id": int(r["id"]),
-                "name": str(r["name"]),
-                "key": str(r["book_key"]) if "book_key" in r.keys() else None,
-            })
+            books.append(
+                {
+                    "id": int(r["id"]),
+                    "name": str(r["name"]),
+                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
+                }
+            )
 
         return {"books": books}
     finally:
@@ -682,7 +670,9 @@ def bible_chapters(book: str):
     con = _db()
     try:
         book_id = _resolve_book_id(con, book)
-        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
+        rows = con.execute(
+            "SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)
+        ).fetchall()
         chapters = [int(r["chapter"]) for r in rows]
         if not chapters:
             raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
@@ -698,7 +688,10 @@ def bible_verses(book: str, chapter: int):
     con = _db()
     try:
         book_id = _resolve_book_id(con, book)
-        rows = con.execute("SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))).fetchall()
+        rows = con.execute(
+            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
+            (book_id, int(chapter)),
+        ).fetchall()
         verses = [int(r["verse"]) for r in rows]
         if not verses:
             raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
@@ -764,7 +757,7 @@ def bible_passage(
 
 
 # =========================
-# Free chat + Devotional
+# Free chat + Devotional (kept)
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
