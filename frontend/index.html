@@ -81,6 +81,30 @@
         margin: 0;
       }
 
+      /* NEW: account tools */
+      .account-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(255,255,255,0.12);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+      .pill.ok { border-color: rgba(34,197,94,0.55); }
+      .pill.warn { border-color: rgba(249,115,22,0.65); }
+      .pill.bad { border-color: rgba(225,29,72,0.65); }
+
       .menu-bar {
         padding: 12px 18px;
         display: flex;
@@ -220,19 +244,6 @@
       .chat-form input[type="text"] { border-radius: 999px; flex: 1; min-width: 240px; }
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.08);
-        border: 1px solid rgba(255,255,255,0.12);
-        font-size: 12px;
-        font-weight: 800;
-        white-space: nowrap;
-      }
-
       .small-note { font-size: 12px; opacity: 0.8; margin-top: 8px; }
       .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
       .block {
@@ -262,10 +273,26 @@
         <button class="support-btn" id="supportBtn" type="button" title="Support Alyana Luz">
           ❤️ Support Alyana Luz
         </button>
+
+        <!-- NEW: account/subscription status + billing tools (driven by /me in app.js) -->
+        <div class="account-row" aria-label="Account and billing">
+          <span class="pill warn" id="authPill">Account: checking…</span>
+          <button class="btn btn-ghost" id="manageBillingBtn" type="button" disabled>
+            Manage billing
+          </button>
+          <button class="btn btn-danger" id="logoutBtn" type="button" style="display:none;">
+            Logout
+          </button>
+        </div>
+
         <p class="support-note">
-  Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
-</p>
+          Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
+        </p>
+
+        <!-- NEW: inline hint area app.js can fill -->
+        <div class="muted" id="authHint" style="text-align:center; width:100%; max-width:760px; display:none;"></div>
       </div>
+
       <nav class="menu-bar">
         <button class="menu-btn" data-target="chatSection" type="button">Chat</button>
         <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
@@ -564,6 +591,7 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
