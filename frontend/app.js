@@ -1,51 +1,173 @@
 (() => {
+  // ---------- helpers ----------
   const $ = (id) => document.getElementById(id);
 
-  const jsStatus = $("jsStatus");
-  const authPill = $("authPill");
-  const authHint = $("authHint");
-  const supportBtn = $("supportBtn");
-  const manageBillingBtn = $("manageBillingBtn");
-  const logoutBtn = $("logoutBtn");
-
-  const loginRow = $("loginRow");
-  const loginEmail = $("loginEmail");
-  const loginBtn = $("loginBtn");
-
-  const chat = $("chat");
-  const chatForm = $("chatForm");
-  const chatInput = $("chatInput");
-
-  function setHint(msg, show = true) {
-    if (!authHint) return;
-    authHint.style.display = show ? "block" : "none";
-    authHint.textContent = msg || "";
+  function setHint(msg, isError = false) {
+    const el = $("authHint");
+    if (!el) return;
+    if (!msg) {
+      el.style.display = "none";
+      el.textContent = "";
+      return;
+    }
+    el.style.display = "block";
+    el.textContent = msg;
+    el.style.opacity = "1";
+    el.style.color = isError ? "#fecaca" : "#d1fae5";
   }
 
-  function setPill(cls, text) {
-    authPill.classList.remove("ok", "warn", "bad");
-    authPill.classList.add(cls);
-    authPill.textContent = text;
+  function setJsStatus(text) {
+    const el = $("jsStatus");
+    if (el) el.textContent = text;
   }
 
-  async function api(path, opts = {}) {
-    const res = await fetch(path, {
+  async function jsonFetch(url, opts = {}) {
+    const res = await fetch(url, {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       ...opts,
     });
+    const text = await res.text();
     let data = null;
-    try {
-      data = await res.json();
-    } catch (_) {}
+    try { data = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
-      const msg = (data && (data.detail || data.error)) || `Request failed (${res.status})`;
+      const msg = (data && (data.detail || data.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
     }
     return data;
   }
 
+  function setAuthPill({ logged_in, email, active, status }) {
+    const pill = $("authPill");
+    if (!pill) return;
+
+    const manageBtn = $("manageBillingBtn");
+    const logoutBtn = $("logoutBtn");
+
+    if (!logged_in) {
+      pill.className = "pill warn";
+      pill.textContent = "Account: not logged in";
+      if (manageBtn) manageBtn.disabled = true;
+      if (logoutBtn) logoutBtn.style.display = "none";
+      return;
+    }
+
+    if (active) {
+      pill.className = "pill ok";
+      pill.textContent = `Account: active (${email})`;
+      if (manageBtn) manageBtn.disabled = false;
+    } else {
+      pill.className = "pill bad";
+      pill.textContent = `Account: inactive (${email})`;
+      if (manageBtn) manageBtn.disabled = false; // let them manage billing anyway
+    }
+
+    if (logoutBtn) logoutBtn.style.display = "inline-flex";
+    if (status) {
+      // optional: show status in hint (non-error)
+      setHint(`Subscription status: ${status}`, false);
+    }
+  }
+
+  async function refreshMe() {
+    try {
+      const me = await jsonFetch("/me", { method: "GET" });
+      setAuthPill(me);
+      return me;
+    } catch (e) {
+      // If /me fails, show safe info
+      setAuthPill({ logged_in: false });
+      return { logged_in: false };
+    }
+  }
+
+  // ---------- menu ----------
+  function setupMenu() {
+    const buttons = document.querySelectorAll(".menu-btn");
+    const sections = document.querySelectorAll(".app-section");
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetId = btn.getAttribute("data-target");
+        buttons.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        sections.forEach((sec) => {
+          sec.classList.toggle("active", sec.id === targetId);
+        });
+      });
+    });
+  }
+
+  // ---------- billing ----------
+  async function handleSupport() {
+    setHint("");
+    const email = ($("loginEmail")?.value || "").trim().toLowerCase();
+
+    try {
+      const out = await jsonFetch("/stripe/create-checkout-session", {
+        method: "POST",
+        body: JSON.stringify({ email: email || null }),
+      });
+      if (out && out.url) {
+        window.location.href = out.url;
+        return;
+      }
+      throw new Error("No checkout URL returned.");
+    } catch (e) {
+      setHint(`Subscribe failed: ${e.message}`, true);
+    }
+  }
+
+  async function handleManageBilling() {
+    setHint("");
+    try {
+      const out = await jsonFetch("/stripe/create-portal-session", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      if (out && out.url) {
+        window.location.href = out.url;
+        return;
+      }
+      throw new Error("No portal URL returned.");
+    } catch (e) {
+      setHint(`Manage billing failed: ${e.message}`, true);
+    }
+  }
+
+  async function handleRestoreAccess() {
+    setHint("");
+    const email = ($("loginEmail")?.value || "").trim().toLowerCase();
+    if (!email) {
+      setHint("Type the email you used at Stripe, then click Restore access.", true);
+      return;
+    }
+
+    try {
+      setHint("Checking subscription…", false);
+      await jsonFetch("/login", { method: "POST", body: JSON.stringify({ email }) });
+      setHint("Access restored. You are now logged in.", false);
+      await refreshMe();
+    } catch (e) {
+      setHint(`Restore failed: ${e.message}`, true);
+      await refreshMe();
+    }
+  }
+
+  async function handleLogout() {
+    setHint("");
+    try {
+      await jsonFetch("/logout", { method: "POST", body: JSON.stringify({}) });
+      setHint("Logged out.", false);
+      await refreshMe();
+    } catch (e) {
+      setHint(`Logout failed: ${e.message}`, true);
+    }
+  }
+
+  // ---------- chat (simple) ----------
   function addBubble(kind, text) {
+    const chat = $("chat");
+    if (!chat) return;
     const row = document.createElement("div");
     row.className = `bubble-row ${kind}`;
     const bubble = document.createElement("div");
@@ -56,182 +178,390 @@
     chat.scrollTop = chat.scrollHeight;
   }
 
-  async function refreshMe() {
-    jsStatus.textContent = "JS: running";
+  function setupChat() {
+    const chatEl = $("chat");
+    if (chatEl && chatEl.childElementCount === 0) {
+      addBubble("system", 'Hi! Try "Read John 1:1", "Verses about peace", or "Pray for my family".');
+    }
 
-    try {
-      const me = await api("/me", { method: "GET" });
+    $("chatForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = $("chatInput");
+      const prompt = (input?.value || "").trim();
+      if (!prompt) return;
 
-      if (!me.logged_in) {
-        setPill("warn", "Account: not logged in");
-        manageBillingBtn.disabled = true;
-        logoutBtn.style.display = "none";
-        loginRow.style.display = "flex";
-        setHint("To access premium features, subscribe with Support, or restore access using your Stripe email.", true);
+      addBubble("user", prompt);
+      if (input) input.value = "";
+
+      try {
+        const out = await jsonFetch("/chat", { method: "POST", body: JSON.stringify({ prompt }) });
+        addBubble("bot", out?.message || "…");
+      } catch (err) {
+        addBubble("bot", `Error: ${err.message}`);
+      }
+    });
+
+    $("chatNewBtn")?.addEventListener("click", () => {
+      const chat = $("chat");
+      if (!chat) return;
+      chat.innerHTML = "";
+      addBubble("system", "New chat started.");
+    });
+
+    // Save/load chats (localStorage)
+    const LIST_KEY = "alyana_saved_chats_v1";
+
+    function loadSaved() {
+      const listEl = $("chatSavedList");
+      if (!listEl) return;
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      if (!items.length) {
+        listEl.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
         return;
       }
+      listEl.innerHTML = "";
+      items.forEach((it, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.textContent = `${it.title}`;
+        btn.addEventListener("click", () => {
+          const chat = $("chat");
+          chat.innerHTML = it.html;
+        });
 
-      if (me.active) {
-        setPill("ok", `Account: active (${me.email})`);
-        manageBillingBtn.disabled = false;
-        logoutBtn.style.display = "inline-block";
-        loginRow.style.display = "none";
-        setHint("", false);
-      } else {
-        setPill("bad", `Account: inactive (${me.email})`);
-        manageBillingBtn.disabled = true;
-        logoutBtn.style.display = "inline-block";
-        loginRow.style.display = "flex";
-        setHint("Your subscription is not active. Please subscribe again using Support, or check Stripe Portal after re-subscribing.", true);
-      }
-    } catch (e) {
-      setPill("bad", "Account: error");
-      manageBillingBtn.disabled = true;
-      logoutBtn.style.display = "none";
-      loginRow.style.display = "flex";
-      setHint(`Status check failed: ${e.message}`, true);
-    }
-  }
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.style.marginTop = "8px";
+        del.textContent = "Delete";
+        del.addEventListener("click", () => {
+          const next = items.filter((_, i) => i !== idx);
+          localStorage.setItem(LIST_KEY, JSON.stringify(next));
+          loadSaved();
+        });
 
-  async function startCheckout() {
-    // Use email if user typed one (helps Stripe prefill)
-    const email = (loginEmail && loginEmail.value ? loginEmail.value : "").trim().toLowerCase();
-
-    supportBtn.disabled = true;
-    setHint("Opening Stripe Checkout…", true);
-
-    try {
-      const data = await api("/stripe/create-checkout-session", {
-        method: "POST",
-        body: JSON.stringify({ email: email || null }),
+        const wrap = document.createElement("div");
+        wrap.appendChild(btn);
+        wrap.appendChild(del);
+        listEl.appendChild(wrap);
       });
-      if (data && data.url) {
-        window.location.href = data.url;
-        return;
-      }
-      throw new Error("No checkout URL returned.");
-    } catch (e) {
-      setHint(`Checkout error: ${e.message}`, true);
-    } finally {
-      supportBtn.disabled = false;
     }
+
+    $("chatSaveBtn")?.addEventListener("click", () => {
+      const chat = $("chat");
+      if (!chat) return;
+      const html = chat.innerHTML;
+      const title = prompt("Name this chat (example: forgiveness — 2025-12-20 07:01):");
+      if (!title) return;
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      items.unshift({ title, html });
+      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 20)));
+      loadSaved();
+    });
+
+    loadSaved();
   }
 
-  async function openPortal() {
-    manageBillingBtn.disabled = true;
-    setHint("Opening billing portal…", true);
+  // ---------- devotional/prayer local save ----------
+  function setupDevotional() {
+    const LIST_KEY = "alyana_saved_devotionals_v1";
 
-    try {
-      const data = await api("/stripe/create-portal-session", {
-        method: "POST",
-        body: JSON.stringify({}),
+    function loadSavedDev() {
+      const listEl = $("devSavedList");
+      if (!listEl) return;
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      if (!items.length) {
+        listEl.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
+        return;
+      }
+      listEl.innerHTML = "";
+      items.forEach((it, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.textContent = it.title;
+        btn.addEventListener("click", () => {
+          $("devotionalScripture").textContent = it.scripture || "—";
+          $("devotionalExplain").textContent = it.brief_explanation || "—";
+          $("devotionalMyExplanation").value = it.my_explain || "";
+          $("devotionalMyApplication").value = it.my_apply || "";
+          $("devotionalMyPrayer").value = it.my_prayer || "";
+          $("devotionalReflection").value = it.reflect || "";
+        });
+
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.style.marginTop = "8px";
+        del.textContent = "Delete";
+        del.addEventListener("click", () => {
+          const next = items.filter((_, i) => i !== idx);
+          localStorage.setItem(LIST_KEY, JSON.stringify(next));
+          loadSavedDev();
+        });
+
+        const wrap = document.createElement("div");
+        wrap.appendChild(btn);
+        wrap.appendChild(del);
+        listEl.appendChild(wrap);
       });
-      if (data && data.url) {
-        window.location.href = data.url;
-        return;
-      }
-      throw new Error("No portal URL returned.");
-    } catch (e) {
-      setHint(`Portal error: ${e.message}`, true);
-    } finally {
-      manageBillingBtn.disabled = false;
     }
+
+    $("devotionalBtn")?.addEventListener("click", async () => {
+      try {
+        const lang = $("devUiLang")?.value || "en";
+        const out = await jsonFetch("/devotional", { method: "POST", body: JSON.stringify({ lang }) });
+        const raw = out?.json || "{}";
+        let obj = {};
+        try { obj = JSON.parse(raw); } catch {}
+        $("devotionalScripture").textContent = obj.scripture || "—";
+        $("devotionalExplain").textContent = obj.brief_explanation || "—";
+      } catch (e) {
+        setHint(`Devotional failed: ${e.message}`, true);
+      }
+    });
+
+    $("devSaveBtn")?.addEventListener("click", () => {
+      const scripture = $("devotionalScripture")?.textContent || "";
+      const brief_explanation = $("devotionalExplain")?.textContent || "";
+      const my_explain = $("devotionalMyExplanation")?.value || "";
+      const my_apply = $("devotionalMyApplication")?.value || "";
+      const my_prayer = $("devotionalMyPrayer")?.value || "";
+      const reflect = $("devotionalReflection")?.value || "";
+      const title = prompt("Name this devotional:");
+      if (!title) return;
+
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      items.unshift({ title, scripture, brief_explanation, my_explain, my_apply, my_prayer, reflect });
+      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 30)));
+      loadSavedDev();
+    });
+
+    let devStreak = Number(localStorage.getItem("alyana_dev_streak_v1") || "0");
+    const pill = $("devStreakPill");
+    const btn = $("devStreakBtn");
+    const update = () => {
+      if (pill) pill.textContent = `Streak: ${devStreak}`;
+      localStorage.setItem("alyana_dev_streak_v1", String(devStreak));
+    };
+    update();
+    btn?.addEventListener("click", () => {
+      devStreak += 1;
+      update();
+    });
+
+    loadSavedDev();
   }
 
-  async function restoreAccess() {
-    const email = (loginEmail.value || "").trim().toLowerCase();
-    if (!email) {
-      setHint("Type the email you used on Stripe, then click Restore access.", true);
+  function setupPrayer() {
+    const LIST_KEY = "alyana_saved_prayers_v1";
+
+    function loadSavedPr() {
+      const listEl = $("prSavedList");
+      if (!listEl) return;
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      if (!items.length) {
+        listEl.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
+        return;
+      }
+      listEl.innerHTML = "";
+      items.forEach((it, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.textContent = it.title;
+        btn.addEventListener("click", () => {
+          $("pA").textContent = it.example_adoration || "—";
+          $("pC").textContent = it.example_confession || "—";
+          $("pT").textContent = it.example_thanksgiving || "—";
+          $("pS").textContent = it.example_supplication || "—";
+          $("myAdoration").value = it.myA || "";
+          $("myConfession").value = it.myC || "";
+          $("myThanksgiving").value = it.myT || "";
+          $("mySupplication").value = it.myS || "";
+          $("prayerNotes").value = it.notes || "";
+        });
+
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.style.marginTop = "8px";
+        del.textContent = "Delete";
+        del.addEventListener("click", () => {
+          const next = items.filter((_, i) => i !== idx);
+          localStorage.setItem(LIST_KEY, JSON.stringify(next));
+          loadSavedPr();
+        });
+
+        const wrap = document.createElement("div");
+        wrap.appendChild(btn);
+        wrap.appendChild(del);
+        listEl.appendChild(wrap);
+      });
+    }
+
+    $("prayerBtn")?.addEventListener("click", async () => {
+      try {
+        const lang = $("prUiLang")?.value || "en";
+        const out = await jsonFetch("/daily_prayer", { method: "POST", body: JSON.stringify({ lang }) });
+        const raw = out?.json || "{}";
+        let obj = {};
+        try { obj = JSON.parse(raw); } catch {}
+        $("pA").textContent = obj.example_adoration || "—";
+        $("pC").textContent = obj.example_confession || "—";
+        $("pT").textContent = obj.example_thanksgiving || "—";
+        $("pS").textContent = obj.example_supplication || "—";
+      } catch (e) {
+        setHint(`Prayer failed: ${e.message}`, true);
+      }
+    });
+
+    $("prSaveBtn")?.addEventListener("click", () => {
+      const title = prompt("Name this prayer entry:");
+      if (!title) return;
+
+      const example_adoration = $("pA")?.textContent || "";
+      const example_confession = $("pC")?.textContent || "";
+      const example_thanksgiving = $("pT")?.textContent || "";
+      const example_supplication = $("pS")?.textContent || "";
+      const myA = $("myAdoration")?.value || "";
+      const myC = $("myConfession")?.value || "";
+      const myT = $("myThanksgiving")?.value || "";
+      const myS = $("mySupplication")?.value || "";
+      const notes = $("prayerNotes")?.value || "";
+
+      const raw = localStorage.getItem(LIST_KEY);
+      const items = raw ? JSON.parse(raw) : [];
+      items.unshift({ title, example_adoration, example_confession, example_thanksgiving, example_supplication, myA, myC, myT, myS, notes });
+      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 30)));
+      loadSavedPr();
+    });
+
+    let prStreak = Number(localStorage.getItem("alyana_pr_streak_v1") || "0");
+    const pill = $("prStreakPill");
+    const btn = $("prStreakBtn");
+    const update = () => {
+      if (pill) pill.textContent = `Streak: ${prStreak}`;
+      localStorage.setItem("alyana_pr_streak_v1", String(prStreak));
+    };
+    update();
+    btn?.addEventListener("click", () => {
+      prStreak += 1;
+      update();
+    });
+
+    loadSavedPr();
+  }
+
+  // ---------- bible reader ----------
+  async function setupBible() {
+    try {
+      const health = await jsonFetch("/bible/health", { method: "GET" });
+      $("bibleDbStatus").textContent = `OK — ${health.verse_count} verses loaded`;
+    } catch (e) {
+      $("bibleDbStatus").textContent = `Error: ${e.message}`;
       return;
     }
 
-    loginBtn.disabled = true;
-    setHint("Checking subscription…", true);
+    const bookSelect = $("bookSelect");
+    const chapterSelect = $("chapterSelect");
+    const verseStartSelect = $("verseStartSelect");
+    const verseEndSelect = $("verseEndSelect");
 
-    try {
-      await api("/login", {
-        method: "POST",
-        body: JSON.stringify({ email }),
+    const fillSelect = (sel, items, placeholder = "—") => {
+      sel.innerHTML = "";
+      if (!items || !items.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = placeholder;
+        sel.appendChild(opt);
+        return;
+      }
+      items.forEach((x) => {
+        const opt = document.createElement("option");
+        opt.value = String(x.value);
+        opt.textContent = x.label;
+        sel.appendChild(opt);
       });
-      setHint("Access restored. Refreshing account…", true);
-      await refreshMe();
-    } catch (e) {
-      setHint(`Restore failed: ${e.message}`, true);
-    } finally {
-      loginBtn.disabled = false;
+    };
+
+    const booksOut = await jsonFetch("/bible/books", { method: "GET" });
+    const books = (booksOut.books || []).map((b) => ({ value: b.id, label: b.name }));
+    fillSelect(bookSelect, books, "No books");
+
+    async function loadChapters() {
+      const bookVal = bookSelect.value;
+      if (!bookVal) return;
+      const out = await jsonFetch(`/bible/chapters?book=${encodeURIComponent(bookVal)}`, { method: "GET" });
+      const chapters = (out.chapters || []).map((c) => ({ value: c, label: String(c) }));
+      fillSelect(chapterSelect, chapters, "—");
+      fillSelect(verseStartSelect, [], "—");
+      fillSelect(verseEndSelect, [], "(optional)");
     }
-  }
 
-  async function logout() {
-    logoutBtn.disabled = true;
-    try {
-      await api("/logout", { method: "POST", body: JSON.stringify({}) });
-      await refreshMe();
-    } catch (e) {
-      setHint(`Logout error: ${e.message}`, true);
-    } finally {
-      logoutBtn.disabled = false;
+    async function loadVerses() {
+      const bookVal = bookSelect.value;
+      const chVal = chapterSelect.value;
+      if (!bookVal || !chVal) return;
+      const out = await jsonFetch(`/bible/verses?book=${encodeURIComponent(bookVal)}&chapter=${encodeURIComponent(chVal)}`, { method: "GET" });
+      const verses = (out.verses || []).map((v) => ({ value: v, label: String(v) }));
+      fillSelect(verseStartSelect, verses, "—");
+      fillSelect(verseEndSelect, [{ value: "", label: "(optional)" }, ...verses], "(optional)");
     }
-  }
 
-  // Menu buttons
-  function setupMenu() {
-    const btns = document.querySelectorAll(".menu-btn");
-    btns.forEach((b, idx) => {
-      b.addEventListener("click", () => {
-        btns.forEach((x) => x.classList.remove("active"));
-        b.classList.add("active");
+    bookSelect.addEventListener("change", loadChapters);
+    chapterSelect.addEventListener("change", loadVerses);
 
-        const target = b.getAttribute("data-target");
-        document.querySelectorAll(".app-section").forEach((sec) => sec.classList.remove("active"));
-        const el = document.getElementById(target);
-        if (el) el.classList.add("active");
-      });
+    // initial load
+    await loadChapters();
+    await loadVerses();
 
-      if (idx === 0) b.classList.add("active");
+    $("listenBible")?.addEventListener("click", async () => {
+      const bookVal = bookSelect.value;
+      const chVal = chapterSelect.value;
+      if (!bookVal || !chVal) return;
+
+      const full = $("fullChapter")?.checked ? "true" : "false";
+      const start = verseStartSelect.value || "1";
+      const end = verseEndSelect.value || "";
+
+      const url = `/bible/passage?book=${encodeURIComponent(bookVal)}&chapter=${encodeURIComponent(chVal)}&full_chapter=${full}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+      try {
+        const out = await jsonFetch(url, { method: "GET" });
+        $("passageRef").textContent = out.reference || "—";
+        $("passageText").textContent = out.text || "—";
+      } catch (e) {
+        $("passageRef").textContent = "—";
+        $("passageText").textContent = `Error: ${e.message}`;
+      }
+    });
+
+    $("stopBible")?.addEventListener("click", () => {
+      // You can wire real TTS later; for now just UI
+      setHint("Stopped (TTS not wired yet).", false);
     });
   }
 
-  // Minimal chat
-  async function handleChatSubmit(e) {
-    e.preventDefault();
-    const text = (chatInput.value || "").trim();
-    if (!text) return;
-    chatInput.value = "";
+  // ---------- init ----------
+  async function init() {
+    setJsStatus("JS: running");
 
-    addBubble("user", text);
+    setupMenu();
+    setupChat();
+    setupDevotional();
+    setupPrayer();
+    setupBible();
 
-    try {
-      const me = await api("/me", { method: "GET" });
-      const endpoint = me.logged_in && me.active ? "/premium/chat" : "/chat";
+    $("supportBtn")?.addEventListener("click", handleSupport);
+    $("manageBillingBtn")?.addEventListener("click", handleManageBilling);
+    $("loginBtn")?.addEventListener("click", handleRestoreAccess);
+    $("logoutBtn")?.addEventListener("click", handleLogout);
 
-      const resp = await api(endpoint, {
-        method: "POST",
-        body: JSON.stringify({ prompt: text }),
-      });
-
-      addBubble("bot", resp.message || "…");
-    } catch (err) {
-      addBubble("system", `Error: ${err.message}`);
-    }
+    // If Stripe redirect happened, refresh account
+    await refreshMe();
   }
 
-  // Wire up buttons
-  supportBtn.addEventListener("click", startCheckout);
-  manageBillingBtn.addEventListener("click", openPortal);
-  logoutBtn.addEventListener("click", logout);
-
-  if (loginBtn) loginBtn.addEventListener("click", restoreAccess);
-  if (loginEmail) {
-    loginEmail.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") restoreAccess();
-    });
-  }
-
-  if (chatForm) chatForm.addEventListener("submit", handleChatSubmit);
-
-  // init
-  setupMenu();
-  refreshMe();
+  document.addEventListener("DOMContentLoaded", init);
 })();
+
 
