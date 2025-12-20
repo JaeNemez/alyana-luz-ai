@@ -1,567 +1,628 @@
-(() => {
-  // ---------- helpers ----------
-  const $ = (id) => document.getElementById(id);
+/* Alyana Luz - frontend/app.js */
 
-  function setHint(msg, isError = false) {
-    const el = $("authHint");
-    if (!el) return;
-    if (!msg) {
-      el.style.display = "none";
-      el.textContent = "";
-      return;
-    }
-    el.style.display = "block";
-    el.textContent = msg;
-    el.style.opacity = "1";
-    el.style.color = isError ? "#fecaca" : "#d1fae5";
+const $ = (id) => document.getElementById(id);
+
+function setPill(el, text, kind) {
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove("ok", "warn", "bad");
+  if (kind) el.classList.add(kind);
+}
+
+function addBubble(kind, text) {
+  const chat = $("chat");
+  if (!chat) return;
+
+  const row = document.createElement("div");
+  row.className = `bubble-row ${kind}`;
+
+  const bubble = document.createElement("div");
+  bubble.className = `bubble ${kind}`;
+  bubble.textContent = text;
+
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function api(path, options = {}) {
+  const resp = await fetch(path, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const text = await resp.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  if (!resp.ok) {
+    const msg = (data && (data.detail || data.error)) ? (data.detail || data.error) : `Request failed (${resp.status})`;
+    throw new Error(msg);
   }
+  return data;
+}
 
-  function setJsStatus(text) {
-    const el = $("jsStatus");
-    if (el) el.textContent = text;
-  }
+/* -----------------------
+   Navigation
+------------------------ */
+function setupNav() {
+  const buttons = document.querySelectorAll(".menu-btn");
+  const sections = document.querySelectorAll(".app-section");
 
-  async function jsonFetch(url, opts = {}) {
-    const res = await fetch(url, {
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      ...opts,
+  function activate(targetId) {
+    sections.forEach((s) => s.classList.remove("active"));
+    const t = document.getElementById(targetId);
+    if (t) t.classList.add("active");
+
+    buttons.forEach((b) => b.classList.remove("active"));
+    buttons.forEach((b) => {
+      if (b.dataset.target === targetId) b.classList.add("active");
     });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch {}
-    if (!res.ok) {
-      const msg = (data && (data.detail || data.error)) || text || `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-    return data;
   }
 
-  function setAuthPill({ logged_in, email, active, status }) {
-    const pill = $("authPill");
-    if (!pill) return;
+  buttons.forEach((b) => {
+    b.addEventListener("click", () => activate(b.dataset.target));
+  });
 
-    const manageBtn = $("manageBillingBtn");
-    const logoutBtn = $("logoutBtn");
+  // default
+  activate("chatSection");
+}
 
-    if (!logged_in) {
-      pill.className = "pill warn";
-      pill.textContent = "Account: not logged in";
-      if (manageBtn) manageBtn.disabled = true;
+/* -----------------------
+   Billing + Auth UI
+------------------------ */
+function showAuthHint(text) {
+  const el = $("authHint");
+  if (!el) return;
+  if (!text) { el.style.display = "none"; el.textContent = ""; return; }
+  el.style.display = "block";
+  el.textContent = text;
+}
+
+async function refreshMe() {
+  const authPill = $("authPill");
+  const manageBillingBtn = $("manageBillingBtn");
+  const logoutBtn = $("logoutBtn");
+
+  setPill(authPill, "Account: checking…", "warn");
+  showAuthHint("");
+
+  try {
+    const me = await api("/me", { method: "GET" });
+
+    if (!me.logged_in) {
+      setPill(authmPillSafe(authPill), "Account: not logged in", "warn");
+      if (manageBillingBtn) manageBillingBtn.disabled = true;
       if (logoutBtn) logoutBtn.style.display = "none";
+      showAuthHint("To access premium features, subscribe with Support, or restore access using the email you used on Stripe.");
       return;
     }
 
-    if (active) {
-      pill.className = "pill ok";
-      pill.textContent = `Account: active (${email})`;
-      if (manageBtn) manageBtn.disabled = false;
+    // logged in:
+    if (me.active) {
+      setPill(authmPillSafe(authPill), `Account: ${me.email} (active)`, "ok");
+      if (manageBillingBtn) manageBillingBtn.disabled = false;
+      if (logoutBtn) logoutBtn.style.display = "";
+      showAuthHint("");
     } else {
-      pill.className = "pill bad";
-      pill.textContent = `Account: inactive (${email})`;
-      if (manageBtn) manageBtn.disabled = false; // let them manage billing anyway
+      setPill(authmPillSafe(authPill), `Account: ${me.email} (inactive)`, "bad");
+      if (manageBillingBtn) manageBillingBtn.disabled = false; // allow portal to fix card/cancel/etc
+      if (logoutBtn) logoutBtn.style.display = "";
+      showAuthHint("Your subscription is inactive. Click Support to subscribe, or Manage billing to fix payment/cancel/renew.");
     }
-
-    if (logoutBtn) logoutBtn.style.display = "inline-flex";
-    if (status) {
-      // optional: show status in hint (non-error)
-      setHint(`Subscription status: ${status}`, false);
-    }
+  } catch (e) {
+    setPill(authmPillSafe(authPill), "Account: error", "bad");
+    if (manageBillingBtn) manageBillingBtn.disabled = true;
+    if (logoutBtn) logoutBtn.style.display = "none";
+    showAuthHint(e.message);
   }
+}
 
-  async function refreshMe() {
-    try {
-      const me = await jsonFetch("/me", { method: "GET" });
-      setAuthPill(me);
-      return me;
-    } catch (e) {
-      // If /me fails, show safe info
-      setAuthPill({ logged_in: false });
-      return { logged_in: false };
-    }
+function authmPillSafe(el){ return el || { textContent:"", classList:{remove(){},add(){}} }; }
+
+function getRestoreEmail() {
+  // Your HTML does not have a dedicated ID for the restore email input.
+  // We find the first input whose placeholder contains "Email used for Stripe"
+  const inputs = document.querySelectorAll('input[type="text"]');
+  for (const i of inputs) {
+    const ph = (i.getAttribute("placeholder") || "").toLowerCase();
+    if (ph.includes("email used for stripe")) return (i.value || "").trim();
+    if (ph.includes("stripe")) return (i.value || "").trim();
   }
+  return "";
+}
 
-  // ---------- menu ----------
-  function setupMenu() {
-    const buttons = document.querySelectorAll(".menu-btn");
-    const sections = document.querySelectorAll(".app-section");
-    buttons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const targetId = btn.getAttribute("data-target");
-        buttons.forEach((b) => b.classList.remove("active"));
-        btn.classList.add("active");
-        sections.forEach((sec) => {
-          sec.classList.toggle("active", sec.id === targetId);
-        });
-      });
-    });
-  }
+function setupBillingButtons() {
+  const supportBtn = $("supportBtn");
+  const manageBillingBtn = $("manageBillingBtn");
+  const logoutBtn = $("logoutBtn");
 
-  // ---------- billing ----------
-  async function handleSupport() {
-    setHint("");
-    const email = ($("loginEmail")?.value || "").trim().toLowerCase();
-
-    try {
-      const out = await jsonFetch("/stripe/create-checkout-session", {
-        method: "POST",
-        body: JSON.stringify({ email: email || null }),
-      });
-      if (out && out.url) {
-        window.location.href = out.url;
-        return;
-      }
-      throw new Error("No checkout URL returned.");
-    } catch (e) {
-      setHint(`Subscribe failed: ${e.message}`, true);
-    }
-  }
-
-  async function handleManageBilling() {
-    setHint("");
-    try {
-      const out = await jsonFetch("/stripe/create-portal-session", {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      if (out && out.url) {
-        window.location.href = out.url;
-        return;
-      }
-      throw new Error("No portal URL returned.");
-    } catch (e) {
-      setHint(`Manage billing failed: ${e.message}`, true);
-    }
-  }
-
-  async function handleRestoreAccess() {
-    setHint("");
-    const email = ($("loginEmail")?.value || "").trim().toLowerCase();
-    if (!email) {
-      setHint("Type the email you used at Stripe, then click Restore access.", true);
-      return;
-    }
-
-    try {
-      setHint("Checking subscription…", false);
-      await jsonFetch("/login", { method: "POST", body: JSON.stringify({ email }) });
-      setHint("Access restored. You are now logged in.", false);
-      await refreshMe();
-    } catch (e) {
-      setHint(`Restore failed: ${e.message}`, true);
-      await refreshMe();
-    }
-  }
-
-  async function handleLogout() {
-    setHint("");
-    try {
-      await jsonFetch("/logout", { method: "POST", body: JSON.stringify({}) });
-      setHint("Logged out.", false);
-      await refreshMe();
-    } catch (e) {
-      setHint(`Logout failed: ${e.message}`, true);
-    }
-  }
-
-  // ---------- chat (simple) ----------
-  function addBubble(kind, text) {
-    const chat = $("chat");
-    if (!chat) return;
-    const row = document.createElement("div");
-    row.className = `bubble-row ${kind}`;
-    const bubble = document.createElement("div");
-    bubble.className = `bubble ${kind}`;
-    bubble.textContent = text;
-    row.appendChild(bubble);
-    chat.appendChild(row);
-    chat.scrollTop = chat.scrollHeight;
-  }
-
-  function setupChat() {
-    const chatEl = $("chat");
-    if (chatEl && chatEl.childElementCount === 0) {
-      addBubble("system", 'Hi! Try "Read John 1:1", "Verses about peace", or "Pray for my family".');
-    }
-
-    $("chatForm")?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const input = $("chatInput");
-      const prompt = (input?.value || "").trim();
-      if (!prompt) return;
-
-      addBubble("user", prompt);
-      if (input) input.value = "";
-
+  if (supportBtn) {
+    supportBtn.addEventListener("click", async () => {
       try {
-        const out = await jsonFetch("/chat", { method: "POST", body: JSON.stringify({ prompt }) });
-        addBubble("bot", out?.message || "…");
-      } catch (err) {
-        addBubble("bot", `Error: ${err.message}`);
+        const email = getRestoreEmail();
+        const data = await api("/stripe/create-checkout-session", {
+          method: "POST",
+          body: JSON.stringify({ email: email || null }),
+        });
+        if (data && data.url) window.location.href = data.url;
+      } catch (e) {
+        showAuthHint(`Subscribe error: ${e.message}`);
       }
     });
+  }
 
-    $("chatNewBtn")?.addEventListener("click", () => {
+  if (manageBillingBtn) {
+    manageBillingBtn.addEventListener("click", async () => {
+      try {
+        const email = getRestoreEmail();
+        const data = await api("/stripe/create-portal-session", {
+          method: "POST",
+          body: JSON.stringify({ email: email || null }),
+        });
+        if (data && data.url) window.location.href = data.url;
+      } catch (e) {
+        showAuthHint(`Manage billing error: ${e.message}`);
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await api("/logout", { method: "POST", body: JSON.stringify({}) });
+        await refreshMe();
+      } catch (e) {
+        showAuthHint(`Logout error: ${e.message}`);
+      }
+    });
+  }
+
+  // Restore access button: find the button that says "Restore access"
+  const restoreBtn = Array.from(document.querySelectorAll("button"))
+    .find((b) => (b.textContent || "").trim().toLowerCase() === "restore access");
+
+  if (restoreBtn) {
+    restoreBtn.addEventListener("click", async () => {
+      try {
+        const email = getRestoreEmail();
+        if (!email) {
+          showAuthHint("Type the email you used on Stripe, then click Restore access.");
+          return;
+        }
+        showAuthHint("Checking subscription…");
+        await api("/auth/restore", {
+          method: "POST",
+          body: JSON.stringify({ email }),
+        });
+        showAuthHint("");
+        await refreshMe();
+      } catch (e) {
+        showAuthHint(`Restore failed: ${e.message}`);
+      }
+    });
+  }
+}
+
+/* -----------------------
+   Chat
+------------------------ */
+function loadSavedChats() {
+  const list = $("chatSavedList");
+  if (!list) return;
+
+  const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
+  list.innerHTML = "";
+  if (!saved.length) {
+    list.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
+    return;
+  }
+
+  saved.forEach((item, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "block";
+
+    const btn = document.createElement("button");
+    btn.className = "btn btn-ghost";
+    btn.textContent = item.title;
+    btn.addEventListener("click", () => {
       const chat = $("chat");
-      if (!chat) return;
       chat.innerHTML = "";
+      item.messages.forEach((m) => addBubble(m.kind, m.text));
+    });
+
+    const del = document.createElement("button");
+    del.className = "btn btn-danger";
+    del.textContent = "Delete";
+    del.style.marginTop = "8px";
+    del.addEventListener("click", () => {
+      saved.splice(idx, 1);
+      localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
+      loadSavedChats();
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(del);
+    list.appendChild(wrap);
+  });
+}
+
+function setupChat() {
+  const jsStatus = $("jsStatus");
+  if (jsStatus) jsStatus.textContent = "JS: running";
+
+  const form = $("chatForm");
+  const input = $("chatInput");
+  const newBtn = $("chatNewBtn");
+  const saveBtn = $("chatSaveBtn");
+
+  // initial greeting
+  const chat = $("chat");
+  if (chat && !chat.children.length) {
+    addBubble("system", "Hi! Try “Read John 1:1”, “Verses about peace”, or “Pray for my family”.");
+  }
+
+  if (newBtn) {
+    newBtn.addEventListener("click", () => {
+      $("chat").innerHTML = "";
       addBubble("system", "New chat started.");
     });
-
-    // Save/load chats (localStorage)
-    const LIST_KEY = "alyana_saved_chats_v1";
-
-    function loadSaved() {
-      const listEl = $("chatSavedList");
-      if (!listEl) return;
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      if (!items.length) {
-        listEl.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
-        return;
-      }
-      listEl.innerHTML = "";
-      items.forEach((it, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.textContent = `${it.title}`;
-        btn.addEventListener("click", () => {
-          const chat = $("chat");
-          chat.innerHTML = it.html;
-        });
-
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.style.marginTop = "8px";
-        del.textContent = "Delete";
-        del.addEventListener("click", () => {
-          const next = items.filter((_, i) => i !== idx);
-          localStorage.setItem(LIST_KEY, JSON.stringify(next));
-          loadSaved();
-        });
-
-        const wrap = document.createElement("div");
-        wrap.appendChild(btn);
-        wrap.appendChild(del);
-        listEl.appendChild(wrap);
-      });
-    }
-
-    $("chatSaveBtn")?.addEventListener("click", () => {
-      const chat = $("chat");
-      if (!chat) return;
-      const html = chat.innerHTML;
-      const title = prompt("Name this chat (example: forgiveness — 2025-12-20 07:01):");
-      if (!title) return;
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      items.unshift({ title, html });
-      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 20)));
-      loadSaved();
-    });
-
-    loadSaved();
   }
 
-  // ---------- devotional/prayer local save ----------
-  function setupDevotional() {
-    const LIST_KEY = "alyana_saved_devotionals_v1";
+  if (saveBtn) {
+    saveBtn.addEventListener("click", () => {
+      const rows = Array.from(document.querySelectorAll("#chat .bubble-row"));
+      const messages = rows.map((r) => {
+        const kind = r.classList.contains("user") ? "user" :
+                     r.classList.contains("bot") ? "bot" : "system";
+        const text = (r.querySelector(".bubble")?.textContent || "").trim();
+        return { kind, text };
+      }).filter(m => m.text);
 
-    function loadSavedDev() {
-      const listEl = $("devSavedList");
-      if (!listEl) return;
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      if (!items.length) {
-        listEl.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
-        return;
+      const title = (messages.find(m => m.kind === "user")?.text || "Saved chat").slice(0, 40);
+      const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
+      saved.unshift({ title: `${title} — ${new Date().toISOString().slice(0,16).replace("T"," ")}`, messages });
+      localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
+      loadSavedChats();
+      addBubble("system", "Saved.");
+    });
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const q = (input.value || "").trim();
+      if (!q) return;
+
+      addBubble("user", q);
+      input.value = "";
+
+      try {
+        const res = await api("/chat", { method: "POST", body: JSON.stringify({ prompt: q }) });
+        addBubble("bot", res.message || "…");
+      } catch (err) {
+        addBubble("system", `Error: ${err.message}`);
       }
-      listEl.innerHTML = "";
-      items.forEach((it, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.textContent = it.title;
-        btn.addEventListener("click", () => {
-          $("devotionalScripture").textContent = it.scripture || "—";
-          $("devotionalExplain").textContent = it.brief_explanation || "—";
-          $("devotionalMyExplanation").value = it.my_explain || "";
-          $("devotionalMyApplication").value = it.my_apply || "";
-          $("devotionalMyPrayer").value = it.my_prayer || "";
-          $("devotionalReflection").value = it.reflect || "";
-        });
+    });
+  }
 
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.style.marginTop = "8px";
-        del.textContent = "Delete";
-        del.addEventListener("click", () => {
-          const next = items.filter((_, i) => i !== idx);
-          localStorage.setItem(LIST_KEY, JSON.stringify(next));
-          loadSavedDev();
-        });
+  loadSavedChats();
+}
 
-        const wrap = document.createElement("div");
-        wrap.appendChild(btn);
-        wrap.appendChild(del);
-        listEl.appendChild(wrap);
-      });
-    }
+/* -----------------------
+   Bible Reader (minimal wiring)
+------------------------ */
+async function setupBible() {
+  const status = $("bibleDbStatus");
+  try {
+    const h = await api("/bible/health", { method: "GET" });
+    if (status) status.textContent = `OK — ${h.verse_count} verses.`;
+  } catch (e) {
+    if (status) status.textContent = `Bible DB error: ${e.message}`;
+    return;
+  }
 
-    $("devotionalBtn")?.addEventListener("click", async () => {
+  const bookSelect = $("bookSelect");
+  const chapterSelect = $("chapterSelect");
+  const verseStartSelect = $("verseStartSelect");
+  const verseEndSelect = $("verseEndSelect");
+
+  async function loadBooks() {
+    const b = await api("/bible/books", { method: "GET" });
+    bookSelect.innerHTML = "";
+    b.books.forEach((bk) => {
+      const opt = document.createElement("option");
+      opt.value = bk.id;
+      opt.textContent = bk.name;
+      bookSelect.appendChild(opt);
+    });
+  }
+
+  async function loadChapters(bookId) {
+    const c = await api(`/bible/chapters?book=${encodeURIComponent(bookId)}`, { method: "GET" });
+    chapterSelect.innerHTML = `<option value="">—</option>`;
+    c.chapters.forEach((ch) => {
+      const opt = document.createElement("option");
+      opt.value = ch;
+      opt.textContent = String(ch);
+      chapterSelect.appendChild(opt);
+    });
+  }
+
+  async function loadVerses(bookId, chapter) {
+    const v = await api(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`, { method: "GET" });
+    verseStartSelect.innerHTML = `<option value="">—</option>`;
+    verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
+    v.verses.forEach((vv) => {
+      const o1 = document.createElement("option");
+      o1.value = vv;
+      o1.textContent = String(vv);
+      verseStartSelect.appendChild(o1);
+
+      const o2 = document.createElement("option");
+      o2.value = vv;
+      o2.textContent = String(vv);
+      verseEndSelect.appendChild(o2);
+    });
+  }
+
+  await loadBooks();
+
+  bookSelect.addEventListener("change", async () => {
+    const bid = bookSelect.value;
+    if (!bid) return;
+    await loadChapters(bid);
+  });
+
+  chapterSelect.addEventListener("change", async () => {
+    const bid = bookSelect.value;
+    const ch = chapterSelect.value;
+    if (!bid || !ch) return;
+    await loadVerses(bid, ch);
+  });
+
+  // Listen button - basic speech synthesis
+  const listenBtn = $("listenBible");
+  const stopBtn = $("stopBible");
+  const fullChapter = $("fullChapter");
+
+  function speak(text, lang) {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = lang === "es" ? "es-MX" : "en-AU";
+    window.speechSynthesis.speak(u);
+  }
+
+  if (listenBtn) {
+    listenBtn.addEventListener("click", async () => {
+      try {
+        const bid = bookSelect.value;
+        const ch = parseInt(chapterSelect.value || "0", 10);
+        if (!bid || !ch) throw new Error("Pick a book and chapter first.");
+
+        const fc = !!(fullChapter && fullChapter.checked);
+        const start = parseInt(verseStartSelect.value || "1", 10);
+        const end = parseInt(verseEndSelect.value || String(start), 10);
+
+        const url = fc
+          ? `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&full_chapter=true`
+          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+
+        const p = await api(url, { method: "GET" });
+        const voiceLang = ($("readingVoice")?.value || "en");
+        speak(p.text || "", voiceLang);
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+  }
+
+  if (stopBtn) {
+    stopBtn.addEventListener("click", () => window.speechSynthesis.cancel());
+  }
+}
+
+/* -----------------------
+   Devotional
+------------------------ */
+function loadSavedDevotionals() {
+  const list = $("devSavedList");
+  if (!list) return;
+
+  const saved = JSON.parse(localStorage.getItem("alyana_saved_devotionals") || "[]");
+  list.innerHTML = "";
+  if (!saved.length) {
+    list.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
+    return;
+  }
+
+  saved.forEach((item, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "block";
+
+    const btn = document.createElement("button");
+    btn.className = "btn btn-ghost";
+    btn.textContent = item.title;
+    btn.addEventListener("click", () => {
+      $("devotionalScripture").textContent = item.scripture || "—";
+      $("devotionalExplain").textContent = item.brief_explanation || "—";
+      $("devotionalMyExplanation").value = item.my_explanation || "";
+      $("devotionalMyApplication").value = item.my_application || "";
+      $("devotionalMyPrayer").value = item.my_prayer || "";
+      $("devotionalReflection").value = item.reflection || "";
+    });
+
+    const del = document.createElement("button");
+    del.className = "btn btn-danger";
+    del.textContent = "Delete";
+    del.style.marginTop = "8px";
+    del.addEventListener("click", () => {
+      saved.splice(idx, 1);
+      localStorage.setItem("alyana_saved_devotionals", JSON.stringify(saved));
+      loadSavedDevotionals();
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(del);
+    list.appendChild(wrap);
+  });
+}
+
+function setupDevotional() {
+  const genBtn = $("devotionalBtn");
+  const saveBtn = $("devSaveBtn");
+
+  if (genBtn) {
+    genBtn.addEventListener("click", async () => {
       try {
         const lang = $("devUiLang")?.value || "en";
-        const out = await jsonFetch("/devotional", { method: "POST", body: JSON.stringify({ lang }) });
-        const raw = out?.json || "{}";
-        let obj = {};
-        try { obj = JSON.parse(raw); } catch {}
+        const res = await api("/devotional", { method: "POST", body: JSON.stringify({ lang }) });
+        const raw = res.json || "{}";
+        const obj = JSON.parse(raw);
+
         $("devotionalScripture").textContent = obj.scripture || "—";
         $("devotionalExplain").textContent = obj.brief_explanation || "—";
       } catch (e) {
-        setHint(`Devotional failed: ${e.message}`, true);
+        alert(`Devotional error: ${e.message}`);
       }
     });
-
-    $("devSaveBtn")?.addEventListener("click", () => {
-      const scripture = $("devotionalScripture")?.textContent || "";
-      const brief_explanation = $("devotionalExplain")?.textContent || "";
-      const my_explain = $("devotionalMyExplanation")?.value || "";
-      const my_apply = $("devotionalMyApplication")?.value || "";
-      const my_prayer = $("devotionalMyPrayer")?.value || "";
-      const reflect = $("devotionalReflection")?.value || "";
-      const title = prompt("Name this devotional:");
-      if (!title) return;
-
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      items.unshift({ title, scripture, brief_explanation, my_explain, my_apply, my_prayer, reflect });
-      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 30)));
-      loadSavedDev();
-    });
-
-    let devStreak = Number(localStorage.getItem("alyana_dev_streak_v1") || "0");
-    const pill = $("devStreakPill");
-    const btn = $("devStreakBtn");
-    const update = () => {
-      if (pill) pill.textContent = `Streak: ${devStreak}`;
-      localStorage.setItem("alyana_dev_streak_v1", String(devStreak));
-    };
-    update();
-    btn?.addEventListener("click", () => {
-      devStreak += 1;
-      update();
-    });
-
-    loadSavedDev();
   }
 
-  function setupPrayer() {
-    const LIST_KEY = "alyana_saved_prayers_v1";
+  if (saveBtn) {
+    saveBtn.addEventListener("click", () => {
+      const scripture = $("devotionalScripture").textContent || "";
+      const brief = $("devotionalExplain").textContent || "";
 
-    function loadSavedPr() {
-      const listEl = $("prSavedList");
-      if (!listEl) return;
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      if (!items.length) {
-        listEl.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
-        return;
-      }
-      listEl.innerHTML = "";
-      items.forEach((it, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.textContent = it.title;
-        btn.addEventListener("click", () => {
-          $("pA").textContent = it.example_adoration || "—";
-          $("pC").textContent = it.example_confession || "—";
-          $("pT").textContent = it.example_thanksgiving || "—";
-          $("pS").textContent = it.example_supplication || "—";
-          $("myAdoration").value = it.myA || "";
-          $("myConfession").value = it.myC || "";
-          $("myThanksgiving").value = it.myT || "";
-          $("mySupplication").value = it.myS || "";
-          $("prayerNotes").value = it.notes || "";
-        });
+      const item = {
+        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        scripture,
+        brief_explanation: brief,
+        my_explanation: $("devotionalMyExplanation").value || "",
+        my_application: $("devotionalMyApplication").value || "",
+        my_prayer: $("devotionalMyPrayer").value || "",
+        reflection: $("devotionalReflection").value || "",
+      };
 
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.style.marginTop = "8px";
-        del.textContent = "Delete";
-        del.addEventListener("click", () => {
-          const next = items.filter((_, i) => i !== idx);
-          localStorage.setItem(LIST_KEY, JSON.stringify(next));
-          loadSavedPr();
-        });
+      const saved = JSON.parse(localStorage.getItem("alyana_saved_devotionals") || "[]");
+      saved.unshift(item);
+      localStorage.setItem("alyana_saved_devotionals", JSON.stringify(saved));
+      loadSavedDevotionals();
+      alert("Saved devotional.");
+    });
+  }
 
-        const wrap = document.createElement("div");
-        wrap.appendChild(btn);
-        wrap.appendChild(del);
-        listEl.appendChild(wrap);
-      });
-    }
+  loadSavedDevotionals();
+}
 
-    $("prayerBtn")?.addEventListener("click", async () => {
+/* -----------------------
+   Daily Prayer
+------------------------ */
+function loadSavedPrayers() {
+  const list = $("prSavedList");
+  if (!list) return;
+
+  const saved = JSON.parse(localStorage.getItem("alyana_saved_prayers") || "[]");
+  list.innerHTML = "";
+  if (!saved.length) {
+    list.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
+    return;
+  }
+
+  saved.forEach((item, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "block";
+
+    const btn = document.createElement("button");
+    btn.className = "btn btn-ghost";
+    btn.textContent = item.title;
+    btn.addEventListener("click", () => {
+      $("pA").textContent = item.example_adoration || "—";
+      $("pC").textContent = item.example_confession || "—";
+      $("pT").textContent = item.example_thanksgiving || "—";
+      $("pS").textContent = item.example_supplication || "—";
+
+      $("myAdoration").value = item.my_adoration || "";
+      $("myConfession").value = item.my_confession || "";
+      $("myThanksgiving").value = item.my_thanksgiving || "";
+      $("mySupplication").value = item.my_supplication || "";
+      $("prayerNotes").value = item.notes || "";
+    });
+
+    const del = document.createElement("button");
+    del.className = "btn btn-danger";
+    del.textContent = "Delete";
+    del.style.marginTop = "8px";
+    del.addEventListener("click", () => {
+      saved.splice(idx, 1);
+      localStorage.setItem("alyana_saved_prayers", JSON.stringify(saved));
+      loadSavedPrayers();
+    });
+
+    wrap.appendChild(btn);
+    wrap.appendChild(del);
+    list.appendChild(wrap);
+  });
+}
+
+function setupPrayer() {
+  const genBtn = $("prayerBtn");
+  const saveBtn = $("prSaveBtn");
+
+  if (genBtn) {
+    genBtn.addEventListener("click", async () => {
       try {
         const lang = $("prUiLang")?.value || "en";
-        const out = await jsonFetch("/daily_prayer", { method: "POST", body: JSON.stringify({ lang }) });
-        const raw = out?.json || "{}";
-        let obj = {};
-        try { obj = JSON.parse(raw); } catch {}
+        const res = await api("/daily_prayer", { method: "POST", body: JSON.stringify({ lang }) });
+        const raw = res.json || "{}";
+        const obj = JSON.parse(raw);
+
         $("pA").textContent = obj.example_adoration || "—";
         $("pC").textContent = obj.example_confession || "—";
         $("pT").textContent = obj.example_thanksgiving || "—";
         $("pS").textContent = obj.example_supplication || "—";
       } catch (e) {
-        setHint(`Prayer failed: ${e.message}`, true);
+        alert(`Prayer error: ${e.message}`);
       }
-    });
-
-    $("prSaveBtn")?.addEventListener("click", () => {
-      const title = prompt("Name this prayer entry:");
-      if (!title) return;
-
-      const example_adoration = $("pA")?.textContent || "";
-      const example_confession = $("pC")?.textContent || "";
-      const example_thanksgiving = $("pT")?.textContent || "";
-      const example_supplication = $("pS")?.textContent || "";
-      const myA = $("myAdoration")?.value || "";
-      const myC = $("myConfession")?.value || "";
-      const myT = $("myThanksgiving")?.value || "";
-      const myS = $("mySupplication")?.value || "";
-      const notes = $("prayerNotes")?.value || "";
-
-      const raw = localStorage.getItem(LIST_KEY);
-      const items = raw ? JSON.parse(raw) : [];
-      items.unshift({ title, example_adoration, example_confession, example_thanksgiving, example_supplication, myA, myC, myT, myS, notes });
-      localStorage.setItem(LIST_KEY, JSON.stringify(items.slice(0, 30)));
-      loadSavedPr();
-    });
-
-    let prStreak = Number(localStorage.getItem("alyana_pr_streak_v1") || "0");
-    const pill = $("prStreakPill");
-    const btn = $("prStreakBtn");
-    const update = () => {
-      if (pill) pill.textContent = `Streak: ${prStreak}`;
-      localStorage.setItem("alyana_pr_streak_v1", String(prStreak));
-    };
-    update();
-    btn?.addEventListener("click", () => {
-      prStreak += 1;
-      update();
-    });
-
-    loadSavedPr();
-  }
-
-  // ---------- bible reader ----------
-  async function setupBible() {
-    try {
-      const health = await jsonFetch("/bible/health", { method: "GET" });
-      $("bibleDbStatus").textContent = `OK — ${health.verse_count} verses loaded`;
-    } catch (e) {
-      $("bibleDbStatus").textContent = `Error: ${e.message}`;
-      return;
-    }
-
-    const bookSelect = $("bookSelect");
-    const chapterSelect = $("chapterSelect");
-    const verseStartSelect = $("verseStartSelect");
-    const verseEndSelect = $("verseEndSelect");
-
-    const fillSelect = (sel, items, placeholder = "—") => {
-      sel.innerHTML = "";
-      if (!items || !items.length) {
-        const opt = document.createElement("option");
-        opt.value = "";
-        opt.textContent = placeholder;
-        sel.appendChild(opt);
-        return;
-      }
-      items.forEach((x) => {
-        const opt = document.createElement("option");
-        opt.value = String(x.value);
-        opt.textContent = x.label;
-        sel.appendChild(opt);
-      });
-    };
-
-    const booksOut = await jsonFetch("/bible/books", { method: "GET" });
-    const books = (booksOut.books || []).map((b) => ({ value: b.id, label: b.name }));
-    fillSelect(bookSelect, books, "No books");
-
-    async function loadChapters() {
-      const bookVal = bookSelect.value;
-      if (!bookVal) return;
-      const out = await jsonFetch(`/bible/chapters?book=${encodeURIComponent(bookVal)}`, { method: "GET" });
-      const chapters = (out.chapters || []).map((c) => ({ value: c, label: String(c) }));
-      fillSelect(chapterSelect, chapters, "—");
-      fillSelect(verseStartSelect, [], "—");
-      fillSelect(verseEndSelect, [], "(optional)");
-    }
-
-    async function loadVerses() {
-      const bookVal = bookSelect.value;
-      const chVal = chapterSelect.value;
-      if (!bookVal || !chVal) return;
-      const out = await jsonFetch(`/bible/verses?book=${encodeURIComponent(bookVal)}&chapter=${encodeURIComponent(chVal)}`, { method: "GET" });
-      const verses = (out.verses || []).map((v) => ({ value: v, label: String(v) }));
-      fillSelect(verseStartSelect, verses, "—");
-      fillSelect(verseEndSelect, [{ value: "", label: "(optional)" }, ...verses], "(optional)");
-    }
-
-    bookSelect.addEventListener("change", loadChapters);
-    chapterSelect.addEventListener("change", loadVerses);
-
-    // initial load
-    await loadChapters();
-    await loadVerses();
-
-    $("listenBible")?.addEventListener("click", async () => {
-      const bookVal = bookSelect.value;
-      const chVal = chapterSelect.value;
-      if (!bookVal || !chVal) return;
-
-      const full = $("fullChapter")?.checked ? "true" : "false";
-      const start = verseStartSelect.value || "1";
-      const end = verseEndSelect.value || "";
-
-      const url = `/bible/passage?book=${encodeURIComponent(bookVal)}&chapter=${encodeURIComponent(chVal)}&full_chapter=${full}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
-      try {
-        const out = await jsonFetch(url, { method: "GET" });
-        $("passageRef").textContent = out.reference || "—";
-        $("passageText").textContent = out.text || "—";
-      } catch (e) {
-        $("passageRef").textContent = "—";
-        $("passageText").textContent = `Error: ${e.message}`;
-      }
-    });
-
-    $("stopBible")?.addEventListener("click", () => {
-      // You can wire real TTS later; for now just UI
-      setHint("Stopped (TTS not wired yet).", false);
     });
   }
 
-  // ---------- init ----------
-  async function init() {
-    setJsStatus("JS: running");
+  if (saveBtn) {
+    saveBtn.addEventListener("click", () => {
+      const item = {
+        title: "Prayer — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        example_adoration: $("pA").textContent || "",
+        example_confession: $("pC").textContent || "",
+        example_thanksgiving: $("pT").textContent || "",
+        example_supplication: $("pS").textContent || "",
+        my_adoration: $("myAdoration").value || "",
+        my_confession: $("myConfession").value || "",
+        my_thanksgiving: $("myThanksgiving").value || "",
+        my_supplication: $("mySupplication").value || "",
+        notes: $("prayerNotes").value || "",
+      };
 
-    setupMenu();
-    setupChat();
-    setupDevotional();
-    setupPrayer();
-    setupBible();
-
-    $("supportBtn")?.addEventListener("click", handleSupport);
-    $("manageBillingBtn")?.addEventListener("click", handleManageBilling);
-    $("loginBtn")?.addEventListener("click", handleRestoreAccess);
-    $("logoutBtn")?.addEventListener("click", handleLogout);
-
-    // If Stripe redirect happened, refresh account
-    await refreshMe();
+      const saved = JSON.parse(localStorage.getItem("alyana_saved_prayers") || "[]");
+      saved.unshift(item);
+      localStorage.setItem("alyana_saved_prayers", JSON.stringify(saved));
+      loadSavedPrayers();
+      alert("Saved prayer.");
+    });
   }
 
-  document.addEventListener("DOMContentLoaded", init);
-})();
+  loadSavedPrayers();
+}
+
+/* -----------------------
+   Boot
+------------------------ */
+window.addEventListener("DOMContentLoaded", async () => {
+  setupNav();
+  setupBillingButtons();
+  setupChat();
+  setupDevotional();
+  setupPrayer();
+  await setupBible();
+  await refreshMe();
+});
+
 
 
