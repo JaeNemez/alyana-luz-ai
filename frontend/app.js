@@ -12,7 +12,7 @@
   // ------------------------------
   async function apiJSON(url, opts) {
     const res = await fetch(url, {
-      credentials: "include", // IMPORTANT: send auth cookie to /me, portal, logout, etc.
+      credentials: "include",
       ...opts,
     });
     if (!res.ok) {
@@ -47,12 +47,16 @@
   }
 
   // ==============================
-  // AUTH / BILLING UI (NEW)
+  // AUTH / BILLING UI
   // ==============================
   const authPill = $("authPill");
   const manageBillingBtn = $("manageBillingBtn");
   const logoutBtn = $("logoutBtn");
   const authHint = $("authHint");
+
+  // NEW login UI
+  const loginEmail = $("loginEmail");
+  const loginBtn = $("loginBtn");
 
   function setPill(state, text) {
     if (!authPill) return;
@@ -90,7 +94,7 @@
         setPill("warn", "Account: not logged in");
         if (manageBillingBtn) manageBillingBtn.disabled = false; // allow it to act like "Subscribe"
         if (logoutBtn) logoutBtn.style.display = "none";
-        setHint("To access premium features, tap Support to subscribe (Stripe Checkout).");
+        setHint("To access premium features, subscribe with Support, or restore access using your Stripe email.");
         return;
       }
 
@@ -103,8 +107,8 @@
         setHint("");
       } else {
         setPill("bad", `Inactive: ${email}`);
-        if (manageBillingBtn) manageBillingBtn.disabled = false; // allow user to manage billing OR re-subscribe
-        setHint("Your subscription is inactive. Tap Support to subscribe again, or Manage billing if a customer exists.");
+        if (manageBillingBtn) manageBillingBtn.disabled = false;
+        setHint("Your subscription is inactive. Tap Support to subscribe again, or Manage billing.");
       }
     } catch (e) {
       console.error("refreshMe failed:", e);
@@ -113,6 +117,32 @@
       setHint("Could not load account status. Try refreshing the page.");
     }
   }
+
+  // NEW: Restore access (login) using Stripe email
+  async function doLogin() {
+    try {
+      const email = (loginEmail?.value || "").trim().toLowerCase();
+      if (!email) { alert("Enter the email you used for Stripe."); return; }
+
+      if (loginBtn) loginBtn.disabled = true;
+
+      await apiJSON("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+
+      await refreshMe();
+      alert("Access restored.");
+    } catch (e) {
+      console.error(e);
+      alert("Could not restore access. Make sure you used the same Stripe email and your subscription is active.");
+    } finally {
+      if (loginBtn) loginBtn.disabled = false;
+    }
+  }
+
+  if (loginBtn) loginBtn.addEventListener("click", doLogin);
 
   // ------------------------------
   // Support button (Stripe Checkout)
@@ -155,7 +185,7 @@
     supportBtn.addEventListener("click", startStripeCheckout);
   }
 
-  // NEW: Manage billing button
+  // Manage billing
   async function openBillingPortalOrCheckout() {
     try {
       if (!manageBillingBtn) return;
@@ -167,18 +197,16 @@
         return;
       }
 
-      // Logged in -> try billing portal
       const data = await apiJSON("/stripe/create-portal-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}) // server reads cookie email first
+        body: JSON.stringify({})
       });
 
       if (!data.url) throw new Error("No portal URL returned.");
       window.location.href = data.url;
     } catch (e) {
       console.error(e);
-      // If portal fails (no customer yet), fallback to checkout
       const msg = String(e && e.message ? e.message : e);
       if (msg.includes("No Stripe customer") || msg.includes("404")) {
         await startStripeCheckout();
@@ -194,13 +222,12 @@
     manageBillingBtn.addEventListener("click", openBillingPortalOrCheckout);
   }
 
-  // NEW: Logout
+  // Logout
   async function doLogout() {
     try {
       if (logoutBtn) logoutBtn.disabled = true;
       await apiJSON("/logout", { method: "POST" });
       await refreshMe();
-      // Optional: hard refresh to clear any cached state
       window.location.href = "/";
     } catch (e) {
       console.error(e);
@@ -784,7 +811,8 @@
   })();
 
   // ==================================================
-  // DEVOTIONAL (no listen, add save/streak/list + bilingual UI hints)
+  // DEVOTIONAL + DAILY PRAYER
+  // (Unchanged from your version)
   // ==================================================
   const devotionalBtn = $("devotionalBtn");
   const devUiLang = $("devUiLang");
@@ -979,9 +1007,7 @@
   renderDevSaved();
   refreshDevStreakUI();
 
-  // ==================================================
-  // DAILY PRAYER
-  // ==================================================
+  // DAILY PRAYER unchanged
   const prayerBtn = $("prayerBtn");
   const prUiLang = $("prUiLang");
   const prStreakPill = $("prStreakPill");
@@ -1180,12 +1206,6 @@
   renderPrSaved();
   refreshPrStreakUI();
 
-  // ==============================
-  // FINAL: run auth check once page is ready
-  // ==============================
+  // FINAL
   refreshMe();
-
 })();
-
-
-
