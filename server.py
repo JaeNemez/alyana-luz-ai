@@ -40,6 +40,9 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
 
+# Optional: allow non-HTTPS cookie ONLY for local dev if you ever run locally
+DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
+
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
 
@@ -59,7 +62,8 @@ def _require_jwt_secret():
 
 
 # --------------------
-# Signed-token helper (cookie auth)
+# Very small signed-token helper (cookie auth)
+# (No external jwt lib needed)
 # --------------------
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
@@ -104,13 +108,18 @@ def _read_token(token: str) -> Optional[dict]:
 AUTH_COOKIE_NAME = "alyana_auth"
 
 
-def _set_auth_cookie(resp: RedirectResponse, email: str):
+def _set_auth_cookie(resp, email: str):
+    """
+    Sets secure signed auth cookie.
+    On Render/HTTPS, secure=True is correct.
+    If you run locally without HTTPS, set DEV_TRUST_LOCAL=true to allow secure=False.
+    """
     token = _make_token(email)
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=True,      # Render is HTTPS
+        secure=(False if DEV_TRUST_LOCAL else True),
         samesite="lax",
         max_age=60 * 60 * 24 * 7,
         path="/",
@@ -130,7 +139,6 @@ def get_current_email(request: Request) -> Optional[str]:
 
 # --------------------
 # Simple subscription store (SQLite)
-# One row per email, but we "sync" from Stripe to handle duplicates/out-of-order events.
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs.db")
 
@@ -145,7 +153,8 @@ def _subs_db():
 def _subs_init():
     con = _subs_db()
     try:
-        con.execute("""
+        con.execute(
+            """
         CREATE TABLE IF NOT EXISTS subscribers (
             email TEXT PRIMARY KEY,
             stripe_customer_id TEXT,
@@ -154,7 +163,8 @@ def _subs_init():
             current_period_end INTEGER,
             updated_at INTEGER
         )
-        """)
+        """
+        )
         con.commit()
     finally:
         con.close()
@@ -222,70 +232,6 @@ def require_active_user(request: Request) -> str:
     if not _is_active_subscriber(email):
         raise HTTPException(402, "Subscription inactive. Please subscribe.")
     return email
-
-
-# --------------------
-# Stripe sync helper (handles multiple subs + webhook ordering)
-# --------------------
-GOOD_STATUSES = {"active", "trialing"}
-OK_STATUSES = {"past_due", "unpaid"}  # not "active", but useful to record
-
-
-def _choose_best_subscription(subs: list) -> Optional[dict]:
-    """
-    Pick the "best" subscription:
-    1) active/trialing first
-    2) else most recently updated/created
-    """
-    if not subs:
-        return None
-
-    # Prefer active/trialing
-    good = [s for s in subs if (s.get("status") or "").lower() in GOOD_STATUSES]
-    if good:
-        # pick the one with the latest current_period_end (or latest created)
-        good.sort(key=lambda s: (s.get("current_period_end") or 0, s.get("created") or 0), reverse=True)
-        return good[0]
-
-    # Otherwise pick latest created
-    subs.sort(key=lambda s: (s.get("created") or 0), reverse=True)
-    return subs[0]
-
-
-def _sync_customer_subscriptions(customer_id: str) -> Optional[str]:
-    """
-    Pull truth from Stripe and update our DB row for the customer's email.
-    Returns the email if found.
-    """
-    if not customer_id:
-        return None
-
-    try:
-        cust = stripe.Customer.retrieve(customer_id)
-        email = (cust.get("email") or "").strip().lower()
-        if not email:
-            return None
-
-        # List all subscriptions for this customer (includes duplicates)
-        resp = stripe.Subscription.list(customer=customer_id, status="all", limit=20)
-        subs = resp.get("data") or []
-        best = _choose_best_subscription(subs)
-
-        if not best:
-            _subs_upsert(email, customer_id, None, "canceled", None)
-            return email
-
-        _subs_upsert(
-            email=email,
-            customer_id=customer_id,
-            subscription_id=best.get("id"),
-            status=best.get("status"),
-            current_period_end=best.get("current_period_end"),
-        )
-        return email
-    except Exception:
-        # Don't crash webhook processing if sync fails
-        return None
 
 
 # --------------------
@@ -358,7 +304,9 @@ async def serve_frontend():
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+        return PlainTextResponse(
+            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404
+        )
     return FileResponse(
         APPJS_PATH,
         media_type="application/javascript",
@@ -396,6 +344,32 @@ class CheckoutIn(BaseModel):
 
 class PortalIn(BaseModel):
     email: Optional[str] = None
+
+
+class LoginIn(BaseModel):
+    email: str
+
+
+@app.post("/login")
+def login(body: LoginIn):
+    """
+    Restore a login cookie using the email address used for the subscription.
+    If the email is ACTIVE/TRIALING in our local DB, we set the cookie.
+
+    Note: This is convenience-first. Later you can upgrade to email OTP.
+    """
+    _require_jwt_secret()
+
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Missing email.")
+
+    if not _is_active_subscriber(email):
+        raise HTTPException(402, "Subscription inactive or not found.")
+
+    resp = JSONResponse({"ok": True, "email": email, "active": True})
+    _set_auth_cookie(resp, email)
+    return resp
 
 
 @app.post("/stripe/create-checkout-session")
@@ -444,13 +418,14 @@ def create_portal_session(request: Request, body: PortalIn):
 def billing_success(session_id: str):
     """
     After successful Checkout, user lands here.
-    We verify session, set cookie, and sync subscription state from Stripe.
+    We verify the Checkout Session with Stripe and set a secure login cookie.
     """
     _require_stripe_ready()
     _require_jwt_secret()
 
     try:
         session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
+
         email = ""
         if session.get("customer_details") and session["customer_details"].get("email"):
             email = session["customer_details"]["email"]
@@ -459,8 +434,16 @@ def billing_success(session_id: str):
         email = (email or "").strip().lower()
 
         customer_id = session.get("customer")
-        if customer_id:
-            _sync_customer_subscriptions(customer_id)
+        subscription_id = session.get("subscription")
+
+        status = None
+        current_period_end = None
+        if subscription_id:
+            sub = stripe.Subscription.retrieve(subscription_id)
+            status = sub.get("status")
+            current_period_end = sub.get("current_period_end")
+
+        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
         resp = RedirectResponse(url="/")
         if email:
@@ -478,6 +461,11 @@ def billing_cancel():
 
 @app.get("/me")
 def me(request: Request):
+    """
+    Frontend can call this to know:
+    - who is logged in
+    - are they active
+    """
     email = get_current_email(request)
     if not email:
         return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
@@ -498,6 +486,23 @@ def logout():
     return _clear_auth_cookie(resp)
 
 
+@app.get("/billing/status")
+def billing_status(email: str):
+    """
+    Kept for compatibility; but /me is better once cookie login is used.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Missing email")
+    row = _subs_get(email)
+    return {
+        "email": email,
+        "active": _is_active_subscriber(email),
+        "status": (row.get("status") if row else None),
+        "current_period_end": (row.get("current_period_end") if row else None),
+    }
+
+
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     if not STRIPE_WEBHOOK_SECRET:
@@ -512,34 +517,63 @@ async def stripe_webhook(request: Request):
         return JSONResponse({"error": f"Webhook signature verification failed: {str(e)}"}, status_code=400)
 
     event_type = event["type"]
-    obj = event["data"]["object"]
+    data = event["data"]["object"]
 
-    try:
-        # Always prefer syncing from Stripe, so duplicates/out-of-order events don't break state
-        if event_type.startswith("customer.subscription."):
-            customer_id = obj.get("customer")
-            if customer_id:
-                _sync_customer_subscriptions(customer_id)
+    if event_type == "checkout.session.completed":
+        customer_id = data.get("customer")
+        subscription_id = data.get("subscription")
+        email = (data.get("customer_details", {}) or {}).get("email") or data.get("customer_email") or ""
+        email = (email or "").strip().lower()
 
-        elif event_type == "checkout.session.completed":
-            customer_id = obj.get("customer")
-            if customer_id:
-                _sync_customer_subscriptions(customer_id)
+        status = None
+        current_period_end = None
+        if subscription_id:
+            sub = stripe.Subscription.retrieve(subscription_id)
+            status = sub.get("status")
+            current_period_end = sub.get("current_period_end")
 
-        elif event_type in ("invoice.paid", "invoice.payment_failed", "invoice.finalized"):
-            customer_id = obj.get("customer")
-            if customer_id:
-                _sync_customer_subscriptions(customer_id)
+        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
-    except Exception:
-        # We still return 200 to Stripe, but you can inspect logs if needed
-        pass
+    elif event_type in (
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    ):
+        subscription_id = data.get("id")
+        customer_id = data.get("customer")
+        status = data.get("status")
+        current_period_end = data.get("current_period_end")
+
+        email = ""
+        if customer_id:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = (cust.get("email") or "").strip().lower()
+
+        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
+
+    elif event_type == "invoice.paid":
+        customer_id = data.get("customer")
+        subscription_id = data.get("subscription")
+
+        email = ""
+        if customer_id:
+            cust = stripe.Customer.retrieve(customer_id)
+            email = (cust.get("email") or "").strip().lower()
+
+        status = None
+        current_period_end = None
+        if subscription_id:
+            sub = stripe.Subscription.retrieve(subscription_id)
+            status = sub.get("status")
+            current_period_end = sub.get("current_period_end")
+
+        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
 
     return {"received": True, "type": event_type}
 
 
 # =========================
-# Premium-protected example endpoint
+# Premium-protected endpoint
 # =========================
 @app.post("/premium/chat")
 def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
@@ -660,9 +694,7 @@ def bible_books():
                 f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
             ).fetchall()
         else:
-            rows = con.execute(
-                f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}"
-            ).fetchall()
+            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
 
         books = []
         for r in rows:
@@ -768,7 +800,7 @@ def bible_passage(
 
 
 # =========================
-# Free chat + Devotional
+# Free chat + Devotional + Daily Prayer Starters
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
@@ -818,3 +850,44 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
+
+@app.post("/daily_prayer")
+def daily_prayer(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    if lang == "es":
+        prompt = """
+Eres Alyana Luz. Genera frases cortas para una oración ACTS en JSON ESTRICTO SOLAMENTE.
+Devuelve exactamente esta forma:
+{
+  "example_adoration": "1-2 frases",
+  "example_confession": "1-2 frases",
+  "example_thanksgiving": "1-2 frases",
+  "example_supplication": "1-2 frases"
+}
+Reglas:
+- Devuelve SOLO JSON válido (sin markdown).
+- Todo en español.
+- Tono cálido, breve y práctico.
+""".strip()
+    else:
+        prompt = """
+You are Alyana Luz. Generate short starters for an ACTS prayer in STRICT JSON ONLY.
+Return exactly this shape:
+{
+  "example_adoration": "1-2 sentences",
+  "example_confession": "1-2 sentences",
+  "example_thanksgiving": "1-2 sentences",
+  "example_supplication": "1-2 sentences"
+}
+Rules:
+- Return ONLY valid JSON (no markdown).
+- Everything in English.
+- Warm, brief, practical.
+""".strip()
+
+    text = _generate_text_with_retries(prompt) or "{}"
+    return {"json": text}
+
