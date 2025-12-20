@@ -10,13 +10,11 @@
   // ------------------------------
   // Helpers
   // ------------------------------
-  async function apiJSON(url, opts = {}) {
-    const o = { ...opts };
-
-    // IMPORTANT: include cookies so /me and portal work
-    if (!o.credentials) o.credentials = "include";
-
-    const res = await fetch(url, o);
+  async function apiJSON(url, opts) {
+    const res = await fetch(url, {
+      credentials: "include", // IMPORTANT: send auth cookie to /me, portal, logout, etc.
+      ...opts,
+    });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       throw new Error(`API ${res.status} for ${url}: ${txt}`);
@@ -47,6 +45,172 @@
     hits.forEach(w => { if (t.includes(" " + w + " ") || t.startsWith(w + " ") || t.endsWith(" " + w)) score++; });
     return score >= 2;
   }
+
+  // ==============================
+  // AUTH / BILLING UI (NEW)
+  // ==============================
+  const authPill = $("authPill");
+  const manageBillingBtn = $("manageBillingBtn");
+  const logoutBtn = $("logoutBtn");
+  const authHint = $("authHint");
+
+  function setPill(state, text) {
+    if (!authPill) return;
+    authPill.classList.remove("ok", "warn", "bad");
+    if (state) authPill.classList.add(state);
+    authPill.textContent = text;
+  }
+
+  function setHint(text) {
+    if (!authHint) return;
+    if (!text) {
+      authHint.style.display = "none";
+      authHint.textContent = "";
+      return;
+    }
+    authHint.style.display = "block";
+    authHint.textContent = text;
+  }
+
+  let lastMe = { logged_in: false, email: null, active: false, status: null };
+
+  async function refreshMe() {
+    try {
+      setPill("warn", "Account: checking…");
+      setHint("");
+
+      const me = await apiJSON("/me", { method: "GET" });
+      lastMe = me || lastMe;
+
+      const loggedIn = !!me.logged_in;
+      const active = !!me.active;
+      const email = me.email || "";
+
+      if (!loggedIn) {
+        setPill("warn", "Account: not logged in");
+        if (manageBillingBtn) manageBillingBtn.disabled = false; // allow it to act like "Subscribe"
+        if (logoutBtn) logoutBtn.style.display = "none";
+        setHint("To access premium features, tap Support to subscribe (Stripe Checkout).");
+        return;
+      }
+
+      // logged in
+      if (logoutBtn) logoutBtn.style.display = "inline-block";
+
+      if (active) {
+        setPill("ok", `Active: ${email}`);
+        if (manageBillingBtn) manageBillingBtn.disabled = false;
+        setHint("");
+      } else {
+        setPill("bad", `Inactive: ${email}`);
+        if (manageBillingBtn) manageBillingBtn.disabled = false; // allow user to manage billing OR re-subscribe
+        setHint("Your subscription is inactive. Tap Support to subscribe again, or Manage billing if a customer exists.");
+      }
+    } catch (e) {
+      console.error("refreshMe failed:", e);
+      setPill("bad", "Account: error");
+      if (manageBillingBtn) manageBillingBtn.disabled = false;
+      setHint("Could not load account status. Try refreshing the page.");
+    }
+  }
+
+  // ------------------------------
+  // Support button (Stripe Checkout)
+  // ------------------------------
+  const supportBtn = $("supportBtn");
+
+  async function startStripeCheckout() {
+    if (!supportBtn) return;
+
+    const originalText = supportBtn.textContent;
+    supportBtn.disabled = true;
+    supportBtn.textContent = "Redirecting to secure checkout…";
+
+    try {
+      const res = await fetch("/stripe/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({})
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Checkout error ${res.status}: ${txt}`);
+      }
+
+      const data = await res.json();
+      if (!data.url) throw new Error("No checkout URL returned by server.");
+
+      window.location.href = data.url;
+    } catch (err) {
+      console.error(err);
+      alert("Sorry — checkout failed. Please try again.");
+      supportBtn.disabled = false;
+      supportBtn.textContent = originalText || "❤️ Support Alyana Luz";
+    }
+  }
+
+  if (supportBtn) {
+    supportBtn.addEventListener("click", startStripeCheckout);
+  }
+
+  // NEW: Manage billing button
+  async function openBillingPortalOrCheckout() {
+    try {
+      if (!manageBillingBtn) return;
+      manageBillingBtn.disabled = true;
+
+      // If not logged in, treat Manage billing as Subscribe
+      if (!lastMe.logged_in) {
+        await startStripeCheckout();
+        return;
+      }
+
+      // Logged in -> try billing portal
+      const data = await apiJSON("/stripe/create-portal-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}) // server reads cookie email first
+      });
+
+      if (!data.url) throw new Error("No portal URL returned.");
+      window.location.href = data.url;
+    } catch (e) {
+      console.error(e);
+      // If portal fails (no customer yet), fallback to checkout
+      const msg = String(e && e.message ? e.message : e);
+      if (msg.includes("No Stripe customer") || msg.includes("404")) {
+        await startStripeCheckout();
+      } else {
+        alert("Could not open billing portal. Try Support instead.");
+      }
+    } finally {
+      if (manageBillingBtn) manageBillingBtn.disabled = false;
+    }
+  }
+
+  if (manageBillingBtn) {
+    manageBillingBtn.addEventListener("click", openBillingPortalOrCheckout);
+  }
+
+  // NEW: Logout
+  async function doLogout() {
+    try {
+      if (logoutBtn) logoutBtn.disabled = true;
+      await apiJSON("/logout", { method: "POST" });
+      await refreshMe();
+      // Optional: hard refresh to clear any cached state
+      window.location.href = "/";
+    } catch (e) {
+      console.error(e);
+      alert("Logout failed. Try again.");
+    } finally {
+      if (logoutBtn) logoutBtn.disabled = false;
+    }
+  }
+
+  if (logoutBtn) logoutBtn.addEventListener("click", doLogout);
 
   // ==============================
   // Local storage keys + streak helpers
@@ -123,106 +287,6 @@
 
   menuButtons.forEach(btn => btn.addEventListener("click", () => showSection(btn.dataset.target)));
   showSection("chatSection");
-
-  // ============================================
-  // AUTH + BILLING UI SYNC (NEW)
-  // ============================================
-  const supportBtn = $("supportBtn");
-  const manageBillingBtn = $("manageBillingBtn");
-
-  async function refreshAuthUI() {
-    // If buttons aren't present, skip silently
-    if (!supportBtn && !manageBillingBtn) return;
-
-    try {
-      const me = await apiJSON("/me", { method: "GET" });
-
-      // If user is active subscriber:
-      // - hide Subscribe button (supportBtn)
-      // - show Manage Billing button
-      if (supportBtn) supportBtn.style.display = (me.active ? "none" : "inline-block");
-      if (manageBillingBtn) manageBillingBtn.style.display = (me.active ? "inline-block" : "none");
-
-    } catch (e) {
-      // If /me fails, default to showing subscribe and hiding billing portal
-      if (supportBtn) supportBtn.style.display = "inline-block";
-      if (manageBillingBtn) manageBillingBtn.style.display = "none";
-    }
-  }
-
-  // ------------------------------
-  // Stripe Checkout (Subscribe)
-  // ------------------------------
-  async function startStripeCheckout() {
-    if (!supportBtn) return;
-
-    const originalText = supportBtn.textContent;
-    supportBtn.disabled = true;
-    supportBtn.textContent = "Redirecting to secure checkout…";
-
-    try {
-      const res = await fetch("/stripe/create-checkout-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({})
-      });
-
-      if (!res.ok) {
-        const txt = await res.text().catch(() => "");
-        throw new Error(`Checkout error ${res.status}: ${txt}`);
-      }
-
-      const data = await res.json();
-      if (!data.url) throw new Error("No checkout URL returned by server.");
-
-      window.location.href = data.url;
-    } catch (err) {
-      console.error(err);
-      alert("Sorry — checkout failed. Please try again.");
-      supportBtn.disabled = false;
-      supportBtn.textContent = originalText || "❤️ Support Alyana Luz";
-    }
-  }
-
-  if (supportBtn) {
-    supportBtn.addEventListener("click", startStripeCheckout);
-  }
-
-  // ------------------------------
-  // Stripe Customer Portal (Manage Billing) (NEW)
-  // ------------------------------
-  async function openBillingPortal() {
-    if (!manageBillingBtn) return;
-
-    const originalText = manageBillingBtn.textContent;
-    manageBillingBtn.disabled = true;
-    manageBillingBtn.textContent = "Opening billing portal…";
-
-    try {
-      const data = await apiJSON("/stripe/create-portal-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({})
-      });
-
-      if (!data.url) throw new Error("No portal URL returned.");
-
-      window.location.href = data.url;
-    } catch (e) {
-      console.error(e);
-      alert("Could not open billing portal. Make sure you are subscribed and logged in.");
-      manageBillingBtn.disabled = false;
-      manageBillingBtn.textContent = originalText || "Manage Billing";
-    }
-  }
-
-  if (manageBillingBtn) {
-    manageBillingBtn.addEventListener("click", openBillingPortal);
-  }
-
-  // run once on load
-  refreshAuthUI();
 
   // ------------------------------
   // TTS (2 voices) - Chat + Bible Reader only
@@ -331,7 +395,7 @@
   }
 
   // ------------------------------
-  // CHAT + saved chats (unchanged)
+  // CHAT + saved chats
   // ------------------------------
   const chatLangSelect = $("chatLangSelect");
   const chatEl = $("chat");
@@ -509,7 +573,7 @@
   }
 
   // ------------------------------
-  // BIBLE READER (unchanged)
+  // BIBLE READER
   // ------------------------------
   const bibleDbStatus = $("bibleDbStatus");
   const bookSelect = $("bookSelect");
@@ -720,7 +784,7 @@
   })();
 
   // ==================================================
-  // DEVOTIONAL (unchanged from your version)
+  // DEVOTIONAL (no listen, add save/streak/list + bilingual UI hints)
   // ==================================================
   const devotionalBtn = $("devotionalBtn");
   const devUiLang = $("devUiLang");
@@ -916,8 +980,7 @@
   refreshDevStreakUI();
 
   // ==================================================
-  // DAILY PRAYER (your version references /daily_prayer)
-  // NOTE: your server.py must have /daily_prayer, otherwise this will error.
+  // DAILY PRAYER
   // ==================================================
   const prayerBtn = $("prayerBtn");
   const prUiLang = $("prUiLang");
@@ -1117,4 +1180,10 @@
   renderPrSaved();
   refreshPrStreakUI();
 
+  // ==============================
+  // FINAL: run auth check once page is ready
+  // ==============================
+  refreshMe();
+
 })();
+
