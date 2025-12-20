@@ -1,98 +1,251 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, maximum-scale=1"
-  />
-  <title>Alyana Luz · Bible AI</title>
+(() => {
+  const $ = (id) => document.getElementById(id);
 
-  <style>
-    * { box-sizing: border-box; }
+  // Top UI elements
+  const jsStatus = $("jsStatus");
+  const authPill = $("authPill");
+  const authHint = $("authHint");
+  const manageBillingBtn = $("manageBillingBtn");
+  const logoutBtn = $("logoutBtn");
+  const supportBtn = $("supportBtn");
+  const loginOpenBtn = $("loginOpenBtn");
 
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-      background: #050316;
-      color: #f9f5ff;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
+  // Login modal elements
+  const loginModal = $("loginModal");
+  const loginEmail = $("loginEmail");
+  const loginBtn = $("loginBtn");
+  const loginCancelBtn = $("loginCancelBtn");
+  const loginMsg = $("loginMsg");
+
+  // Chat elements (minimal, you can merge with yours)
+  const chat = $("chat");
+  const chatForm = $("chatForm");
+  const chatInput = $("chatInput");
+
+  function setPill(kind, text) {
+    authPill.classList.remove("ok", "warn", "bad");
+    authPill.classList.add(kind);
+    authPill.textContent = text;
+  }
+
+  function showHint(text) {
+    if (!text) {
+      authHint.style.display = "none";
+      authHint.textContent = "";
+      return;
     }
+    authHint.style.display = "block";
+    authHint.textContent = text;
+  }
 
-    header {
-      width: 100%;
-      padding: 20px;
-      display: flex;
-      justify-content: center;
+  function openLoginModal(message = "") {
+    loginMsg.textContent = message || "";
+    loginModal.style.display = "flex";
+    loginEmail.focus();
+  }
+
+  function closeLoginModal() {
+    loginModal.style.display = "none";
+    loginMsg.textContent = "";
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (_) {}
+    if (!res.ok) {
+      const msg = (data && (data.detail || data.error)) || `Request failed: ${res.status}`;
+      throw new Error(msg);
     }
+    return data;
+  }
 
-    .top-cta {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
+  function addBubble(who, text) {
+    const row = document.createElement("div");
+    row.className = `bubble-row ${who}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = `bubble ${who === "user" ? "user" : "bot"}`;
+    bubble.textContent = text;
+
+    row.appendChild(bubble);
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  async function refreshMe() {
+    try {
+      const me = await api("/me", { method: "GET" });
+
+      if (!me.logged_in) {
+        setPill("warn", "Account: not logged in");
+        showHint("Login if you already subscribed. If you haven’t subscribed yet, click “Support Alyana Luz”.");
+        manageBillingBtn.disabled = true;
+        logoutBtn.style.display = "none";
+        loginOpenBtn.style.display = "inline-block";
+        return me;
+      }
+
+      if (me.active) {
+        setPill("ok", `Account: active (${me.email})`);
+        showHint("");
+        manageBillingBtn.disabled = false;
+      } else {
+        setPill("bad", `Account: inactive (${me.email})`);
+        showHint("Your subscription looks inactive. Click “Support Alyana Luz” to subscribe again, or manage billing.");
+        manageBillingBtn.disabled = false; // allow portal even if inactive (if customer exists)
+      }
+
+      logoutBtn.style.display = "inline-block";
+      loginOpenBtn.style.display = "none";
+      return me;
+    } catch (e) {
+      setPill("bad", "Account: error");
+      showHint(String(e.message || e));
+      manageBillingBtn.disabled = true;
+      logoutBtn.style.display = "none";
+      loginOpenBtn.style.display = "inline-block";
+      return null;
     }
+  }
 
-    .support-btn {
-      padding: 10px 14px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.18);
-      background: rgba(99,102,241,0.9);
-      color: #fff;
-      cursor: pointer;
-      font-size: 14px;
+  async function startCheckout() {
+    try {
+      // Optional: if user typed an email into login modal previously, reuse it
+      const email = (loginEmail.value || "").trim();
+      const payload = email ? { email } : {};
+      const out = await api("/stripe/create-checkout-session", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      if (!out.url) throw new Error("Missing checkout URL");
+      window.location.href = out.url;
+    } catch (e) {
+      showHint(`Checkout error: ${e.message || e}`);
     }
+  }
 
-    .support-btn:hover {
-      background: rgba(129,140,248,0.95);
+  async function openBillingPortal() {
+    try {
+      const out = await api("/stripe/create-portal-session", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      if (!out.url) throw new Error("Missing portal URL");
+      window.location.href = out.url;
+    } catch (e) {
+      showHint(`Billing error: ${e.message || e}`);
+      if ((e.message || "").toLowerCase().includes("not logged in")) {
+        openLoginModal("Please login first.");
+      }
     }
+  }
 
-    main {
-      max-width: 900px;
-      padding: 30px 20px;
-      width: 100%;
-      text-align: center;
+  async function doLogin() {
+    const email = (loginEmail.value || "").trim().toLowerCase();
+    if (!email) {
+      loginMsg.textContent = "Please enter your email.";
+      return;
     }
-
-    footer {
-      margin-top: auto;
-      padding: 20px;
-      opacity: 0.6;
-      font-size: 13px;
+    loginBtn.disabled = true;
+    loginMsg.textContent = "Checking subscription…";
+    try {
+      await api("/login", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      loginMsg.textContent = "Logged in. Refreshing…";
+      closeLoginModal();
+      await refreshMe();
+    } catch (e) {
+      loginMsg.textContent = `Login failed: ${e.message || e}`;
+    } finally {
+      loginBtn.disabled = false;
     }
-  </style>
-</head>
+  }
 
-<body>
+  async function doLogout() {
+    try {
+      await api("/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch (_) {}
+    await refreshMe();
+  }
 
-  <!-- TOP BAR -->
-  <header>
-    <div class="top-cta">
+  function setupMenu() {
+    const buttons = document.querySelectorAll(".menu-btn");
+    const sections = document.querySelectorAll(".app-section");
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        buttons.forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
 
-      <!-- RESTORE ACCESS EMAIL -->
-      <input
-        id="loginEmail"
-        type="text"
-        placeholder="Email used for Stripe…"
-        style="max-width:240px; padding:10px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.18); background:rgba(15,23,42,0.55); color:#fff;"
-      />
+        const target = btn.getAttribute("data-target");
+        sections.forEach((s) => s.classList.remove("active"));
+        const el = document.getElementById(target);
+        if (el) el.classList.add("active");
+      });
+    });
+  }
 
-      <!-- RESTORE ACCESS BUTTON -->
-      <button
-        class="support-btn"
-        id="loginBtn"
-        type="button"
-        title="Restore access"
-      >
-        Restore access
-      </button>
+  async function init() {
+    jsStatus.textContent = "JS: ok";
+    setupMenu();
 
-      <!-- LOGOUT BUTTON -->
-      <button
-        class="support-btn"
-        id="logoutBtn"
-        type="button"
-        style=
+    // Buttons
+    supportBtn.addEventListener("click", startCheckout);
+    manageBillingBtn.addEventListener("click", openBillingPortal);
+    logoutBtn.addEventListener("click", doLogout);
+
+    loginOpenBtn.addEventListener("click", () => openLoginModal(""));
+    loginCancelBtn.addEventListener("click", closeLoginModal);
+    loginBtn.addEventListener("click", doLogin);
+
+    // Close modal when clicking backdrop
+    loginModal.addEventListener("click", (e) => {
+      if (e.target === loginModal) closeLoginModal();
+    });
+
+    // Enter key submits login
+    loginEmail.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") doLogin();
+    });
+
+    // Minimal chat (free endpoint /chat)
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = (chatInput.value || "").trim();
+      if (!text) return;
+      chatInput.value = "";
+      addBubble("user", text);
+
+      try {
+        const out = await api("/chat", {
+          method: "POST",
+          body: JSON.stringify({ prompt: text }),
+        });
+        addBubble("bot", out.message || "(no message)");
+      } catch (err) {
+        addBubble("bot", `Error: ${err.message || err}`);
+      }
+    });
+
+    // Refresh auth state
+    await refreshMe();
+
+    // Optional: show billing result in hint
+    const url = new URL(window.location.href);
+    const billing = url.searchParams.get("billing");
+    if (billing === "success") showHint("Subscription successful. You are now logged in.");
+    if (billing === "cancel") showHint("Checkout canceled.");
+    if (billing === "success_error") showHint("Checkout succeeded but verification failed. Try logging in with your email.");
+  }
+
+  window.addEventListener("DOMContentLoaded", init);
+})();
+
