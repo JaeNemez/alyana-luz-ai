@@ -59,8 +59,7 @@ def _require_jwt_secret():
 
 
 # --------------------
-# Very small signed-token helper (cookie auth)
-# (No external jwt lib needed)
+# Signed-token helper (cookie auth)
 # --------------------
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
@@ -131,6 +130,7 @@ def get_current_email(request: Request) -> Optional[str]:
 
 # --------------------
 # Simple subscription store (SQLite)
+# One row per email, but we "sync" from Stripe to handle duplicates/out-of-order events.
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs.db")
 
@@ -222,6 +222,70 @@ def require_active_user(request: Request) -> str:
     if not _is_active_subscriber(email):
         raise HTTPException(402, "Subscription inactive. Please subscribe.")
     return email
+
+
+# --------------------
+# Stripe sync helper (handles multiple subs + webhook ordering)
+# --------------------
+GOOD_STATUSES = {"active", "trialing"}
+OK_STATUSES = {"past_due", "unpaid"}  # not "active", but useful to record
+
+
+def _choose_best_subscription(subs: list) -> Optional[dict]:
+    """
+    Pick the "best" subscription:
+    1) active/trialing first
+    2) else most recently updated/created
+    """
+    if not subs:
+        return None
+
+    # Prefer active/trialing
+    good = [s for s in subs if (s.get("status") or "").lower() in GOOD_STATUSES]
+    if good:
+        # pick the one with the latest current_period_end (or latest created)
+        good.sort(key=lambda s: (s.get("current_period_end") or 0, s.get("created") or 0), reverse=True)
+        return good[0]
+
+    # Otherwise pick latest created
+    subs.sort(key=lambda s: (s.get("created") or 0), reverse=True)
+    return subs[0]
+
+
+def _sync_customer_subscriptions(customer_id: str) -> Optional[str]:
+    """
+    Pull truth from Stripe and update our DB row for the customer's email.
+    Returns the email if found.
+    """
+    if not customer_id:
+        return None
+
+    try:
+        cust = stripe.Customer.retrieve(customer_id)
+        email = (cust.get("email") or "").strip().lower()
+        if not email:
+            return None
+
+        # List all subscriptions for this customer (includes duplicates)
+        resp = stripe.Subscription.list(customer=customer_id, status="all", limit=20)
+        subs = resp.get("data") or []
+        best = _choose_best_subscription(subs)
+
+        if not best:
+            _subs_upsert(email, customer_id, None, "canceled", None)
+            return email
+
+        _subs_upsert(
+            email=email,
+            customer_id=customer_id,
+            subscription_id=best.get("id"),
+            status=best.get("status"),
+            current_period_end=best.get("current_period_end"),
+        )
+        return email
+    except Exception:
+        # Don't crash webhook processing if sync fails
+        return None
 
 
 # --------------------
@@ -380,7 +444,7 @@ def create_portal_session(request: Request, body: PortalIn):
 def billing_success(session_id: str):
     """
     After successful Checkout, user lands here.
-    We verify the Checkout Session with Stripe and set a secure login cookie.
+    We verify session, set cookie, and sync subscription state from Stripe.
     """
     _require_stripe_ready()
     _require_jwt_secret()
@@ -395,16 +459,8 @@ def billing_success(session_id: str):
         email = (email or "").strip().lower()
 
         customer_id = session.get("customer")
-        subscription_id = session.get("subscription")
-
-        status = None
-        current_period_end = None
-        if subscription_id:
-            sub = stripe.Subscription.retrieve(subscription_id)
-            status = sub.get("status")
-            current_period_end = sub.get("current_period_end")
-
-        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
+        if customer_id:
+            _sync_customer_subscriptions(customer_id)
 
         resp = RedirectResponse(url="/")
         if email:
@@ -422,34 +478,15 @@ def billing_cancel():
 
 @app.get("/me")
 def me(request: Request):
-    """
-    Who is logged in, are they active, and when it renews.
-    """
     email = get_current_email(request)
     if not email:
         return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
 
-    row = _subs_get(email) or {}
-    active = _is_active_subscriber(email)
-
-    # If DB missing current_period_end, fetch once from Stripe (best-effort)
-    cpe = row.get("current_period_end")
-    sub_id = row.get("stripe_subscription_id")
-    if (cpe is None) and sub_id:
-        try:
-            sub = stripe.Subscription.retrieve(sub_id)
-            status = sub.get("status")
-            cpe = sub.get("current_period_end")
-            _subs_upsert(email, row.get("stripe_customer_id"), sub_id, status, cpe)
-            row = _subs_get(email) or row
-            active = _is_active_subscriber(email)
-        except Exception:
-            pass
-
+    row = _subs_get(email)
     return {
         "logged_in": True,
         "email": email,
-        "active": active,
+        "active": _is_active_subscriber(email),
         "status": (row.get("status") if row else None),
         "current_period_end": (row.get("current_period_end") if row else None),
     }
@@ -475,59 +512,34 @@ async def stripe_webhook(request: Request):
         return JSONResponse({"error": f"Webhook signature verification failed: {str(e)}"}, status_code=400)
 
     event_type = event["type"]
-    data = event["data"]["object"]
+    obj = event["data"]["object"]
 
-    if event_type == "checkout.session.completed":
-        customer_id = data.get("customer")
-        subscription_id = data.get("subscription")
-        email = (data.get("customer_details", {}) or {}).get("email") or data.get("customer_email") or ""
-        email = (email or "").strip().lower()
+    try:
+        # Always prefer syncing from Stripe, so duplicates/out-of-order events don't break state
+        if event_type.startswith("customer.subscription."):
+            customer_id = obj.get("customer")
+            if customer_id:
+                _sync_customer_subscriptions(customer_id)
 
-        status = None
-        current_period_end = None
-        if subscription_id:
-            sub = stripe.Subscription.retrieve(subscription_id)
-            status = sub.get("status")
-            current_period_end = sub.get("current_period_end")
+        elif event_type == "checkout.session.completed":
+            customer_id = obj.get("customer")
+            if customer_id:
+                _sync_customer_subscriptions(customer_id)
 
-        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
+        elif event_type in ("invoice.paid", "invoice.payment_failed", "invoice.finalized"):
+            customer_id = obj.get("customer")
+            if customer_id:
+                _sync_customer_subscriptions(customer_id)
 
-    elif event_type in ("customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"):
-        subscription_id = data.get("id")
-        customer_id = data.get("customer")
-        status = data.get("status")
-        current_period_end = data.get("current_period_end")
-
-        email = ""
-        if customer_id:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = (cust.get("email") or "").strip().lower()
-
-        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
-
-    elif event_type == "invoice.paid":
-        customer_id = data.get("customer")
-        subscription_id = data.get("subscription")
-
-        email = ""
-        if customer_id:
-            cust = stripe.Customer.retrieve(customer_id)
-            email = (cust.get("email") or "").strip().lower()
-
-        status = None
-        current_period_end = None
-        if subscription_id:
-            sub = stripe.Subscription.retrieve(subscription_id)
-            status = sub.get("status")
-            current_period_end = sub.get("current_period_end")
-
-        _subs_upsert(email, customer_id, subscription_id, status, current_period_end)
+    except Exception:
+        # We still return 200 to Stripe, but you can inspect logs if needed
+        pass
 
     return {"received": True, "type": event_type}
 
 
 # =========================
-# Premium-protected endpoint
+# Premium-protected example endpoint
 # =========================
 @app.post("/premium/chat")
 def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
@@ -648,7 +660,9 @@ def bible_books():
                 f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
             ).fetchall()
         else:
-            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
+            rows = con.execute(
+                f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}"
+            ).fetchall()
 
         books = []
         for r in rows:
@@ -670,9 +684,7 @@ def bible_chapters(book: str):
     con = _db()
     try:
         book_id = _resolve_book_id(con, book)
-        rows = con.execute(
-            "SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)
-        ).fetchall()
+        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
         chapters = [int(r["chapter"]) for r in rows]
         if not chapters:
             raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
@@ -689,8 +701,7 @@ def bible_verses(book: str, chapter: int):
     try:
         book_id = _resolve_book_id(con, book)
         rows = con.execute(
-            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
-            (book_id, int(chapter)),
+            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))
         ).fetchall()
         verses = [int(r["verse"]) for r in rows]
         if not verses:
@@ -757,7 +768,7 @@ def bible_passage(
 
 
 # =========================
-# Free chat + Devotional (kept)
+# Free chat + Devotional
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
