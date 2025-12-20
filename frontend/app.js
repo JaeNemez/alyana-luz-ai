@@ -10,8 +10,13 @@
   // ------------------------------
   // Helpers
   // ------------------------------
-  async function apiJSON(url, opts) {
-    const res = await fetch(url, opts);
+  async function apiJSON(url, opts = {}) {
+    const o = { ...opts };
+
+    // IMPORTANT: include cookies so /me and portal work
+    if (!o.credentials) o.credentials = "include";
+
+    const res = await fetch(url, o);
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
       throw new Error(`API ${res.status} for ${url}: ${txt}`);
@@ -119,48 +124,106 @@
   menuButtons.forEach(btn => btn.addEventListener("click", () => showSection(btn.dataset.target)));
   showSection("chatSection");
 
-  // ------------------------------
-// Support button (Stripe Checkout)
-// ------------------------------
-const supportBtn = $("supportBtn");
+  // ============================================
+  // AUTH + BILLING UI SYNC (NEW)
+  // ============================================
+  const supportBtn = $("supportBtn");
+  const manageBillingBtn = $("manageBillingBtn");
 
-async function startStripeCheckout() {
-  if (!supportBtn) return;
+  async function refreshAuthUI() {
+    // If buttons aren't present, skip silently
+    if (!supportBtn && !manageBillingBtn) return;
 
-  const originalText = supportBtn.textContent;
-  supportBtn.disabled = true;
-  supportBtn.textContent = "Redirecting to secure checkout…";
+    try {
+      const me = await apiJSON("/me", { method: "GET" });
 
-  try {
-    const res = await fetch("/stripe/create-checkout-session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // You can pass email later if you add a field. For now keep empty.
-      body: JSON.stringify({})
-    });
+      // If user is active subscriber:
+      // - hide Subscribe button (supportBtn)
+      // - show Manage Billing button
+      if (supportBtn) supportBtn.style.display = (me.active ? "none" : "inline-block");
+      if (manageBillingBtn) manageBillingBtn.style.display = (me.active ? "inline-block" : "none");
 
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`Checkout error ${res.status}: ${txt}`);
+    } catch (e) {
+      // If /me fails, default to showing subscribe and hiding billing portal
+      if (supportBtn) supportBtn.style.display = "inline-block";
+      if (manageBillingBtn) manageBillingBtn.style.display = "none";
     }
-
-    const data = await res.json();
-    if (!data.url) throw new Error("No checkout URL returned by server.");
-
-    // Redirect current tab to Stripe Checkout
-    window.location.href = data.url;
-  } catch (err) {
-    console.error(err);
-    alert("Sorry — checkout failed. Please try again.");
-    supportBtn.disabled = false;
-    supportBtn.textContent = originalText || "❤️ Support Alyana Luz";
   }
-}
 
-if (supportBtn) {
-  supportBtn.addEventListener("click", startStripeCheckout);
-}
-  
+  // ------------------------------
+  // Stripe Checkout (Subscribe)
+  // ------------------------------
+  async function startStripeCheckout() {
+    if (!supportBtn) return;
+
+    const originalText = supportBtn.textContent;
+    supportBtn.disabled = true;
+    supportBtn.textContent = "Redirecting to secure checkout…";
+
+    try {
+      const res = await fetch("/stripe/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({})
+      });
+
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Checkout error ${res.status}: ${txt}`);
+      }
+
+      const data = await res.json();
+      if (!data.url) throw new Error("No checkout URL returned by server.");
+
+      window.location.href = data.url;
+    } catch (err) {
+      console.error(err);
+      alert("Sorry — checkout failed. Please try again.");
+      supportBtn.disabled = false;
+      supportBtn.textContent = originalText || "❤️ Support Alyana Luz";
+    }
+  }
+
+  if (supportBtn) {
+    supportBtn.addEventListener("click", startStripeCheckout);
+  }
+
+  // ------------------------------
+  // Stripe Customer Portal (Manage Billing) (NEW)
+  // ------------------------------
+  async function openBillingPortal() {
+    if (!manageBillingBtn) return;
+
+    const originalText = manageBillingBtn.textContent;
+    manageBillingBtn.disabled = true;
+    manageBillingBtn.textContent = "Opening billing portal…";
+
+    try {
+      const data = await apiJSON("/stripe/create-portal-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+
+      if (!data.url) throw new Error("No portal URL returned.");
+
+      window.location.href = data.url;
+    } catch (e) {
+      console.error(e);
+      alert("Could not open billing portal. Make sure you are subscribed and logged in.");
+      manageBillingBtn.disabled = false;
+      manageBillingBtn.textContent = originalText || "Manage Billing";
+    }
+  }
+
+  if (manageBillingBtn) {
+    manageBillingBtn.addEventListener("click", openBillingPortal);
+  }
+
+  // run once on load
+  refreshAuthUI();
+
   // ------------------------------
   // TTS (2 voices) - Chat + Bible Reader only
   // ------------------------------
@@ -657,7 +720,7 @@ if (supportBtn) {
   })();
 
   // ==================================================
-  // DEVOTIONAL (UPDATED: no listen, add save/streak/list + bilingual UI hints)
+  // DEVOTIONAL (unchanged from your version)
   // ==================================================
   const devotionalBtn = $("devotionalBtn");
   const devUiLang = $("devUiLang");
@@ -669,8 +732,7 @@ if (supportBtn) {
   const devotionalScripture = $("devotionalScripture");
   const devotionalExplain = $("devotionalExplain");
 
-  // UI text nodes we will swap EN/ES if present
-  const devDesc = document.querySelector("#devotionalSection .muted"); // first muted under title
+  const devDesc = document.querySelector("#devotionalSection .muted");
   const devLabel3 = document.querySelector('#devotionalSection .block:nth-of-type(3) .muted');
   const devLabel4 = document.querySelector('#devotionalSection .block:nth-of-type(4) .muted');
   const devLabel5 = document.querySelector('#devotionalSection .block:nth-of-type(5) .muted');
@@ -686,7 +748,6 @@ if (supportBtn) {
     if (devStreakBtn) devStreakBtn.textContent = (lang === "es") ? "Lo hice hoy" : "I did it today";
     if (devSaveBtn) devSaveBtn.textContent = (lang === "es") ? "Guardar" : "Save";
 
-    // These labels are optional; if your DOM structure changes, it won’t break anything.
     if (devLabel3) devLabel3.textContent = (lang === "es")
       ? "3) Mi explicación (escribe lo que TÚ crees que significa)"
       : "3) My Explanation (write what YOU think it means)";
@@ -817,7 +878,6 @@ if (supportBtn) {
     try {
       const lang = devUiLang?.value || "en";
 
-      // Server supports {"lang": "..."} now; if not, fallback to old style.
       let data;
       try {
         data = await apiJSON("/devotional", {
@@ -856,7 +916,8 @@ if (supportBtn) {
   refreshDevStreakUI();
 
   // ==================================================
-  // DAILY PRAYER (UPDATED: no listen, add save/streak/list + bilingual UI hints)
+  // DAILY PRAYER (your version references /daily_prayer)
+  // NOTE: your server.py must have /daily_prayer, otherwise this will error.
   // ==================================================
   const prayerBtn = $("prayerBtn");
   const prUiLang = $("prUiLang");
@@ -870,7 +931,6 @@ if (supportBtn) {
   const pT = $("pT");
   const pS = $("pS");
 
-  // UI instruction under title (first .muted in prayer section)
   const prDesc = document.querySelector("#prayerSection .muted");
 
   function applyPrUiLang() {
@@ -1058,6 +1118,3 @@ if (supportBtn) {
   refreshPrStreakUI();
 
 })();
-
-
-
