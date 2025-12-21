@@ -22,7 +22,11 @@ function addBubble(kind, text) {
 
   row.appendChild(bubble);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+
+  // Keep scroll pinned to bottom like messaging apps
+  requestAnimationFrame(() => {
+    chat.scrollTop = chat.scrollHeight;
+  });
 }
 
 async function api(path, options = {}) {
@@ -37,15 +41,14 @@ async function api(path, options = {}) {
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    // If backend returns HTML error pages, keep raw
     data = { raw: text };
   }
 
   if (!resp.ok) {
     const msg =
-      (data && (data.detail || data.error)) ?
-        (data.detail || data.error) :
-        `Request failed (${resp.status})`;
+      data && (data.detail || data.error)
+        ? data.detail || data.error
+        : `Request failed (${resp.status})`;
     throw new Error(msg);
   }
   return data;
@@ -67,13 +70,20 @@ function setupNav() {
     buttons.forEach((b) => {
       if (b.dataset.target === targetId) b.classList.add("active");
     });
+
+    // On mobile, focus the chat composer when switching to chat
+    if (targetId === "chatSection") {
+      const input = $("chatInput");
+      if (input) {
+        setTimeout(() => input.focus(), 50);
+      }
+    }
   }
 
   buttons.forEach((b) => {
     b.addEventListener("click", () => activate(b.dataset.target));
   });
 
-  // default
   activate("chatSection");
 }
 
@@ -93,7 +103,6 @@ function showAuthHint(text) {
 }
 
 function getRestoreEmail() {
-  // Find the input whose placeholder mentions Stripe
   const inputs = document.querySelectorAll('input[type="text"], input[type="email"]');
   for (const i of inputs) {
     const ph = (i.getAttribute("placeholder") || "").toLowerCase();
@@ -191,9 +200,9 @@ function setupBillingButtons() {
     });
   }
 
-  // Restore access button
-  const restoreBtn = Array.from(document.querySelectorAll("button"))
-    .find((b) => (b.textContent || "").trim().toLowerCase() === "restore access");
+  const restoreBtn = Array.from(document.querySelectorAll("button")).find(
+    (b) => (b.textContent || "").trim().toLowerCase() === "restore access"
+  );
 
   if (restoreBtn) {
     restoreBtn.addEventListener("click", async () => {
@@ -205,7 +214,6 @@ function setupBillingButtons() {
         }
         showAuthHint("Checking subscription…");
 
-        // IMPORTANT: your backend route is /login, not /auth/restore
         await api("/login", {
           method: "POST",
           body: JSON.stringify({ email }),
@@ -263,12 +271,21 @@ function loadSavedChats() {
   });
 }
 
+function autoGrowTextarea(el) {
+  if (!el) return;
+  el.style.height = "auto";
+  // Cap height so it doesn't eat the whole screen
+  const max = 140;
+  const next = Math.min(el.scrollHeight, max);
+  el.style.height = `${next}px`;
+}
+
 function setupChat() {
   const jsStatus = $("jsStatus");
   if (jsStatus) jsStatus.textContent = "JS: running";
 
   const form = $("chatForm");
-  const input = $("chatInput");
+  const input = $("chatInput"); // now a textarea in index.html
   const newBtn = $("chatNewBtn");
   const saveBtn = $("chatSaveBtn");
 
@@ -277,26 +294,51 @@ function setupChat() {
     addBubble("system", "Hi! Try “Read John 1:1”, “Verses about peace”, or “Pray for my family”.");
   }
 
+  if (input) {
+    // Start grown correctly
+    autoGrowTextarea(input);
+
+    // Grow as the user types (mobile-friendly messaging composer)
+    input.addEventListener("input", () => autoGrowTextarea(input));
+
+    // Enter to send, Shift+Enter for newline
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form?.requestSubmit?.();
+      }
+    });
+  }
+
   if (newBtn) {
     newBtn.addEventListener("click", () => {
       $("chat").innerHTML = "";
       addBubble("system", "New chat started.");
+      input?.focus?.();
     });
   }
 
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const rows = Array.from(document.querySelectorAll("#chat .bubble-row"));
-      const messages = rows.map((r) => {
-        const kind = r.classList.contains("user") ? "user" :
-                     r.classList.contains("bot") ? "bot" : "system";
-        const text = (r.querySelector(".bubble")?.textContent || "").trim();
-        return { kind, text };
-      }).filter(m => m.text);
+      const messages = rows
+        .map((r) => {
+          const kind = r.classList.contains("user")
+            ? "user"
+            : r.classList.contains("bot")
+            ? "bot"
+            : "system";
+          const text = (r.querySelector(".bubble")?.textContent || "").trim();
+          return { kind, text };
+        })
+        .filter((m) => m.text);
 
-      const title = (messages.find(m => m.kind === "user")?.text || "Saved chat").slice(0, 40);
+      const title = (messages.find((m) => m.kind === "user")?.text || "Saved chat").slice(0, 40);
       const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
-      saved.unshift({ title: `${title} — ${new Date().toISOString().slice(0,16).replace("T"," ")}`, messages });
+      saved.unshift({
+        title: `${title} — ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+        messages,
+      });
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
       loadSavedChats();
       addBubble("system", "Saved.");
@@ -306,17 +348,22 @@ function setupChat() {
   if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const q = (input.value || "").trim();
+      const q = (input?.value || "").trim();
       if (!q) return;
 
       addBubble("user", q);
-      input.value = "";
+      if (input) {
+        input.value = "";
+        autoGrowTextarea(input);
+      }
 
       try {
         const res = await api("/chat", { method: "POST", body: JSON.stringify({ prompt: q }) });
         addBubble("bot", res.message || "…");
       } catch (err) {
         addBubble("system", `Error: ${err.message}`);
+      } finally {
+        input?.focus?.();
       }
     });
   }
@@ -365,7 +412,10 @@ async function setupBible() {
   }
 
   async function loadVerses(bookId, chapter) {
-    const v = await api(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`, { method: "GET" });
+    const v = await api(
+      `/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`,
+      { method: "GET" }
+    );
     verseStartSelect.innerHTML = `<option value="">—</option>`;
     verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
     v.verses.forEach((vv) => {
@@ -420,7 +470,9 @@ async function setupBible() {
 
         const url = fc
           ? `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&full_chapter=true`
-          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(
+              start
+            )}&end=${encodeURIComponent(end)}`;
 
         const p = await api(url, { method: "GET" });
         const voiceLang = ($("readingVoice")?.value || "en");
@@ -508,7 +560,10 @@ function setupDevotional() {
       const brief = $("devotionalExplain").textContent || "";
 
       const item = {
-        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        title:
+          (scripture || "Devotional").slice(0, 50) +
+          " — " +
+          new Date().toISOString().slice(0, 16).replace("T", " "),
         scripture,
         brief_explanation: brief,
         my_explanation: $("devotionalMyExplanation").value || "",
@@ -603,7 +658,7 @@ function setupPrayer() {
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const item = {
-        title: "Prayer — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        title: "Prayer — " + new Date().toISOString().slice(0, 16).replace("T", " "),
         example_adoration: $("pA").textContent || "",
         example_confession: $("pC").textContent || "",
         example_thanksgiving: $("pT").textContent || "",
@@ -638,4 +693,5 @@ window.addEventListener("DOMContentLoaded", async () => {
   await setupBible();
   await refreshMe();
 });
+
 
