@@ -28,20 +28,24 @@ FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
 
+# Serve frontend files (if present)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # --------------------
 # ENV
 # --------------------
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
-STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()  # optional
-APP_BASE從_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
-JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
+STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
 
-ALLOWLIST_EMAILS_RAW = os.getenv("ALLOWLIST_EMAILS", "").strip()
-DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
+# IMPORTANT: fixed variable name (was APP_BASE從_URL)
+APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
+
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
+
+ALLOWLIST_EMAILS_RAW = (os.getenv("ALLOWLIST_EMAILS") or "").strip()
+DEV_TRUST_LOCAL = (os.getenv("DEV_TRUST_LOCAL") or "").strip().lower() in ("1", "true", "yes")
 
 if STRIPE_SECRET_KEY:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -123,6 +127,8 @@ AUTH_COOKIE_NAME = "alyana_auth"
 
 def _set_auth_cookie(resp, email: str):
     token = _make_token(email)
+    # On Render you are HTTPS, so secure should be True.
+    # If you run locally without HTTPS, you can set DEV_TRUST_LOCAL=true
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
@@ -228,16 +234,14 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
     try:
         res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
         if res and res.get("data"):
-            cid = res["data"][0].get("id")
-            return cid
+            return res["data"][0].get("id")
     except Exception:
         pass
 
     try:
         res = stripe.Customer.list(email=email, limit=1)
         if res and res.get("data"):
-            cid = res["data"][0].get("id")
-            return cid
+            return res["data"][0].get("id")
     except Exception:
         pass
 
@@ -281,6 +285,7 @@ def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional
 
 def _stripe_check_email_subscription(email: str) -> dict:
     _require_stripe_ready()
+
     email = (email or "").strip().lower()
     if not email:
         return {"email": None, "customer_id": None, "active": False, "status": None, "current_period_end": None}
@@ -369,8 +374,11 @@ async def serve_frontend():
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
         return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
-    return FileResponse(APPJS_PATH, media_type="application/javascript",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    return FileResponse(
+        APPJS_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.get("/static/app.js", include_in_schema=False)
@@ -380,6 +388,7 @@ async def serve_app_js_static():
 
 @app.get("/health")
 def health():
+    # Health should NEVER throw NameError now
     return {
         "status": "ok",
         "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
@@ -433,6 +442,7 @@ def login(body: LoginIn):
 @app.post("/stripe/create-checkout-session")
 def create_checkout_session(body: CheckoutIn):
     _require_stripe_ready()
+
     email = (body.email or "").strip().lower() if body else ""
     if email:
         _enforce_allowlist(email)
@@ -484,7 +494,6 @@ def billing_success(session_id: str):
     try:
         session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
 
-        # Extract email safely
         email = ""
         cd = session.get("customer_details") or {}
         if isinstance(cd, dict) and cd.get("email"):
@@ -496,11 +505,9 @@ def billing_success(session_id: str):
         if email:
             _enforce_allowlist(email)
 
-        # IMPORTANT: customer can be string OR dict when expanded
         customer_raw = session.get("customer")
         customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
 
-        # subscription can be string OR dict when expanded
         sub_obj = session.get("subscription")
         sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
 
@@ -519,8 +526,12 @@ def billing_success(session_id: str):
             pass
 
         if email and isinstance(customer_id, str) and customer_id:
-            _cache_upsert(email, customer_id, (status or "").lower() if status else None,
-                         int(current_period_end) if current_period_end else None)
+            _cache_upsert(
+                email,
+                customer_id,
+                (status or "").lower() if status else None,
+                int(current_period_end) if current_period_end else None,
+            )
 
         resp = RedirectResponse(url="/?billing=success")
         if email:
@@ -686,7 +697,13 @@ def bible_books():
 
         books = []
         for r in rows:
-            books.append({"id": int(r["id"]), "name": str(r["name"]), "key": str(r["book_key"]) if "book_key" in r.keys() else None})
+            books.append(
+                {
+                    "id": int(r["id"]),
+                    "name": str(r["name"]),
+                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
+                }
+            )
 
         return {"books": books}
     finally:
@@ -866,4 +883,5 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
