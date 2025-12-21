@@ -24,26 +24,30 @@ app = FastAPI(title="Alyana Luz · Bible AI")
 # Paths (ABSOLUTE)
 # --------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
+# Your repo structure: /frontend/index.html, /frontend/app.js, /frontend/manifest.webmanifest, /frontend/service-worker.js, /frontend/icons/...
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
-SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
 MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
+SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
 ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
 
-# Optional: also serve /static/* for anything else you drop into frontend/
-if os.path.isdir(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+# Serve static folders for PWA assets
+# IMPORTANT: these paths must match the URLs you reference in index.html/manifest.
 if os.path.isdir(ICONS_DIR):
     app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
+
+# (Optional) if you keep any other frontend static assets, you can use /static
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # --------------------
 # ENV
 # --------------------
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
-STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
 
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
@@ -61,6 +65,9 @@ if ALLOWLIST_EMAILS_RAW:
         if e:
             ALLOWLIST_SET.add(e)
 
+# --------------------
+# Helpers
+# --------------------
 def _require_stripe_ready():
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Missing STRIPE_SECRET_KEY in environment.")
@@ -76,7 +83,7 @@ def _require_jwt_secret():
 def _enforce_allowlist(email: str):
     if not ALLOWLIST_SET:
         return
-    if email.lower() not in ALLOWLIST_SET:
+    if (email or "").lower() not in ALLOWLIST_SET:
         raise HTTPException(403, "This email is not allowed.")
 
 # --------------------
@@ -141,7 +148,7 @@ def get_current_email(request: Request) -> Optional[str]:
     return parsed["email"] if parsed else None
 
 # --------------------
-# OPTIONAL local cache
+# OPTIONAL local cache for Stripe subscription status
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
 
@@ -214,6 +221,7 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
     if not email:
         return None
 
+    # Prefer search; fallback to list
     try:
         res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
         if res and res.get("data"):
@@ -264,21 +272,69 @@ def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional
     cpe = best.get("current_period_end")
     return (status in ACTIVE_STATUSES, status or None, int(cpe) if cpe else None)
 
-def _stripe_check_email_subscription(email: str) -> dict:
-    _require_stripe_ready()
+def _cache_to_active(cached: dict) -> bool:
+    # If cached says active/trialing, consider active if period end is still in the future (when present).
+    if not cached:
+        return False
+    st = (cached.get("status") or "").lower()
+    cpe = cached.get("current_period_end")
+    if st not in ("active", "trialing"):
+        return False
+    if isinstance(cpe, int) and cpe > 0:
+        return cpe > int(time.time())
+    return True
 
+def _stripe_check_email_subscription(email: str) -> dict:
+    """
+    IMPORTANT CHANGE:
+    - If Stripe is temporarily failing, DO NOT throw 503 to the frontend.
+    - Fall back to cached info instead, so /me doesn't break the UI.
+    """
     email = (email or "").strip().lower()
     if not email:
         return {"email": None, "customer_id": None, "active": False, "status": None, "current_period_end": None}
 
-    customer_id = _stripe_find_customer_id_by_email(email)
-    if not customer_id:
-        return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None}
+    cached = _cache_get(email)
 
-    active, status, cpe = _stripe_get_customer_active_status(customer_id)
-    _cache_upsert(email, customer_id, status, cpe)
+    # If Stripe isn't configured, fall back only to cache
+    if not (STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL):
+        return {
+            "email": email,
+            "customer_id": (cached or {}).get("stripe_customer_id"),
+            "active": _cache_to_active(cached or {}),
+            "status": (cached or {}).get("status"),
+            "current_period_end": (cached or {}).get("current_period_end"),
+            "source": "cache_only",
+        }
 
-    return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
+    # Stripe configured: try live check, fallback to cache on failure
+    try:
+        customer_id = _stripe_find_customer_id_by_email(email)
+        if not customer_id:
+            return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None, "source": "stripe"}
+
+        active, status, cpe = _stripe_get_customer_active_status(customer_id)
+        _cache_upsert(email, customer_id, status, cpe)
+
+        return {
+            "email": email,
+            "customer_id": customer_id,
+            "active": active,
+            "status": status,
+            "current_period_end": cpe,
+            "source": "stripe",
+        }
+    except Exception as e:
+        # Stripe temporary issue: fallback to cache
+        print("Stripe check failed (fallback to cache):", repr(e))
+        return {
+            "email": email,
+            "customer_id": (cached or {}).get("stripe_customer_id"),
+            "active": _cache_to_active(cached or {}),
+            "status": (cached or {}).get("status"),
+            "current_period_end": (cached or {}).get("current_period_end"),
+            "source": "cache_fallback",
+        }
 
 def require_active_user(request: Request) -> str:
     email = get_current_email(request)
@@ -286,7 +342,7 @@ def require_active_user(request: Request) -> str:
         raise HTTPException(401, "Not logged in.")
 
     info = _stripe_check_email_subscription(email)
-    if not info["active"]:
+    if not info.get("active"):
         raise HTTPException(402, "Subscription inactive. Please subscribe.")
 
     return email
@@ -308,33 +364,42 @@ def _require_ai():
     if not client:
         raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
 
-def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
+def _generate_text_with_retries(full_prompt: str, tries: int = 6) -> str:
+    """
+    IMPORTANT CHANGE:
+    - More retries and better backoff.
+    - Return "" on temporary overload instead of raising 503.
+      (Endpoints will convert that into a friendly message.)
+    """
     last_error = None
     for attempt in range(tries):
         try:
             resp = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
-            return resp.text or ""
+            return (resp.text or "").strip()
         except Exception as e:
             last_error = e
             msg = repr(e)
 
+            # transient
             if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
-                time.sleep(1 + attempt)
+                time.sleep(1.2 + attempt * 1.1)
                 continue
 
+            # rate limit
             if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
-                raise HTTPException(status_code=429, detail="Alyana reached the AI limit right now. Please try again later.")
+                return ""  # friendly fallback handled by endpoint
+
             break
 
     print("Gemini error after retries:", repr(last_error))
-    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+    return ""  # friendly fallback handled by endpoint
 
 def _norm_lang(lang: Optional[str]) -> str:
     l = (lang or "en").strip().lower()
     return "es" if l.startswith("es") else "en"
 
 # =========================
-# Frontend serving (ROOT)
+# Frontend serving
 # =========================
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
@@ -345,23 +410,32 @@ async def serve_frontend():
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}", status_code=404)
-    return FileResponse(APPJS_PATH, media_type="application/javascript",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
-
-@app.get("/service-worker.js", include_in_schema=False)
-async def serve_sw():
-    if not os.path.exists(SW_PATH):
-        return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
-    return FileResponse(SW_PATH, media_type="application/javascript",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+    return FileResponse(
+        APPJS_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
 async def serve_manifest():
     if not os.path.exists(MANIFEST_PATH):
         return PlainTextResponse(f"Missing {MANIFEST_PATH}", status_code=404)
-    return FileResponse(MANIFEST_PATH, media_type="application/manifest+json",
-                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+    return FileResponse(
+        MANIFEST_PATH,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+@app.get("/service-worker.js", include_in_schema=False)
+async def serve_sw():
+    if not os.path.exists(SW_PATH):
+        return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
+    return FileResponse(
+        SW_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 @app.get("/health")
 def health():
@@ -396,6 +470,7 @@ class LoginIn(BaseModel):
 @app.post("/login")
 def login(body: LoginIn):
     _require_jwt_secret()
+    # If Stripe is down, login can't be verified; keep strict here.
     _require_stripe_ready()
 
     email = (body.email or "").strip().lower()
@@ -405,10 +480,12 @@ def login(body: LoginIn):
     _enforce_allowlist(email)
 
     info = _stripe_check_email_subscription(email)
-    if not info["active"]:
+    if not info.get("active"):
         raise HTTPException(402, "Subscription inactive or not found.")
 
-    resp = JSONResponse({"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]})
+    resp = JSONResponse(
+        {"ok": True, "email": email, "active": True, "status": info.get("status"), "current_period_end": info.get("current_period_end")}
+    )
     _set_auth_cookie(resp, email)
     return resp
 
@@ -444,10 +521,7 @@ def create_portal_session(request: Request, body: PortalIn):
     _enforce_allowlist(email)
 
     cached = _cache_get(email)
-    customer_id = (cached or {}).get("stripe_customer_id")
-    if not customer_id:
-        customer_id = _stripe_find_customer_id_by_email(email)
-
+    customer_id = (cached or {}).get("stripe_customer_id") or _stripe_find_customer_id_by_email(email)
     if not customer_id:
         raise HTTPException(404, "No Stripe customer found for that email yet.")
 
@@ -476,10 +550,39 @@ def billing_success(session_id: str):
         if email:
             _enforce_allowlist(email)
 
+        customer_raw = session.get("customer")
+        customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
+
+        sub_obj = session.get("subscription")
+        sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
+
+        status = None
+        current_period_end = None
+
+        try:
+            if isinstance(sub_id, str) and sub_id:
+                sub = stripe.Subscription.retrieve(sub_id)
+                status = sub.get("status")
+                current_period_end = sub.get("current_period_end")
+            elif isinstance(sub_obj, dict) and sub_obj.get("status"):
+                status = sub_obj.get("status")
+                current_period_end = sub_obj.get("current_period_end")
+        except Exception:
+            pass
+
+        if email and isinstance(customer_id, str) and customer_id:
+            _cache_upsert(
+                email,
+                customer_id,
+                (status or "").lower() if status else None,
+                int(current_period_end) if current_period_end else None,
+            )
+
         resp = RedirectResponse(url="/?billing=success")
         if email:
             _set_auth_cookie(resp, email)
         return resp
+
     except Exception:
         return RedirectResponse(url="/?billing=success_error")
 
@@ -489,6 +592,11 @@ def billing_cancel():
 
 @app.get("/me")
 def me(request: Request):
+    """
+    IMPORTANT CHANGE:
+    - This endpoint should almost NEVER 503.
+    - If Stripe is temporarily down, fall back to cache and return a normal JSON.
+    """
     email = get_current_email(request)
     if not email:
         return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
@@ -499,15 +607,229 @@ def me(request: Request):
     return {
         "logged_in": True,
         "email": email,
-        "active": bool(info["active"]),
-        "status": info["status"],
-        "current_period_end": info["current_period_end"],
+        "active": bool(info.get("active")),
+        "status": info.get("status"),
+        "current_period_end": info.get("current_period_end"),
+        "source": info.get("source"),
     }
 
 @app.post("/logout")
 def logout():
     resp = JSONResponse({"ok": True})
     return _clear_auth_cookie(resp)
+
+# =========================
+# Premium-protected endpoint
+# =========================
+@app.post("/premium/chat")
+def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
+    _require_ai()
+    system_prompt = (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring."
+    )
+    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
+    text = _generate_text_with_retries(full_prompt)
+
+    if not text:
+        text = "I’m here with you. My response service is a little busy right now—please try again in a moment."
+
+    return {"status": "success", "email": email, "message": text}
+
+# =========================
+# Bible Reader (LOCAL DB)
+# =========================
+DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
+
+def _db():
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(status_code=500, detail=f"bible.db not found at {DB_PATH}")
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    return [r["name"] for r in rows]
+
+def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
+    cols = [c.lower() for c in _get_table_columns(con, "books")]
+    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
+    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
+        cols[1] if len(cols) > 1 else cols[0]
+    )
+    key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
+    return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
+
+def _normalize_book_key(book: str) -> str:
+    b = (book or "").strip().lower()
+    b = re.sub(r"\s+", "", b)
+    return b
+
+def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
+    raw = (book or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Missing book")
+
+    if raw.isdigit():
+        return int(raw)
+
+    mapping = _get_books_table_mapping(con)
+    id_col = mapping["id_col"]
+    name_col = mapping["name_col"]
+    key_col = mapping["key_col"]
+    norm = _normalize_book_key(raw)
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    if key_col:
+        row = con.execute(
+            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
+
+@app.get("/bible/health")
+def bible_health():
+    con = _db()
+    try:
+        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        table_names = [t["name"] for t in tables]
+        if "books" not in table_names or "verses" not in table_names:
+            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
+
+        vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
+        needed = {"book_id", "chapter", "verse", "text"}
+        if not needed.issubset(vcols):
+            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
+
+        count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
+        return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
+    finally:
+        con.close()
+
+@app.get("/bible/books")
+def bible_books():
+    con = _db()
+    try:
+        mapping = _get_books_table_mapping(con)
+        id_col = mapping["id_col"]
+        name_col = mapping["name_col"]
+        key_col = mapping["key_col"]
+
+        if key_col:
+            rows = con.execute(
+                f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
+            ).fetchall()
+        else:
+            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
+
+        books = []
+        for r in rows:
+            books.append(
+                {
+                    "id": int(r["id"]),
+                    "name": str(r["name"]),
+                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
+                }
+            )
+
+        return {"books": books}
+    finally:
+        con.close()
+
+@app.get("/bible/chapters")
+def bible_chapters(book: str):
+    con = _db()
+    try:
+        book_id = _resolve_book_id(con, book)
+        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
+        chapters = [int(r["chapter"]) for r in rows]
+        if not chapters:
+            raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
+        return {"book_id": book_id, "chapters": chapters}
+    finally:
+        con.close()
+
+@app.get("/bible/verses")
+def bible_verses(book: str, chapter: int):
+    if chapter < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter")
+    con = _db()
+    try:
+        book_id = _resolve_book_id(con, book)
+        rows = con.execute(
+            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))
+        ).fetchall()
+        verses = [int(r["verse"]) for r in rows]
+        if not verses:
+            raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
+        return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
+    finally:
+        con.close()
+
+@app.get("/bible/passage")
+def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: int = 1, end: Optional[int] = None):
+    if chapter < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter")
+
+    con = _db()
+    try:
+        book_id = _resolve_book_id(con, book)
+
+        mapping = _get_books_table_mapping(con)
+        id_col = mapping["id_col"]
+        name_col = mapping["name_col"]
+        b = con.execute(f"SELECT {name_col} AS name FROM books WHERE {id_col}=? LIMIT 1", (book_id,)).fetchone()
+        book_name = b["name"] if b else str(book)
+
+        if full_chapter:
+            rows = con.execute(
+                "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
+                (book_id, int(chapter)),
+            ).fetchall()
+            if not rows:
+                raise HTTPException(status_code=404, detail="No chapter text")
+            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+            return {"reference": f"{book_name} {chapter}", "text": text}
+
+        if start < 1:
+            raise HTTPException(status_code=400, detail="Invalid start verse")
+        if end is None or end < start:
+            end = start
+
+        rows = con.execute(
+            """
+            SELECT verse, text
+            FROM verses
+            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
+            ORDER BY verse
+            """,
+            (book_id, int(chapter), int(start), int(end)),
+        ).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No passage text returned")
+
+        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+        ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
+        return {"reference": ref, "text": text}
+    finally:
+        con.close()
 
 # =========================
 # Free chat + Devotional + Daily Prayer Starters
@@ -522,7 +844,12 @@ def chat(body: ChatIn):
         "for something technical. Keep answers concise but caring."
     )
     full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
+    text = _generate_text_with_retries(full_prompt)
+
+    # IMPORTANT: return friendly text instead of raising 503 so UI doesn't break
+    if not text:
+        text = "I’m here with you. My response service is a little busy right now—please try again in a moment."
+
     return {"status": "success", "message": text}
 
 @app.post("/devotional")
@@ -598,6 +925,7 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
 
 
