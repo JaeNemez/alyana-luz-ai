@@ -29,7 +29,6 @@ INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
 
 if os.path.isdir(FRONTEND_DIR):
-    # Serves any frontend assets (if you later add images, etc.)
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # --------------------
@@ -37,14 +36,11 @@ if os.path.isdir(FRONTEND_DIR):
 # --------------------
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
 STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "").strip()
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()  # optional now
-APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")  # e.g. https://alyana-luz-ai.onrender.com
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()  # optional
+APP_BASE從_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip()
 
-# Optional: allowlist emails (comma-separated). If empty => allow anyone.
 ALLOWLIST_EMAILS_RAW = os.getenv("ALLOWLIST_EMAILS", "").strip()
-
-# Optional: allow non-HTTPS cookie ONLY for local dev
 DEV_TRUST_LOCAL = os.getenv("DEV_TRUST_LOCAL", "").strip().lower() in ("1", "true", "yes")
 
 if STRIPE_SECRET_KEY:
@@ -73,10 +69,6 @@ def _require_jwt_secret():
 
 
 def _enforce_allowlist(email: str):
-    """
-    If ALLOWLIST_EMAILS is set, only allow those emails.
-    If empty, allow everyone.
-    """
     if not ALLOWLIST_SET:
         return
     if email.lower() not in ALLOWLIST_SET:
@@ -130,10 +122,6 @@ AUTH_COOKIE_NAME = "alyana_auth"
 
 
 def _set_auth_cookie(resp, email: str):
-    """
-    On Render/HTTPS, secure=True is recommended.
-    If you run locally without HTTPS, set DEV_TRUST_LOCAL=true to allow secure=False.
-    """
     token = _make_token(email)
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
@@ -158,7 +146,7 @@ def get_current_email(request: Request) -> Optional[str]:
 
 
 # --------------------
-# OPTIONAL local cache (not required anymore)
+# OPTIONAL local cache
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
 
@@ -194,6 +182,7 @@ _subs_init()
 
 def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str], current_period_end: Optional[int]):
     email = (email or "").strip().lower()
+    customer_id = (customer_id or "").strip() if isinstance(customer_id, str) else None
     if not email:
         return
     now = int(time.time())
@@ -229,29 +218,26 @@ def _cache_get(email: str) -> Optional[dict]:
 
 
 # --------------------
-# Stripe: lookup subscription directly by email (no magic links, no paid auth)
+# Stripe: lookup subscription directly by email
 # --------------------
 def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
-    """
-    Use Stripe search if available; fallback to list.
-    """
     email = (email or "").strip().lower()
     if not email:
         return None
 
     try:
-        # Preferred: search API
         res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
         if res and res.get("data"):
-            return res["data"][0]["id"]
+            cid = res["data"][0].get("id")
+            return cid
     except Exception:
         pass
 
     try:
-        # Fallback: list with email filter (works for many accounts)
         res = stripe.Customer.list(email=email, limit=1)
         if res and res.get("data"):
-            return res["data"][0]["id"]
+            cid = res["data"][0].get("id")
+            return cid
     except Exception:
         pass
 
@@ -259,21 +245,15 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
 
 
 def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional[str], Optional[int]]:
-    """
-    Returns (active, status, current_period_end) based on subscriptions for the customer.
-    """
     if not customer_id:
         return (False, None, None)
 
-    # List subscriptions for customer
     subs = stripe.Subscription.list(customer=customer_id, status="all", limit=10)
     if not subs or not subs.get("data"):
         return (False, None, None)
 
-    # Active states Stripe uses commonly
     ACTIVE_STATUSES = {"active", "trialing"}
 
-    # Find the "best" subscription (active > trialing > past_due > etc.)
     best = None
     best_rank = -1
     for s in subs["data"]:
@@ -300,9 +280,6 @@ def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional
 
 
 def _stripe_check_email_subscription(email: str) -> dict:
-    """
-    Central function used by /login and /me.
-    """
     _require_stripe_ready()
     email = (email or "").strip().lower()
     if not email:
@@ -313,8 +290,6 @@ def _stripe_check_email_subscription(email: str) -> dict:
         return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None}
 
     active, status, cpe = _stripe_get_customer_active_status(customer_id)
-
-    # cache for portal usage
     _cache_upsert(email, customer_id, status, cpe)
 
     return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
@@ -350,10 +325,7 @@ class LangIn(BaseModel):
 
 def _require_ai():
     if not client:
-        raise HTTPException(
-            status_code=503,
-            detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).",
-        )
+        raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
 
 
 def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
@@ -371,10 +343,7 @@ def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
                 continue
 
             if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
-                raise HTTPException(
-                    status_code=429,
-                    detail="Alyana reached the AI limit right now. Please try again later.",
-                )
+                raise HTTPException(status_code=429, detail="Alyana reached the AI limit right now. Please try again later.")
             break
 
     print("Gemini error after retries:", repr(last_error))
@@ -393,23 +362,15 @@ def _norm_lang(lang: Optional[str]) -> str:
 async def serve_frontend():
     if not os.path.exists(INDEX_PATH):
         return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
-    return FileResponse(
-        INDEX_PATH,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
+    return FileResponse(INDEX_PATH, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(
-            f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404
-        )
-    return FileResponse(
-        APPJS_PATH,
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
+        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+    return FileResponse(APPJS_PATH, media_type="application/javascript",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 
 @app.get("/static/app.js", include_in_schema=False)
@@ -449,10 +410,6 @@ class LoginIn(BaseModel):
 
 @app.post("/login")
 def login(body: LoginIn):
-    """
-    Restore a login cookie using the email address used for the subscription.
-    SAFE + CHEAP: we verify subscription by calling Stripe directly (no magic link).
-    """
     _require_jwt_secret()
     _require_stripe_ready()
 
@@ -460,7 +417,6 @@ def login(body: LoginIn):
     if not email:
         raise HTTPException(400, "Missing email.")
 
-    # Optional allowlist
     _enforce_allowlist(email)
 
     info = _stripe_check_email_subscription(email)
@@ -468,13 +424,7 @@ def login(body: LoginIn):
         raise HTTPException(402, "Subscription inactive or not found.")
 
     resp = JSONResponse(
-        {
-            "ok": True,
-            "email": email,
-            "active": True,
-            "status": info["status"],
-            "current_period_end": info["current_period_end"],
-        }
+        {"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]}
     )
     _set_auth_cookie(resp, email)
     return resp
@@ -509,10 +459,8 @@ def create_portal_session(request: Request, body: PortalIn):
     if not email:
         raise HTTPException(400, "Missing email (not logged in).")
 
-    # Ensure allowlist still respected (if enabled)
     _enforce_allowlist(email)
 
-    # Get customer id from cache, else lookup Stripe
     cached = _cache_get(email)
     customer_id = (cached or {}).get("stripe_customer_id")
     if not customer_id:
@@ -522,10 +470,7 @@ def create_portal_session(request: Request, body: PortalIn):
         raise HTTPException(404, "No Stripe customer found for that email yet.")
 
     try:
-        portal = stripe.billing_portal.Session.create(
-            customer=customer_id,
-            return_url=f"{APP_BASE_URL}/",
-        )
+        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{APP_BASE_URL}/")
         return {"url": portal.url}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
@@ -533,19 +478,17 @@ def create_portal_session(request: Request, body: PortalIn):
 
 @app.get("/billing/success", include_in_schema=False)
 def billing_success(session_id: str):
-    """
-    After successful Checkout, user lands here.
-    We verify Checkout Session, then set login cookie.
-    """
     _require_stripe_ready()
     _require_jwt_secret()
 
     try:
         session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
 
+        # Extract email safely
         email = ""
-        if session.get("customer_details") and session["customer_details"].get("email"):
-            email = session["customer_details"]["email"]
+        cd = session.get("customer_details") or {}
+        if isinstance(cd, dict) and cd.get("email"):
+            email = cd["email"]
         elif session.get("customer_email"):
             email = session["customer_email"]
         email = (email or "").strip().lower()
@@ -553,15 +496,20 @@ def billing_success(session_id: str):
         if email:
             _enforce_allowlist(email)
 
-        # If we can see customer/subscription, also cache
-        customer_id = session.get("customer")
+        # IMPORTANT: customer can be string OR dict when expanded
+        customer_raw = session.get("customer")
+        customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
+
+        # subscription can be string OR dict when expanded
         sub_obj = session.get("subscription")
+        sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
 
         status = None
         current_period_end = None
+
         try:
-            if isinstance(sub_obj, str) and sub_obj:
-                sub = stripe.Subscription.retrieve(sub_obj)
+            if isinstance(sub_id, str) and sub_id:
+                sub = stripe.Subscription.retrieve(sub_id)
                 status = sub.get("status")
                 current_period_end = sub.get("current_period_end")
             elif isinstance(sub_obj, dict) and sub_obj.get("status"):
@@ -570,8 +518,9 @@ def billing_success(session_id: str):
         except Exception:
             pass
 
-        if email and customer_id:
-            _cache_upsert(email, customer_id, status, int(current_period_end) if current_period_end else None)
+        if email and isinstance(customer_id, str) and customer_id:
+            _cache_upsert(email, customer_id, (status or "").lower() if status else None,
+                         int(current_period_end) if current_period_end else None)
 
         resp = RedirectResponse(url="/?billing=success")
         if email:
@@ -589,16 +538,10 @@ def billing_cancel():
 
 @app.get("/me")
 def me(request: Request):
-    """
-    Frontend calls this to know:
-    - who is logged in (cookie)
-    - if subscription is active (checked via Stripe)
-    """
     email = get_current_email(request)
     if not email:
         return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
 
-    # Respect allowlist if enabled
     _enforce_allowlist(email)
 
     info = _stripe_check_email_subscription(email)
@@ -743,13 +686,7 @@ def bible_books():
 
         books = []
         for r in rows:
-            books.append(
-                {
-                    "id": int(r["id"]),
-                    "name": str(r["name"]),
-                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
-                }
-            )
+            books.append({"id": int(r["id"]), "name": str(r["name"]), "key": str(r["book_key"]) if "book_key" in r.keys() else None})
 
         return {"books": books}
     finally:
@@ -789,13 +726,7 @@ def bible_verses(book: str, chapter: int):
 
 
 @app.get("/bible/passage")
-def bible_passage(
-    book: str,
-    chapter: int,
-    full_chapter: bool = False,
-    start: int = 1,
-    end: Optional[int] = None,
-):
+def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: int = 1, end: Optional[int] = None):
     if chapter < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter")
 
@@ -935,3 +866,4 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
