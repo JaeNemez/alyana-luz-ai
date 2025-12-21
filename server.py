@@ -21,25 +21,10 @@ load_dotenv()
 app = FastAPI(title="Alyana Luz · Bible AI")
 
 # --------------------
-# Paths (ABSOLUTE) + robust frontend folder detection
+# Paths (ABSOLUTE)
 # --------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Your repo shows: /frontend/frontend/index.html, etc.
-# This auto-detects that, but still works if you later move files to /frontend
-FRONTEND_DIR = None
-CANDIDATES = [
-    os.path.join(BASE_DIR, "frontend", "frontend"),
-    os.path.join(BASE_DIR, "frontend"),
-]
-for c in CANDIDATES:
-    if os.path.isdir(c) and os.path.exists(os.path.join(c, "index.html")):
-        FRONTEND_DIR = c
-        break
-
-if not FRONTEND_DIR:
-    # fallback (still lets health show you what's missing)
-    FRONTEND_DIR = os.path.join(BASE_DIR, "frontend", "frontend")
+FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
@@ -47,11 +32,9 @@ SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
 MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
 ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
 
-# Optional: serve the entire frontend folder under /static (not required but fine)
+# Optional: also serve /static/* for anything else you drop into frontend/
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
-# Also mount icons if present (so /icons/icon-192.png works)
 if os.path.isdir(ICONS_DIR):
     app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 
@@ -60,7 +43,7 @@ if os.path.isdir(ICONS_DIR):
 # --------------------
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
-STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
@@ -78,7 +61,6 @@ if ALLOWLIST_EMAILS_RAW:
         if e:
             ALLOWLIST_SET.add(e)
 
-
 def _require_stripe_ready():
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Missing STRIPE_SECRET_KEY in environment.")
@@ -87,11 +69,9 @@ def _require_stripe_ready():
     if not APP_BASE_URL:
         raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
 
-
 def _require_jwt_secret():
     if not JWT_SECRET or len(JWT_SECRET) < 32:
         raise HTTPException(500, "Missing/weak JWT_SECRET. Set a long random string (32+ chars).")
-
 
 def _enforce_allowlist(email: str):
     if not ALLOWLIST_SET:
@@ -99,23 +79,19 @@ def _enforce_allowlist(email: str):
     if email.lower() not in ALLOWLIST_SET:
         raise HTTPException(403, "This email is not allowed.")
 
-
 # --------------------
 # Signed token cookie helper
 # --------------------
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
-
 def _b64url_decode(s: str) -> bytes:
     pad = "=" * (-len(s) % 4)
     return base64.urlsafe_b64decode((s + pad).encode())
 
-
 def _sign(data: bytes) -> str:
     sig = hmac.new(JWT_SECRET.encode(), data, hashlib.sha256).digest()
     return _b64url(sig)
-
 
 def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     _require_jwt_secret()
@@ -123,7 +99,6 @@ def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     payload = f"{email}|{now + exp_seconds}".encode()
     token = _b64url(payload) + "." + _sign(payload)
     return token
-
 
 def _read_token(token: str) -> Optional[dict]:
     try:
@@ -142,9 +117,7 @@ def _read_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
-
 AUTH_COOKIE_NAME = "alyana_auth"
-
 
 def _set_auth_cookie(resp, email: str):
     token = _make_token(email)
@@ -158,30 +131,25 @@ def _set_auth_cookie(resp, email: str):
         path="/",
     )
 
-
 def _clear_auth_cookie(resp: JSONResponse):
     resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
     return resp
-
 
 def get_current_email(request: Request) -> Optional[str]:
     token = request.cookies.get(AUTH_COOKIE_NAME)
     parsed = _read_token(token) if token else None
     return parsed["email"] if parsed else None
 
-
 # --------------------
 # OPTIONAL local cache
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
-
 
 def _subs_db():
     os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
     con = sqlite3.connect(SUB_DB_PATH)
     con.row_factory = sqlite3.Row
     return con
-
 
 def _subs_init():
     con = _subs_db()
@@ -201,9 +169,7 @@ def _subs_init():
     finally:
         con.close()
 
-
 _subs_init()
-
 
 def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str], current_period_end: Optional[int]):
     email = (email or "").strip().lower()
@@ -229,7 +195,6 @@ def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str],
     finally:
         con.close()
 
-
 def _cache_get(email: str) -> Optional[dict]:
     email = (email or "").strip().lower()
     if not email:
@@ -240,7 +205,6 @@ def _cache_get(email: str) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         con.close()
-
 
 # --------------------
 # Stripe: lookup subscription directly by email
@@ -265,7 +229,6 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
         pass
 
     return None
-
 
 def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional[str], Optional[int]]:
     if not customer_id:
@@ -301,7 +264,6 @@ def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional
     cpe = best.get("current_period_end")
     return (status in ACTIVE_STATUSES, status or None, int(cpe) if cpe else None)
 
-
 def _stripe_check_email_subscription(email: str) -> dict:
     _require_stripe_ready()
 
@@ -318,7 +280,6 @@ def _stripe_check_email_subscription(email: str) -> dict:
 
     return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
 
-
 def require_active_user(request: Request) -> str:
     email = get_current_email(request)
     if not email:
@@ -330,7 +291,6 @@ def require_active_user(request: Request) -> str:
 
     return email
 
-
 # --------------------
 # Gemini (AI)
 # --------------------
@@ -338,19 +298,15 @@ API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-
 class ChatIn(BaseModel):
     prompt: str
-
 
 class LangIn(BaseModel):
     lang: Optional[str] = "en"
 
-
 def _require_ai():
     if not client:
         raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
-
 
 def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     last_error = None
@@ -373,14 +329,12 @@ def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     print("Gemini error after retries:", repr(last_error))
     raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
 
-
 def _norm_lang(lang: Optional[str]) -> str:
     l = (lang or "en").strip().lower()
     return "es" if l.startswith("es") else "en"
 
-
 # =========================
-# Frontend + PWA serving (FIXED to match your repo paths)
+# Frontend serving (ROOT)
 # =========================
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
@@ -388,39 +342,26 @@ async def serve_frontend():
         return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
     return FileResponse(INDEX_PATH, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
-
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside {FRONTEND_DIR}/app.js", status_code=404)
-    return FileResponse(
-        APPJS_PATH,
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
+        return PlainTextResponse(f"Missing {APPJS_PATH}", status_code=404)
+    return FileResponse(APPJS_PATH, media_type="application/javascript",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.get("/service-worker.js", include_in_schema=False)
-async def serve_service_worker():
+async def serve_sw():
     if not os.path.exists(SW_PATH):
         return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
-    return FileResponse(
-        SW_PATH,
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
+    return FileResponse(SW_PATH, media_type="application/javascript",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
 async def serve_manifest():
     if not os.path.exists(MANIFEST_PATH):
         return PlainTextResponse(f"Missing {MANIFEST_PATH}", status_code=404)
-    return FileResponse(
-        MANIFEST_PATH,
-        media_type="application/manifest+json",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
+    return FileResponse(MANIFEST_PATH, media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
 
 @app.get("/health")
 def health():
@@ -440,21 +381,17 @@ def health():
         "allowlist_enabled": bool(ALLOWLIST_SET),
     }
 
-
 # =========================
 # Stripe Subscription Billing
 # =========================
 class CheckoutIn(BaseModel):
     email: Optional[str] = None
 
-
 class PortalIn(BaseModel):
     email: Optional[str] = None
 
-
 class LoginIn(BaseModel):
     email: str
-
 
 @app.post("/login")
 def login(body: LoginIn):
@@ -471,12 +408,9 @@ def login(body: LoginIn):
     if not info["active"]:
         raise HTTPException(402, "Subscription inactive or not found.")
 
-    resp = JSONResponse(
-        {"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]}
-    )
+    resp = JSONResponse({"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]})
     _set_auth_cookie(resp, email)
     return resp
-
 
 @app.post("/stripe/create-checkout-session")
 def create_checkout_session(body: CheckoutIn):
@@ -498,7 +432,6 @@ def create_checkout_session(body: CheckoutIn):
         return {"url": session.url, "id": session.id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
-
 
 @app.post("/stripe/create-portal-session")
 def create_portal_session(request: Request, body: PortalIn):
@@ -524,7 +457,6 @@ def create_portal_session(request: Request, body: PortalIn):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
 
-
 @app.get("/billing/success", include_in_schema=False)
 def billing_success(session_id: str):
     _require_stripe_ready()
@@ -544,47 +476,16 @@ def billing_success(session_id: str):
         if email:
             _enforce_allowlist(email)
 
-        customer_raw = session.get("customer")
-        customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
-
-        sub_obj = session.get("subscription")
-        sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
-
-        status = None
-        current_period_end = None
-
-        try:
-            if isinstance(sub_id, str) and sub_id:
-                sub = stripe.Subscription.retrieve(sub_id)
-                status = sub.get("status")
-                current_period_end = sub.get("current_period_end")
-            elif isinstance(sub_obj, dict) and sub_obj.get("status"):
-                status = sub_obj.get("status")
-                current_period_end = sub_obj.get("current_period_end")
-        except Exception:
-            pass
-
-        if email and isinstance(customer_id, str) and customer_id:
-            _cache_upsert(
-                email,
-                customer_id,
-                (status or "").lower() if status else None,
-                int(current_period_end) if current_period_end else None,
-            )
-
         resp = RedirectResponse(url="/?billing=success")
         if email:
             _set_auth_cookie(resp, email)
         return resp
-
     except Exception:
         return RedirectResponse(url="/?billing=success_error")
-
 
 @app.get("/billing/cancel", include_in_schema=False)
 def billing_cancel():
     return RedirectResponse(url="/?billing=cancel")
-
 
 @app.get("/me")
 def me(request: Request):
@@ -603,233 +504,10 @@ def me(request: Request):
         "current_period_end": info["current_period_end"],
     }
 
-
 @app.post("/logout")
 def logout():
     resp = JSONResponse({"ok": True})
     return _clear_auth_cookie(resp)
-
-
-# =========================
-# Premium-protected endpoint
-# =========================
-@app.post("/premium/chat")
-def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
-    _require_ai()
-    system_prompt = (
-        "You are Alyana Luz, a warm, scripture-focused assistant. "
-        "You pray with the user, suggest Bible passages, and explain verses. "
-        "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
-    )
-    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
-    return {"status": "success", "email": email, "message": text}
-
-
-# =========================
-# Bible Reader (LOCAL DB)
-# =========================
-DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
-
-
-def _db():
-    if not os.path.exists(DB_PATH):
-        raise HTTPException(status_code=500, detail=f"bible.db not found at {DB_PATH}")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    return con
-
-
-def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
-    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
-    return [r["name"] for r in rows]
-
-
-def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
-    cols = [c.lower() for c in _get_table_columns(con, "books")]
-    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
-    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
-        cols[1] if len(cols) > 1 else cols[0]
-    )
-    key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
-    return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
-
-
-def _normalize_book_key(book: str) -> str:
-    b = (book or "").strip().lower()
-    b = re.sub(r"\s+", "", b)
-    return b
-
-
-def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
-    raw = (book or "").strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Missing book")
-
-    if raw.isdigit():
-        return int(raw)
-
-    mapping = _get_books_table_mapping(con)
-    id_col = mapping["id_col"]
-    name_col = mapping["name_col"]
-    key_col = mapping["key_col"]
-    norm = _normalize_book_key(raw)
-
-    row = con.execute(
-        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)
-    ).fetchone()
-    if row:
-        return int(row["id"])
-
-    row = con.execute(
-        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)
-    ).fetchone()
-    if row:
-        return int(row["id"])
-
-    if key_col:
-        row = con.execute(
-            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)
-        ).fetchone()
-        if row:
-            return int(row["id"])
-
-    raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
-
-
-@app.get("/bible/health")
-def bible_health():
-    con = _db()
-    try:
-        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-        table_names = [t["name"] for t in tables]
-        if "books" not in table_names or "verses" not in table_names:
-            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
-
-        vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
-        needed = {"book_id", "chapter", "verse", "text"}
-        if not needed.issubset(vcols):
-            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
-
-        count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
-        return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
-    finally:
-        con.close()
-
-
-@app.get("/bible/books")
-def bible_books():
-    con = _db()
-    try:
-        mapping = _get_books_table_mapping(con)
-        id_col = mapping["id_col"]
-        name_col = mapping["name_col"]
-        key_col = mapping["key_col"]
-
-        if key_col:
-            rows = con.execute(
-                f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
-            ).fetchall()
-        else:
-            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
-
-        books = []
-        for r in rows:
-            books.append(
-                {
-                    "id": int(r["id"]),
-                    "name": str(r["name"]),
-                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
-                }
-            )
-
-        return {"books": books}
-    finally:
-        con.close()
-
-
-@app.get("/bible/chapters")
-def bible_chapters(book: str):
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
-        chapters = [int(r["chapter"]) for r in rows]
-        if not chapters:
-            raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
-        return {"book_id": book_id, "chapters": chapters}
-    finally:
-        con.close()
-
-
-@app.get("/bible/verses")
-def bible_verses(book: str, chapter: int):
-    if chapter < 1:
-        raise HTTPException(status_code=400, detail="Invalid chapter")
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-        rows = con.execute(
-            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))
-        ).fetchall()
-        verses = [int(r["verse"]) for r in rows]
-        if not verses:
-            raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
-        return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
-    finally:
-        con.close()
-
-
-@app.get("/bible/passage")
-def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: int = 1, end: Optional[int] = None):
-    if chapter < 1:
-        raise HTTPException(status_code=400, detail="Invalid chapter")
-
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-
-        mapping = _get_books_table_mapping(con)
-        id_col = mapping["id_col"]
-        name_col = mapping["name_col"]
-        b = con.execute(f"SELECT {name_col} AS name FROM books WHERE {id_col}=? LIMIT 1", (book_id,)).fetchone()
-        book_name = b["name"] if b else str(book)
-
-        if full_chapter:
-            rows = con.execute(
-                "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
-                (book_id, int(chapter)),
-            ).fetchall()
-            if not rows:
-                raise HTTPException(status_code=404, detail="No chapter text")
-            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-            return {"reference": f"{book_name} {chapter}", "text": text}
-
-        if start < 1:
-            raise HTTPException(status_code=400, detail="Invalid start verse")
-        if end is None or end < start:
-            end = start
-
-        rows = con.execute(
-            """
-            SELECT verse, text
-            FROM verses
-            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
-            ORDER BY verse
-            """,
-            (book_id, int(chapter), int(start), int(end)),
-        ).fetchall()
-
-        if not rows:
-            raise HTTPException(status_code=404, detail="No passage text returned")
-
-        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-        ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
-        return {"reference": ref, "text": text}
-    finally:
-        con.close()
-
 
 # =========================
 # Free chat + Devotional + Daily Prayer Starters
@@ -846,7 +524,6 @@ def chat(body: ChatIn):
     full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
     text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "message": text}
-
 
 @app.post("/devotional")
 def devotional(body: Optional[LangIn] = None):
@@ -882,7 +559,6 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
-
 
 @app.post("/daily_prayer")
 def daily_prayer(body: Optional[LangIn] = None):
@@ -922,6 +598,7 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
 
 
