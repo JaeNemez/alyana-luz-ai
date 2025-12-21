@@ -22,11 +22,7 @@ function addBubble(kind, text) {
 
   row.appendChild(bubble);
   chat.appendChild(row);
-
-  // Keep scroll pinned to bottom like messaging apps
-  requestAnimationFrame(() => {
-    chat.scrollTop = chat.scrollHeight;
-  });
+  chat.scrollTop = chat.scrollHeight;
 }
 
 async function api(path, options = {}) {
@@ -46,8 +42,8 @@ async function api(path, options = {}) {
 
   if (!resp.ok) {
     const msg =
-      data && (data.detail || data.error)
-        ? data.detail || data.error
+      (data && (data.detail || data.error))
+        ? (data.detail || data.error)
         : `Request failed (${resp.status})`;
     throw new Error(msg);
   }
@@ -70,14 +66,6 @@ function setupNav() {
     buttons.forEach((b) => {
       if (b.dataset.target === targetId) b.classList.add("active");
     });
-
-    // On mobile, focus the chat composer when switching to chat
-    if (targetId === "chatSection") {
-      const input = $("chatInput");
-      if (input) {
-        setTimeout(() => input.focus(), 50);
-      }
-    }
   }
 
   buttons.forEach((b) => {
@@ -200,9 +188,9 @@ function setupBillingButtons() {
     });
   }
 
-  const restoreBtn = Array.from(document.querySelectorAll("button")).find(
-    (b) => (b.textContent || "").trim().toLowerCase() === "restore access"
-  );
+  // Restore access button
+  const restoreBtn = $("loginBtn") || Array.from(document.querySelectorAll("button"))
+    .find((b) => (b.textContent || "").trim().toLowerCase() === "restore access");
 
   if (restoreBtn) {
     restoreBtn.addEventListener("click", async () => {
@@ -229,9 +217,39 @@ function setupBillingButtons() {
 }
 
 /* -----------------------
+   Chat Saved Panel (mobile slide-over)
+------------------------ */
+function setupSavedChatsPanel() {
+  const btn = $("toggleSavedChatsBtn");
+  const panel = $("savedChatsCard");
+  const backdrop = $("savedChatsBackdrop");
+
+  function close() {
+    if (panel) panel.classList.remove("open");
+    if (backdrop) backdrop.classList.remove("open");
+  }
+
+  function toggle() {
+    if (!panel || !backdrop) return;
+    const isOpen = panel.classList.contains("open");
+    if (isOpen) close();
+    else {
+      panel.classList.add("open");
+      backdrop.classList.add("open");
+    }
+  }
+
+  if (btn) btn.addEventListener("click", toggle);
+  if (backdrop) backdrop.addEventListener("click", close);
+
+  // expose to use elsewhere
+  return { close };
+}
+
+/* -----------------------
    Chat
 ------------------------ */
-function loadSavedChats() {
+function loadSavedChats(onLoaded) {
   const list = $("chatSavedList");
   if (!list) return;
 
@@ -253,6 +271,7 @@ function loadSavedChats() {
       const chat = $("chat");
       chat.innerHTML = "";
       item.messages.forEach((m) => addBubble(m.kind, m.text));
+      if (onLoaded) onLoaded(); // close slide-over on mobile
     });
 
     const del = document.createElement("button");
@@ -262,7 +281,7 @@ function loadSavedChats() {
     del.addEventListener("click", () => {
       saved.splice(idx, 1);
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
-      loadSavedChats();
+      loadSavedChats(onLoaded);
     });
 
     wrap.appendChild(btn);
@@ -271,21 +290,12 @@ function loadSavedChats() {
   });
 }
 
-function autoGrowTextarea(el) {
-  if (!el) return;
-  el.style.height = "auto";
-  // Cap height so it doesn't eat the whole screen
-  const max = 140;
-  const next = Math.min(el.scrollHeight, max);
-  el.style.height = `${next}px`;
-}
-
 function setupChat() {
   const jsStatus = $("jsStatus");
   if (jsStatus) jsStatus.textContent = "JS: running";
 
   const form = $("chatForm");
-  const input = $("chatInput"); // now a textarea in index.html
+  const input = $("chatInput");
   const newBtn = $("chatNewBtn");
   const saveBtn = $("chatSaveBtn");
 
@@ -294,53 +304,30 @@ function setupChat() {
     addBubble("system", "Hi! Try “Read John 1:1”, “Verses about peace”, or “Pray for my family”.");
   }
 
-  if (input) {
-    // Start grown correctly
-    autoGrowTextarea(input);
-
-    // Grow as the user types (mobile-friendly messaging composer)
-    input.addEventListener("input", () => autoGrowTextarea(input));
-
-    // Enter to send, Shift+Enter for newline
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        form?.requestSubmit?.();
-      }
-    });
-  }
+  const panelCtl = setupSavedChatsPanel();
 
   if (newBtn) {
     newBtn.addEventListener("click", () => {
       $("chat").innerHTML = "";
       addBubble("system", "New chat started.");
-      input?.focus?.();
     });
   }
 
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const rows = Array.from(document.querySelectorAll("#chat .bubble-row"));
-      const messages = rows
-        .map((r) => {
-          const kind = r.classList.contains("user")
-            ? "user"
-            : r.classList.contains("bot")
-            ? "bot"
-            : "system";
-          const text = (r.querySelector(".bubble")?.textContent || "").trim();
-          return { kind, text };
-        })
-        .filter((m) => m.text);
+      const messages = rows.map((r) => {
+        const kind = r.classList.contains("user") ? "user" :
+                     r.classList.contains("bot") ? "bot" : "system";
+        const text = (r.querySelector(".bubble")?.textContent || "").trim();
+        return { kind, text };
+      }).filter(m => m.text);
 
-      const title = (messages.find((m) => m.kind === "user")?.text || "Saved chat").slice(0, 40);
+      const title = (messages.find(m => m.kind === "user")?.text || "Saved chat").slice(0, 40);
       const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
-      saved.unshift({
-        title: `${title} — ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
-        messages,
-      });
+      saved.unshift({ title: `${title} — ${new Date().toISOString().slice(0,16).replace("T"," ")}`, messages });
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
-      loadSavedChats();
+      loadSavedChats(() => panelCtl && panelCtl.close && panelCtl.close());
       addBubble("system", "Saved.");
     });
   }
@@ -348,27 +335,22 @@ function setupChat() {
   if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const q = (input?.value || "").trim();
+      const q = (input.value || "").trim();
       if (!q) return;
 
       addBubble("user", q);
-      if (input) {
-        input.value = "";
-        autoGrowTextarea(input);
-      }
+      input.value = "";
 
       try {
         const res = await api("/chat", { method: "POST", body: JSON.stringify({ prompt: q }) });
         addBubble("bot", res.message || "…");
       } catch (err) {
         addBubble("system", `Error: ${err.message}`);
-      } finally {
-        input?.focus?.();
       }
     });
   }
 
-  loadSavedChats();
+  loadSavedChats(() => panelCtl && panelCtl.close && panelCtl.close());
 }
 
 /* -----------------------
@@ -412,10 +394,7 @@ async function setupBible() {
   }
 
   async function loadVerses(bookId, chapter) {
-    const v = await api(
-      `/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`,
-      { method: "GET" }
-    );
+    const v = await api(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`, { method: "GET" });
     verseStartSelect.innerHTML = `<option value="">—</option>`;
     verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
     v.verses.forEach((vv) => {
@@ -470,13 +449,15 @@ async function setupBible() {
 
         const url = fc
           ? `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&full_chapter=true`
-          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(
-              start
-            )}&end=${encodeURIComponent(end)}`;
+          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
 
         const p = await api(url, { method: "GET" });
         const voiceLang = ($("readingVoice")?.value || "en");
         speak(p.text || "", voiceLang);
+
+        // Optional display (if you later wire it in)
+        if ($("passageRef")) $("passageRef").textContent = p.reference || "—";
+        if ($("passageText")) $("passageText").textContent = p.text || "—";
       } catch (e) {
         alert(e.message);
       }
@@ -560,10 +541,7 @@ function setupDevotional() {
       const brief = $("devotionalExplain").textContent || "";
 
       const item = {
-        title:
-          (scripture || "Devotional").slice(0, 50) +
-          " — " +
-          new Date().toISOString().slice(0, 16).replace("T", " "),
+        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0,16).replace("T"," "),
         scripture,
         brief_explanation: brief,
         my_explanation: $("devotionalMyExplanation").value || "",
@@ -658,7 +636,7 @@ function setupPrayer() {
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const item = {
-        title: "Prayer — " + new Date().toISOString().slice(0, 16).replace("T", " "),
+        title: "Prayer — " + new Date().toISOString().slice(0,16).replace("T"," "),
         example_adoration: $("pA").textContent || "",
         example_confession: $("pC").textContent || "",
         example_thanksgiving: $("pT").textContent || "",
@@ -693,5 +671,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   await setupBible();
   await refreshMe();
 });
+
 
 
