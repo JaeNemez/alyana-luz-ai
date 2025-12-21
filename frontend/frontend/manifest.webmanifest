@@ -1,0 +1,13 @@
+{
+  "name": "Alyana Luz · Bible AI",
+  "short_name": "Alyana Luz",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050316",
+  "theme_color": "#050316",
+  "description": "A gentle, encouraging Bible AI for prayer, Scripture, devotionals, and daily prayer.",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
