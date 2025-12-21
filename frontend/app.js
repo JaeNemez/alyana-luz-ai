@@ -31,14 +31,49 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
+
   const text = await resp.text();
   let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = { raw: text };
+  }
+
   if (!resp.ok) {
-    const msg = (data && (data.detail || data.error)) ? (data.detail || data.error) : `Request failed (${resp.status})`;
+    const msg =
+      data && (data.detail || data.error)
+        ? (data.detail || data.error)
+        : `Request failed (${resp.status})`;
     throw new Error(msg);
   }
+
   return data;
+}
+
+/* -----------------------
+   Helpers: email memory + prompts
+------------------------ */
+const EMAIL_KEY = "alyana_email_used_for_stripe";
+
+function getSavedEmail() {
+  return (localStorage.getItem(EMAIL_KEY) || "").trim();
+}
+
+function setSavedEmail(email) {
+  const e = (email || "").trim().toLowerCase();
+  if (!e) return;
+  localStorage.setItem(EMAIL_KEY, e);
+}
+
+function askForEmailIfMissing() {
+  let email = getSavedEmail();
+  if (email) return email;
+
+  email = window.prompt("Enter the email you used on Stripe for Alyana Luz:");
+  email = (email || "").trim().toLowerCase();
+  if (email) setSavedEmail(email);
+  return email;
 }
 
 /* -----------------------
@@ -59,11 +94,7 @@ function setupNav() {
     });
   }
 
-  buttons.forEach((b) => {
-    b.addEventListener("click", () => activate(b.dataset.target));
-  });
-
-  // default
+  buttons.forEach((b) => b.addEventListener("click", () => activate(b.dataset.target)));
   activate("chatSection");
 }
 
@@ -73,7 +104,11 @@ function setupNav() {
 function showAuthHint(text) {
   const el = $("authHint");
   if (!el) return;
-  if (!text) { el.style.display = "none"; el.textContent = ""; return; }
+  if (!text) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
   el.style.display = "block";
   el.textContent = text;
 }
@@ -89,46 +124,59 @@ async function refreshMe() {
   try {
     const me = await api("/me", { method: "GET" });
 
+    // Always allow Manage billing (we can prompt for email if needed)
+    if (manageBillingBtn) manageBillingBtn.disabled = false;
+
     if (!me.logged_in) {
-      setPill(authmPillSafe(authPill), "Account: not logged in", "warn");
-      if (manageBillingBtn) manageBillingBtn.disabled = true;
+      setPill(authPill, "Account: not logged in", "warn");
       if (logoutBtn) logoutBtn.style.display = "none";
-      showAuthHint("To access premium features, subscribe with Support, or restore access using the email you used on Stripe.");
+
+      const savedEmail = getSavedEmail();
+      showAuthHint(
+        savedEmail
+          ? `Not logged in. Saved email: ${savedEmail}. Click “Restore access” to link this browser, or “Manage billing” to open Stripe.`
+          : "Not logged in. Click “Restore access” and enter the email you used on Stripe, or click “Support Alyana Luz” to subscribe."
+      );
       return;
     }
 
-    // logged in:
+    // logged in
+    setSavedEmail(me.email);
+
     if (me.active) {
-      setPill(authmPillSafe(authPill), `Account: ${me.email} (active)`, "ok");
-      if (manageBillingBtn) manageBillingBtn.disabled = false;
+      setPill(authPill, `Account: ${me.email} (active)`, "ok");
       if (logoutBtn) logoutBtn.style.display = "";
       showAuthHint("");
     } else {
-      setPill(authmPillSafe(authPill), `Account: ${me.email} (inactive)`, "bad");
-      if (manageBillingBtn) manageBillingBtn.disabled = false; // allow portal to fix card/cancel/etc
+      setPill(authPill, `Account: ${me.email} (inactive)`, "bad");
       if (logoutBtn) logoutBtn.style.display = "";
-      showAuthHint("Your subscription is inactive. Click Support to subscribe, or Manage billing to fix payment/cancel/renew.");
+      showAuthHint("Your subscription is inactive. Use “Support” to subscribe, or “Manage billing” to fix payment/cancel/renew.");
     }
   } catch (e) {
-    setPill(authmPillSafe(authPill), "Account: error", "bad");
-    if (manageBillingBtn) manageBillingBtn.disabled = true;
+    setPill(authPill, "Account: error", "bad");
     if (logoutBtn) logoutBtn.style.display = "none";
+    // Don’t disable manage billing on error; portal can still work with email prompt
     showAuthHint(e.message);
   }
 }
 
-function authmPillSafe(el){ return el || { textContent:"", classList:{remove(){},add(){}} }; }
-
-function getRestoreEmail() {
-  // Your HTML does not have a dedicated ID for the restore email input.
-  // We find the first input whose placeholder contains "Email used for Stripe"
-  const inputs = document.querySelectorAll('input[type="text"]');
-  for (const i of inputs) {
-    const ph = (i.getAttribute("placeholder") || "").toLowerCase();
-    if (ph.includes("email used for stripe")) return (i.value || "").trim();
-    if (ph.includes("stripe")) return (i.value || "").trim();
+async function restoreAccessFlow() {
+  const email = askForEmailIfMissing();
+  if (!email) {
+    showAuthHint("Please enter the email you used on Stripe.");
+    return;
   }
-  return "";
+
+  showAuthHint("Checking subscription and restoring access…");
+
+  // IMPORTANT: your backend route is /login (not /auth/restore)
+  await api("/login", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+
+  showAuthHint("");
+  await refreshMe();
 }
 
 function setupBillingButtons() {
@@ -136,10 +184,29 @@ function setupBillingButtons() {
   const manageBillingBtn = $("manageBillingBtn");
   const logoutBtn = $("logoutBtn");
 
+  // Add a Restore Access button dynamically if your HTML doesn't include it
+  // (Cheap: no extra HTML changes required.)
+  let restoreBtn = Array.from(document.querySelectorAll("button")).find(
+    (b) => (b.textContent || "").trim().toLowerCase() === "restore access"
+  );
+
+  if (!restoreBtn) {
+    // Put it next to Manage billing
+    const row = document.querySelector(".account-row");
+    if (row) {
+      restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "btn btn-primary";
+      restoreBtn.id = "restoreAccessBtn";
+      restoreBtn.textContent = "Restore access";
+      row.insertBefore(restoreBtn, row.children[1] || null);
+    }
+  }
+
   if (supportBtn) {
     supportBtn.addEventListener("click", async () => {
       try {
-        const email = getRestoreEmail();
+        const email = askForEmailIfMissing(); // optional but helps Stripe link the customer
         const data = await api("/stripe/create-checkout-session", {
           method: "POST",
           body: JSON.stringify({ email: email || null }),
@@ -154,7 +221,8 @@ function setupBillingButtons() {
   if (manageBillingBtn) {
     manageBillingBtn.addEventListener("click", async () => {
       try {
-        const email = getRestoreEmail();
+        // If cookie not present, backend can still use email in body.
+        const email = askForEmailIfMissing();
         const data = await api("/stripe/create-portal-session", {
           method: "POST",
           body: JSON.stringify({ email: email || null }),
@@ -166,6 +234,16 @@ function setupBillingButtons() {
     });
   }
 
+  if (restoreBtn) {
+    restoreBtn.addEventListener("click", async () => {
+      try {
+        await restoreAccessFlow();
+      } catch (e) {
+        showAuthHint(`Restore failed: ${e.message}`);
+      }
+    });
+  }
+
   if (logoutBtn) {
     logoutBtn.addEventListener("click", async () => {
       try {
@@ -173,31 +251,6 @@ function setupBillingButtons() {
         await refreshMe();
       } catch (e) {
         showAuthHint(`Logout error: ${e.message}`);
-      }
-    });
-  }
-
-  // Restore access button: find the button that says "Restore access"
-  const restoreBtn = Array.from(document.querySelectorAll("button"))
-    .find((b) => (b.textContent || "").trim().toLowerCase() === "restore access");
-
-  if (restoreBtn) {
-    restoreBtn.addEventListener("click", async () => {
-      try {
-        const email = getRestoreEmail();
-        if (!email) {
-          showAuthHint("Type the email you used on Stripe, then click Restore access.");
-          return;
-        }
-        showAuthHint("Checking subscription…");
-        await api("/auth/restore", {
-          method: "POST",
-          body: JSON.stringify({ email }),
-        });
-        showAuthHint("");
-        await refreshMe();
-      } catch (e) {
-        showAuthHint(`Restore failed: ${e.message}`);
       }
     });
   }
@@ -255,7 +308,6 @@ function setupChat() {
   const newBtn = $("chatNewBtn");
   const saveBtn = $("chatSaveBtn");
 
-  // initial greeting
   const chat = $("chat");
   if (chat && !chat.children.length) {
     addBubble("system", "Hi! Try “Read John 1:1”, “Verses about peace”, or “Pray for my family”.");
@@ -271,16 +323,20 @@ function setupChat() {
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const rows = Array.from(document.querySelectorAll("#chat .bubble-row"));
-      const messages = rows.map((r) => {
-        const kind = r.classList.contains("user") ? "user" :
-                     r.classList.contains("bot") ? "bot" : "system";
-        const text = (r.querySelector(".bubble")?.textContent || "").trim();
-        return { kind, text };
-      }).filter(m => m.text);
+      const messages = rows
+        .map((r) => {
+          const kind = r.classList.contains("user") ? "user" : r.classList.contains("bot") ? "bot" : "system";
+          const text = (r.querySelector(".bubble")?.textContent || "").trim();
+          return { kind, text };
+        })
+        .filter((m) => m.text);
 
-      const title = (messages.find(m => m.kind === "user")?.text || "Saved chat").slice(0, 40);
+      const title = (messages.find((m) => m.kind === "user")?.text || "Saved chat").slice(0, 40);
       const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
-      saved.unshift({ title: `${title} — ${new Date().toISOString().slice(0,16).replace("T"," ")}`, messages });
+      saved.unshift({
+        title: `${title} — ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+        messages,
+      });
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
       loadSavedChats();
       addBubble("system", "Saved.");
@@ -309,7 +365,7 @@ function setupChat() {
 }
 
 /* -----------------------
-   Bible Reader (minimal wiring)
+   Bible Reader
 ------------------------ */
 async function setupBible() {
   const status = $("bibleDbStatus");
@@ -349,7 +405,10 @@ async function setupBible() {
   }
 
   async function loadVerses(bookId, chapter) {
-    const v = await api(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`, { method: "GET" });
+    const v = await api(
+      `/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`,
+      { method: "GET" }
+    );
     verseStartSelect.innerHTML = `<option value="">—</option>`;
     verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
     v.verses.forEach((vv) => {
@@ -380,7 +439,6 @@ async function setupBible() {
     await loadVerses(bid, ch);
   });
 
-  // Listen button - basic speech synthesis
   const listenBtn = $("listenBible");
   const stopBtn = $("stopBible");
   const fullChapter = $("fullChapter");
@@ -405,10 +463,12 @@ async function setupBible() {
 
         const url = fc
           ? `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&full_chapter=true`
-          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(
+              start
+            )}&end=${encodeURIComponent(end)}`;
 
         const p = await api(url, { method: "GET" });
-        const voiceLang = ($("readingVoice")?.value || "en");
+        const voiceLang = $("readingVoice")?.value || "en";
         speak(p.text || "", voiceLang);
       } catch (e) {
         alert(e.message);
@@ -416,9 +476,7 @@ async function setupBible() {
     });
   }
 
-  if (stopBtn) {
-    stopBtn.addEventListener("click", () => window.speechSynthesis.cancel());
-  }
+  if (stopBtn) stopBtn.addEventListener("click", () => window.speechSynthesis.cancel());
 }
 
 /* -----------------------
@@ -493,7 +551,7 @@ function setupDevotional() {
       const brief = $("devotionalExplain").textContent || "";
 
       const item = {
-        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0, 16).replace("T", " "),
         scripture,
         brief_explanation: brief,
         my_explanation: $("devotionalMyExplanation").value || "",
@@ -588,7 +646,7 @@ function setupPrayer() {
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const item = {
-        title: "Prayer — " + new Date().toISOString().slice(0,16).replace("T"," "),
+        title: "Prayer — " + new Date().toISOString().slice(0, 16).replace("T", " "),
         example_adoration: $("pA").textContent || "",
         example_confession: $("pC").textContent || "",
         example_thanksgiving: $("pT").textContent || "",
@@ -622,7 +680,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   setupPrayer();
   await setupBible();
   await refreshMe();
+
+  // If you just came back from Stripe success, refresh again after a short delay
+  // (sometimes cookies settle after redirect)
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("billing") === "success") {
+    setTimeout(refreshMe, 600);
+  }
 });
-
-
-
