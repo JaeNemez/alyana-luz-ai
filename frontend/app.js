@@ -9,6 +9,14 @@ function setPill(el, text, kind) {
   if (kind) el.classList.add(kind);
 }
 
+function scrollChatToBottom() {
+  const chat = $("chat");
+  if (!chat) return;
+  requestAnimationFrame(() => {
+    chat.scrollTop = chat.scrollHeight;
+  });
+}
+
 function addBubble(kind, text) {
   const chat = $("chat");
   if (!chat) return;
@@ -22,7 +30,8 @@ function addBubble(kind, text) {
 
   row.appendChild(bubble);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+
+  scrollChatToBottom();
 }
 
 async function api(path, options = {}) {
@@ -42,12 +51,26 @@ async function api(path, options = {}) {
 
   if (!resp.ok) {
     const msg =
-      (data && (data.detail || data.error))
-        ? (data.detail || data.error)
-        : `Request failed (${resp.status})`;
+      (data && (data.detail || data.error)) ?
+        (data.detail || data.error) :
+        `Request failed (${resp.status})`;
     throw new Error(msg);
   }
   return data;
+}
+
+/* -----------------------
+   PWA registration
+------------------------ */
+async function setupPWA() {
+  if (!("serviceWorker" in navigator)) return;
+
+  try {
+    await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+  } catch (e) {
+    // Non-fatal. PWA just won't work offline.
+    console.log("SW register failed:", e);
+  }
 }
 
 /* -----------------------
@@ -91,6 +114,9 @@ function showAuthHint(text) {
 }
 
 function getRestoreEmail() {
+  const byId = $("loginEmail");
+  if (byId && byId.value) return byId.value.trim();
+
   const inputs = document.querySelectorAll('input[type="text"], input[type="email"]');
   for (const i of inputs) {
     const ph = (i.getAttribute("placeholder") || "").toLowerCase();
@@ -146,6 +172,7 @@ function setupBillingButtons() {
   const supportBtn = $("supportBtn");
   const manageBillingBtn = $("manageBillingBtn");
   const logoutBtn = $("logoutBtn");
+  const loginBtn = $("loginBtn");
 
   if (supportBtn) {
     supportBtn.addEventListener("click", async () => {
@@ -188,12 +215,8 @@ function setupBillingButtons() {
     });
   }
 
-  // Restore access button
-  const restoreBtn = $("loginBtn") || Array.from(document.querySelectorAll("button"))
-    .find((b) => (b.textContent || "").trim().toLowerCase() === "restore access");
-
-  if (restoreBtn) {
-    restoreBtn.addEventListener("click", async () => {
+  if (loginBtn) {
+    loginBtn.addEventListener("click", async () => {
       try {
         const email = getRestoreEmail();
         if (!email) {
@@ -217,39 +240,9 @@ function setupBillingButtons() {
 }
 
 /* -----------------------
-   Chat Saved Panel (mobile slide-over)
------------------------- */
-function setupSavedChatsPanel() {
-  const btn = $("toggleSavedChatsBtn");
-  const panel = $("savedChatsCard");
-  const backdrop = $("savedChatsBackdrop");
-
-  function close() {
-    if (panel) panel.classList.remove("open");
-    if (backdrop) backdrop.classList.remove("open");
-  }
-
-  function toggle() {
-    if (!panel || !backdrop) return;
-    const isOpen = panel.classList.contains("open");
-    if (isOpen) close();
-    else {
-      panel.classList.add("open");
-      backdrop.classList.add("open");
-    }
-  }
-
-  if (btn) btn.addEventListener("click", toggle);
-  if (backdrop) backdrop.addEventListener("click", close);
-
-  // expose to use elsewhere
-  return { close };
-}
-
-/* -----------------------
    Chat
 ------------------------ */
-function loadSavedChats(onLoaded) {
+function loadSavedChats() {
   const list = $("chatSavedList");
   if (!list) return;
 
@@ -271,7 +264,6 @@ function loadSavedChats(onLoaded) {
       const chat = $("chat");
       chat.innerHTML = "";
       item.messages.forEach((m) => addBubble(m.kind, m.text));
-      if (onLoaded) onLoaded(); // close slide-over on mobile
     });
 
     const del = document.createElement("button");
@@ -281,13 +273,22 @@ function loadSavedChats(onLoaded) {
     del.addEventListener("click", () => {
       saved.splice(idx, 1);
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
-      loadSavedChats(onLoaded);
+      loadSavedChats();
     });
 
     wrap.appendChild(btn);
     wrap.appendChild(del);
     list.appendChild(wrap);
   });
+}
+
+function setupChatComposerAutoGrow(textarea) {
+  const grow = () => {
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 160) + "px";
+  };
+  textarea.addEventListener("input", grow);
+  grow();
 }
 
 function setupChat() {
@@ -304,7 +305,17 @@ function setupChat() {
     addBubble("system", "Hi! Try “Read John 1:1”, “Verses about peace”, or “Pray for my family”.");
   }
 
-  const panelCtl = setupSavedChatsPanel();
+  if (input) {
+    setupChatComposerAutoGrow(input);
+
+    // Enter = send, Shift+Enter = newline
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        form?.requestSubmit();
+      }
+    });
+  }
 
   if (newBtn) {
     newBtn.addEventListener("click", () => {
@@ -327,7 +338,7 @@ function setupChat() {
       const saved = JSON.parse(localStorage.getItem("alyana_saved_chats") || "[]");
       saved.unshift({ title: `${title} — ${new Date().toISOString().slice(0,16).replace("T"," ")}`, messages });
       localStorage.setItem("alyana_saved_chats", JSON.stringify(saved));
-      loadSavedChats(() => panelCtl && panelCtl.close && panelCtl.close());
+      loadSavedChats();
       addBubble("system", "Saved.");
     });
   }
@@ -335,11 +346,16 @@ function setupChat() {
   if (form) {
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const q = (input.value || "").trim();
+      const q = (input?.value || "").trim();
       if (!q) return;
 
       addBubble("user", q);
-      input.value = "";
+
+      if (input) {
+        input.value = "";
+        input.style.height = "auto";
+        input.focus();
+      }
 
       try {
         const res = await api("/chat", { method: "POST", body: JSON.stringify({ prompt: q }) });
@@ -350,327 +366,20 @@ function setupChat() {
     });
   }
 
-  loadSavedChats(() => panelCtl && panelCtl.close && panelCtl.close());
-}
-
-/* -----------------------
-   Bible Reader
------------------------- */
-async function setupBible() {
-  const status = $("bibleDbStatus");
-  try {
-    const h = await api("/bible/health", { method: "GET" });
-    if (status) status.textContent = `OK — ${h.verse_count} verses.`;
-  } catch (e) {
-    if (status) status.textContent = `Bible DB error: ${e.message}`;
-    return;
-  }
-
-  const bookSelect = $("bookSelect");
-  const chapterSelect = $("chapterSelect");
-  const verseStartSelect = $("verseStartSelect");
-  const verseEndSelect = $("verseEndSelect");
-
-  async function loadBooks() {
-    const b = await api("/bible/books", { method: "GET" });
-    bookSelect.innerHTML = "";
-    b.books.forEach((bk) => {
-      const opt = document.createElement("option");
-      opt.value = bk.id;
-      opt.textContent = bk.name;
-      bookSelect.appendChild(opt);
-    });
-  }
-
-  async function loadChapters(bookId) {
-    const c = await api(`/bible/chapters?book=${encodeURIComponent(bookId)}`, { method: "GET" });
-    chapterSelect.innerHTML = `<option value="">—</option>`;
-    c.chapters.forEach((ch) => {
-      const opt = document.createElement("option");
-      opt.value = ch;
-      opt.textContent = String(ch);
-      chapterSelect.appendChild(opt);
-    });
-  }
-
-  async function loadVerses(bookId, chapter) {
-    const v = await api(`/bible/verses?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`, { method: "GET" });
-    verseStartSelect.innerHTML = `<option value="">—</option>`;
-    verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
-    v.verses.forEach((vv) => {
-      const o1 = document.createElement("option");
-      o1.value = vv;
-      o1.textContent = String(vv);
-      verseStartSelect.appendChild(o1);
-
-      const o2 = document.createElement("option");
-      o2.value = vv;
-      o2.textContent = String(vv);
-      verseEndSelect.appendChild(o2);
-    });
-  }
-
-  await loadBooks();
-
-  bookSelect.addEventListener("change", async () => {
-    const bid = bookSelect.value;
-    if (!bid) return;
-    await loadChapters(bid);
-  });
-
-  chapterSelect.addEventListener("change", async () => {
-    const bid = bookSelect.value;
-    const ch = chapterSelect.value;
-    if (!bid || !ch) return;
-    await loadVerses(bid, ch);
-  });
-
-  const listenBtn = $("listenBible");
-  const stopBtn = $("stopBible");
-  const fullChapter = $("fullChapter");
-
-  function speak(text, lang) {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang === "es" ? "es-MX" : "en-US";
-    window.speechSynthesis.speak(u);
-  }
-
-  if (listenBtn) {
-    listenBtn.addEventListener("click", async () => {
-      try {
-        const bid = bookSelect.value;
-        const ch = parseInt(chapterSelect.value || "0", 10);
-        if (!bid || !ch) throw new Error("Pick a book and chapter first.");
-
-        const fc = !!(fullChapter && fullChapter.checked);
-        const start = parseInt(verseStartSelect.value || "1", 10);
-        const end = parseInt(verseEndSelect.value || String(start), 10);
-
-        const url = fc
-          ? `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&full_chapter=true`
-          : `/bible/passage?book=${encodeURIComponent(bid)}&chapter=${encodeURIComponent(ch)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
-
-        const p = await api(url, { method: "GET" });
-        const voiceLang = ($("readingVoice")?.value || "en");
-        speak(p.text || "", voiceLang);
-
-        // Optional display (if you later wire it in)
-        if ($("passageRef")) $("passageRef").textContent = p.reference || "—";
-        if ($("passageText")) $("passageText").textContent = p.text || "—";
-      } catch (e) {
-        alert(e.message);
-      }
-    });
-  }
-
-  if (stopBtn) {
-    stopBtn.addEventListener("click", () => window.speechSynthesis.cancel());
-  }
-}
-
-/* -----------------------
-   Devotional
------------------------- */
-function loadSavedDevotionals() {
-  const list = $("devSavedList");
-  if (!list) return;
-
-  const saved = JSON.parse(localStorage.getItem("alyana_saved_devotionals") || "[]");
-  list.innerHTML = "";
-  if (!saved.length) {
-    list.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
-    return;
-  }
-
-  saved.forEach((item, idx) => {
-    const wrap = document.createElement("div");
-    wrap.className = "block";
-
-    const btn = document.createElement("button");
-    btn.className = "btn btn-ghost";
-    btn.textContent = item.title;
-    btn.addEventListener("click", () => {
-      $("devotionalScripture").textContent = item.scripture || "—";
-      $("devotionalExplain").textContent = item.brief_explanation || "—";
-      $("devotionalMyExplanation").value = item.my_explanation || "";
-      $("devotionalMyApplication").value = item.my_application || "";
-      $("devotionalMyPrayer").value = item.my_prayer || "";
-      $("devotionalReflection").value = item.reflection || "";
-    });
-
-    const del = document.createElement("button");
-    del.className = "btn btn-danger";
-    del.textContent = "Delete";
-    del.style.marginTop = "8px";
-    del.addEventListener("click", () => {
-      saved.splice(idx, 1);
-      localStorage.setItem("alyana_saved_devotionals", JSON.stringify(saved));
-      loadSavedDevotionals();
-    });
-
-    wrap.appendChild(btn);
-    wrap.appendChild(del);
-    list.appendChild(wrap);
-  });
-}
-
-function setupDevotional() {
-  const genBtn = $("devotionalBtn");
-  const saveBtn = $("devSaveBtn");
-
-  if (genBtn) {
-    genBtn.addEventListener("click", async () => {
-      try {
-        const lang = $("devUiLang")?.value || "en";
-        const res = await api("/devotional", { method: "POST", body: JSON.stringify({ lang }) });
-        const raw = res.json || "{}";
-        const obj = JSON.parse(raw);
-
-        $("devotionalScripture").textContent = obj.scripture || "—";
-        $("devotionalExplain").textContent = obj.brief_explanation || "—";
-      } catch (e) {
-        alert(`Devotional error: ${e.message}`);
-      }
-    });
-  }
-
-  if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
-      const scripture = $("devotionalScripture").textContent || "";
-      const brief = $("devotionalExplain").textContent || "";
-
-      const item = {
-        title: (scripture || "Devotional").slice(0, 50) + " — " + new Date().toISOString().slice(0,16).replace("T"," "),
-        scripture,
-        brief_explanation: brief,
-        my_explanation: $("devotionalMyExplanation").value || "",
-        my_application: $("devotionalMyApplication").value || "",
-        my_prayer: $("devotionalMyPrayer").value || "",
-        reflection: $("devotionalReflection").value || "",
-      };
-
-      const saved = JSON.parse(localStorage.getItem("alyana_saved_devotionals") || "[]");
-      saved.unshift(item);
-      localStorage.setItem("alyana_saved_devotionals", JSON.stringify(saved));
-      loadSavedDevotionals();
-      alert("Saved devotional.");
-    });
-  }
-
-  loadSavedDevotionals();
-}
-
-/* -----------------------
-   Daily Prayer
------------------------- */
-function loadSavedPrayers() {
-  const list = $("prSavedList");
-  if (!list) return;
-
-  const saved = JSON.parse(localStorage.getItem("alyana_saved_prayers") || "[]");
-  list.innerHTML = "";
-  if (!saved.length) {
-    list.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
-    return;
-  }
-
-  saved.forEach((item, idx) => {
-    const wrap = document.createElement("div");
-    wrap.className = "block";
-
-    const btn = document.createElement("button");
-    btn.className = "btn btn-ghost";
-    btn.textContent = item.title;
-    btn.addEventListener("click", () => {
-      $("pA").textContent = item.example_adoration || "—";
-      $("pC").textContent = item.example_confession || "—";
-      $("pT").textContent = item.example_thanksgiving || "—";
-      $("pS").textContent = item.example_supplication || "—";
-
-      $("myAdoration").value = item.my_adoration || "";
-      $("myConfession").value = item.my_confession || "";
-      $("myThanksgiving").value = item.my_thanksgiving || "";
-      $("mySupplication").value = item.my_supplication || "";
-      $("prayerNotes").value = item.notes || "";
-    });
-
-    const del = document.createElement("button");
-    del.className = "btn btn-danger";
-    del.textContent = "Delete";
-    del.style.marginTop = "8px";
-    del.addEventListener("click", () => {
-      saved.splice(idx, 1);
-      localStorage.setItem("alyana_saved_prayers", JSON.stringify(saved));
-      loadSavedPrayers();
-    });
-
-    wrap.appendChild(btn);
-    wrap.appendChild(del);
-    list.appendChild(wrap);
-  });
-}
-
-function setupPrayer() {
-  const genBtn = $("prayerBtn");
-  const saveBtn = $("prSaveBtn");
-
-  if (genBtn) {
-    genBtn.addEventListener("click", async () => {
-      try {
-        const lang = $("prUiLang")?.value || "en";
-        const res = await api("/daily_prayer", { method: "POST", body: JSON.stringify({ lang }) });
-        const raw = res.json || "{}";
-        const obj = JSON.parse(raw);
-
-        $("pA").textContent = obj.example_adoration || "—";
-        $("pC").textContent = obj.example_confession || "—";
-        $("pT").textContent = obj.example_thanksgiving || "—";
-        $("pS").textContent = obj.example_supplication || "—";
-      } catch (e) {
-        alert(`Prayer error: ${e.message}`);
-      }
-    });
-  }
-
-  if (saveBtn) {
-    saveBtn.addEventListener("click", () => {
-      const item = {
-        title: "Prayer — " + new Date().toISOString().slice(0,16).replace("T"," "),
-        example_adoration: $("pA").textContent || "",
-        example_confession: $("pC").textContent || "",
-        example_thanksgiving: $("pT").textContent || "",
-        example_supplication: $("pS").textContent || "",
-        my_adoration: $("myAdoration").value || "",
-        my_confession: $("myConfession").value || "",
-        my_thanksgiving: $("myThanksgiving").value || "",
-        my_supplication: $("mySupplication").value || "",
-        notes: $("prayerNotes").value || "",
-      };
-
-      const saved = JSON.parse(localStorage.getItem("alyana_saved_prayers") || "[]");
-      saved.unshift(item);
-      localStorage.setItem("alyana_saved_prayers", JSON.stringify(saved));
-      loadSavedPrayers();
-      alert("Saved prayer.");
-    });
-  }
-
-  loadSavedPrayers();
+  loadSavedChats();
 }
 
 /* -----------------------
    Boot
 ------------------------ */
 window.addEventListener("DOMContentLoaded", async () => {
+  await setupPWA();
   setupNav();
   setupBillingButtons();
   setupChat();
-  setupDevotional();
-  setupPrayer();
-  await setupBible();
   await refreshMe();
 });
+
 
 
 
