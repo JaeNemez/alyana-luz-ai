@@ -21,16 +21,39 @@ load_dotenv()
 app = FastAPI(title="Alyana Luz · Bible AI")
 
 # --------------------
-# Paths (ABSOLUTE)
+# Paths (ABSOLUTE) + robust frontend folder detection
 # --------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
+# Your repo shows: /frontend/frontend/index.html, etc.
+# This auto-detects that, but still works if you later move files to /frontend
+FRONTEND_DIR = None
+CANDIDATES = [
+    os.path.join(BASE_DIR, "frontend", "frontend"),
+    os.path.join(BASE_DIR, "frontend"),
+]
+for c in CANDIDATES:
+    if os.path.isdir(c) and os.path.exists(os.path.join(c, "index.html")):
+        FRONTEND_DIR = c
+        break
+
+if not FRONTEND_DIR:
+    # fallback (still lets health show you what's missing)
+    FRONTEND_DIR = os.path.join(BASE_DIR, "frontend", "frontend")
+
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
+SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
+MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
+ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
 
-# Serve frontend files (if present)
+# Optional: serve the entire frontend folder under /static (not required but fine)
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+# Also mount icons if present (so /icons/icon-192.png works)
+if os.path.isdir(ICONS_DIR):
+    app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 
 # --------------------
 # ENV
@@ -39,9 +62,7 @@ STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
 
-# IMPORTANT: fixed variable name (was APP_BASE從_URL)
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
-
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
 
 ALLOWLIST_EMAILS_RAW = (os.getenv("ALLOWLIST_EMAILS") or "").strip()
@@ -127,8 +148,6 @@ AUTH_COOKIE_NAME = "alyana_auth"
 
 def _set_auth_cookie(resp, email: str):
     token = _make_token(email)
-    # On Render you are HTTPS, so secure should be True.
-    # If you run locally without HTTPS, you can set DEV_TRUST_LOCAL=true
     resp.set_cookie(
         key=AUTH_COOKIE_NAME,
         value=token,
@@ -361,7 +380,7 @@ def _norm_lang(lang: Optional[str]) -> str:
 
 
 # =========================
-# Frontend serving
+# Frontend + PWA serving (FIXED to match your repo paths)
 # =========================
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
@@ -373,7 +392,7 @@ async def serve_frontend():
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
     if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside {FRONTEND_DIR}/app.js", status_code=404)
     return FileResponse(
         APPJS_PATH,
         media_type="application/javascript",
@@ -381,19 +400,39 @@ async def serve_app_js_root():
     )
 
 
-@app.get("/static/app.js", include_in_schema=False)
-async def serve_app_js_static():
-    return await serve_app_js_root()
+@app.get("/service-worker.js", include_in_schema=False)
+async def serve_service_worker():
+    if not os.path.exists(SW_PATH):
+        return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
+    return FileResponse(
+        SW_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def serve_manifest():
+    if not os.path.exists(MANIFEST_PATH):
+        return PlainTextResponse(f"Missing {MANIFEST_PATH}", status_code=404)
+    return FileResponse(
+        MANIFEST_PATH,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @app.get("/health")
 def health():
-    # Health should NEVER throw NameError now
     return {
         "status": "ok",
         "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
+        "frontend_dir": FRONTEND_DIR,
         "index_exists": os.path.exists(INDEX_PATH),
         "appjs_exists": os.path.exists(APPJS_PATH),
+        "sw_exists": os.path.exists(SW_PATH),
+        "manifest_exists": os.path.exists(MANIFEST_PATH),
+        "icons_dir_exists": os.path.isdir(ICONS_DIR),
         "ai_configured": bool(API_KEY),
         "model": MODEL_NAME,
         "stripe_configured": bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL),
@@ -883,5 +922,6 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
 
