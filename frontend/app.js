@@ -1,935 +1,382 @@
-import os
-import re
-import time
-import hmac
-import hashlib
-import base64
-import sqlite3
-from typing import Optional, Dict, List, Tuple
-
-from fastapi import FastAPI, HTTPException, Request, Depends
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
-
-from dotenv import load_dotenv
-import stripe
-from google import genai
-
-load_dotenv()
-
-app = FastAPI(title="Alyana Luz · Bible AI")
-
-# --------------------
-# Paths (ABSOLUTE)
-# --------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
-APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
-
-# Serve frontend files (if present)
-if os.path.isdir(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
-# --------------------
-# ENV
-# --------------------
-STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
-STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
-STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
-
-APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
-JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
-
-ALLOWLIST_EMAILS_RAW = (os.getenv("ALLOWLIST_EMAILS") or "").strip()
-DEV_TRUST_LOCAL = (os.getenv("DEV_TRUST_LOCAL") or "").strip().lower() in ("1", "true", "yes")
-
-if STRIPE_SECRET_KEY:
-    stripe.api_key = STRIPE_SECRET_KEY
-
-ALLOWLIST_SET = set()
-if ALLOWLIST_EMAILS_RAW:
-    for e in ALLOWLIST_EMAILS_RAW.split(","):
-        e = (e or "").strip().lower()
-        if e:
-            ALLOWLIST_SET.add(e)
-
-
-def _require_stripe_ready():
-    if not STRIPE_SECRET_KEY:
-        raise HTTPException(500, "Missing STRIPE_SECRET_KEY in environment.")
-    if not STRIPE_PRICE_ID:
-        raise HTTPException(500, "Missing STRIPE_PRICE_ID in environment.")
-    if not APP_BASE_URL:
-        raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
-
-
-def _require_jwt_secret():
-    if not JWT_SECRET or len(JWT_SECRET) < 32:
-        raise HTTPException(500, "Missing/weak JWT_SECRET. Set a long random string (32+ chars).")
-
-
-def _enforce_allowlist(email: str):
-    if not ALLOWLIST_SET:
-        return
-    if email.lower() not in ALLOWLIST_SET:
-        raise HTTPException(403, "This email is not allowed.")
-
-
-# --------------------
-# Signed token cookie helper
-# --------------------
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode().rstrip("=")
-
-
-def _b64url_decode(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode())
-
-
-def _sign(data: bytes) -> str:
-    sig = hmac.new(JWT_SECRET.encode(), data, hashlib.sha256).digest()
-    return _b64url(sig)
-
-
-def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
-    _require_jwt_secret()
-    now = int(time.time())
-    payload = f"{email}|{now + exp_seconds}".encode()
-    token = _b64url(payload) + "." + _sign(payload)
-    return token
-
-
-def _read_token(token: str) -> Optional[dict]:
-    try:
-        _require_jwt_secret()
-        if not token or "." not in token:
-            return None
-        p, s = token.split(".", 1)
-        payload = _b64url_decode(p)
-        expected = _sign(payload)
-        if not hmac.compare_digest(s, expected):
-            return None
-        email, exp = payload.decode().split("|", 1)
-        if int(exp) < int(time.time()):
-            return None
-        return {"email": email}
-    except Exception:
-        return None
-
-
-AUTH_COOKIE_NAME = "alyana_auth"
-
-
-def _set_auth_cookie(resp, email: str):
-    token = _make_token(email)
-    resp.set_cookie(
-        key=AUTH_COOKIE_NAME,
-        value=token,
-        httponly=True,
-        secure=(False if DEV_TRUST_LOCAL else True),
-        samesite="lax",
-        max_age=60 * 60 * 24 * 7,
-        path="/",
-    )
-
-
-def _clear_auth_cookie(resp: JSONResponse):
-    resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
-    return resp
-
-
-def get_current_email(request: Request) -> Optional[str]:
-    token = request.cookies.get(AUTH_COOKIE_NAME)
-    parsed = _read_token(token) if token else None
-    return parsed["email"] if parsed else None
-
-
-# --------------------
-# OPTIONAL local cache
-# --------------------
-SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
-
-
-def _subs_db():
-    os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
-    con = sqlite3.connect(SUB_DB_PATH)
-    con.row_factory = sqlite3.Row
-    return con
-
-
-def _subs_init():
-    con = _subs_db()
-    try:
-        con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS subs_cache (
-                email TEXT PRIMARY KEY,
-                stripe_customer_id TEXT,
-                status TEXT,
-                current_period_end INTEGER,
-                updated_at INTEGER
-            )
-            """
-        )
-        con.commit()
-    finally:
-        con.close()
-
-
-_subs_init()
-
-
-def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str], current_period_end: Optional[int]):
-    email = (email or "").strip().lower()
-    customer_id = (customer_id or "").strip() if isinstance(customer_id, str) else None
-    if not email:
-        return
-    now = int(time.time())
-    con = _subs_db()
-    try:
-        con.execute(
-            """
-            INSERT INTO subs_cache (email, stripe_customer_id, status, current_period_end, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(email) DO UPDATE SET
-                stripe_customer_id=excluded.stripe_customer_id,
-                status=excluded.status,
-                current_period_end=excluded.current_period_end,
-                updated_at=excluded.updated_at
-            """,
-            (email, customer_id, status, current_period_end, now),
-        )
-        con.commit()
-    finally:
-        con.close()
-
-
-def _cache_get(email: str) -> Optional[dict]:
-    email = (email or "").strip().lower()
-    if not email:
-        return None
-    con = _subs_db()
-    try:
-        row = con.execute("SELECT * FROM subs_cache WHERE email=?", (email,)).fetchone()
-        return dict(row) if row else None
-    finally:
-        con.close()
-
-
-# --------------------
-# Stripe: lookup subscription directly by email
-# --------------------
-def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
-    email = (email or "").strip().lower()
-    if not email:
-        return None
-
-    try:
-        res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
-        if res and res.get("data"):
-            return res["data"][0].get("id")
-    except Exception:
-        pass
-
-    try:
-        res = stripe.Customer.list(email=email, limit=1)
-        if res and res.get("data"):
-            return res["data"][0].get("id")
-    except Exception:
-        pass
-
-    return None
-
-
-def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional[str], Optional[int]]:
-    if not customer_id:
-        return (False, None, None)
-
-    subs = stripe.Subscription.list(customer=customer_id, status="all", limit=10)
-    if not subs or not subs.get("data"):
-        return (False, None, None)
-
-    ACTIVE_STATUSES = {"active", "trialing"}
-
-    best = None
-    best_rank = -1
-    for s in subs["data"]:
-        st = (s.get("status") or "").lower()
-        rank = 0
-        if st == "active":
-            rank = 4
-        elif st == "trialing":
-            rank = 3
-        elif st == "past_due":
-            rank = 2
-        elif st == "incomplete":
-            rank = 1
-        if rank > best_rank:
-            best_rank = rank
-            best = s
-
-    if not best:
-        return (False, None, None)
-
-    status = (best.get("status") or "").lower()
-    cpe = best.get("current_period_end")
-    return (status in ACTIVE_STATUSES, status or None, int(cpe) if cpe else None)
-
-
-def _stripe_check_email_subscription(email: str) -> dict:
-    _require_stripe_ready()
-
-    email = (email or "").strip().lower()
-    if not email:
-        return {"email": None, "customer_id": None, "active": False, "status": None, "current_period_end": None}
-
-    customer_id = _stripe_find_customer_id_by_email(email)
-    if not customer_id:
-        return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None}
-
-    active, status, cpe = _stripe_get_customer_active_status(customer_id)
-    _cache_upsert(email, customer_id, status, cpe)
-
-    return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
-
-
-def require_active_user(request: Request) -> str:
-    email = get_current_email(request)
-    if not email:
-        raise HTTPException(401, "Not logged in.")
-
-    info = _stripe_check_email_subscription(email)
-    if not info["active"]:
-        raise HTTPException(402, "Subscription inactive. Please subscribe.")
-
-    return email
-
-
-# --------------------
-# Gemini (AI)
-# --------------------
-API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-client = genai.Client(api_key=API_KEY) if API_KEY else None
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
-
-class ChatMsg(BaseModel):
-    role: str  # "user" or "assistant"
-    content: str
-
-
-class ChatIn(BaseModel):
-    prompt: str
-    lang: Optional[str] = "auto"
-    history: Optional[List[ChatMsg]] = None
-
-
-class LangIn(BaseModel):
-    lang: Optional[str] = "en"
-
-
-def _require_ai():
-    if not client:
-        raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
-
-
-def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
-    last_error = None
-    for attempt in range(tries):
-        try:
-            resp = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
-            return resp.text or ""
-        except Exception as e:
-            last_error = e
-            msg = repr(e)
-
-            if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
-                time.sleep(1 + attempt)
-                continue
-
-            if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
-                raise HTTPException(status_code=429, detail="Alyana reached the AI limit right now. Please try again later.")
-            break
-
-    print("Gemini error after retries:", repr(last_error))
-    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
-
-
-def _norm_lang(lang: Optional[str]) -> str:
-    l = (lang or "en").strip().lower()
-    if l == "auto":
-        return "auto"
-    return "es" if l.startswith("es") else "en"
-
-
-def _build_chat_prompt(user_prompt: str, history: Optional[List[ChatMsg]], lang: str) -> str:
-    system_prompt_en = (
-        "You are Alyana Luz, a warm, scripture-focused assistant. "
-        "You pray with the user, suggest Bible passages, and explain verses. "
-        "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
-    )
-
-    system_prompt_es = (
-        "Eres Alyana Luz, una asistente cálida y enfocada en la Biblia. "
-        "Oras con el usuario, sugieres pasajes bíblicos y explicas versículos. "
-        "Responde con texto natural (sin JSON ni código) a menos que el usuario "
-        "pida algo técnico. Mantén las respuestas concisas y amables."
-    )
-
-    use_lang = _norm_lang(lang)
-
-    # If auto, we still use English system prompt, and the model can respond based on user language.
-    system_prompt = system_prompt_es if use_lang == "es" else system_prompt_en
-
-    # Clamp history
-    safe_history: List[ChatMsg] = []
-    if history:
-        # keep only last 24 to avoid huge prompts
-        safe_history = history[-24:]
-
-    lines = []
-    lines.append(system_prompt)
-    lines.append("")
-    lines.append("Conversation so far:")
-
-    for m in safe_history:
-        r = (m.role or "").strip().lower()
-        c = (m.content or "").strip()
-        if not c:
-            continue
-        if r not in ("user", "assistant"):
-            continue
-        label = "User" if r == "user" else "Alyana"
-        # Basic safety clamp per message
-        if len(c) > 1200:
-            c = c[:1200] + "…"
-        lines.append(f"{label}: {c}")
-
-    lines.append("")
-    lines.append(f"User: {user_prompt.strip()}")
-    lines.append("Alyana:")
-
-    return "\n".join(lines)
-
-
-# =========================
-# Frontend serving
-# =========================
-@app.get("/", include_in_schema=False)
-async def serve_frontend():
-    if not os.path.exists(INDEX_PATH):
-        return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
-    return FileResponse(INDEX_PATH, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
-
-
-@app.get("/app.js", include_in_schema=False)
-async def serve_app_js_root():
-    if not os.path.exists(APPJS_PATH):
-        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
-    return FileResponse(
-        APPJS_PATH,
-        media_type="application/javascript",
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
-
-@app.get("/static/app.js", include_in_schema=False)
-async def serve_app_js_static():
-    return await serve_app_js_root()
-
-
-@app.get("/health")
-def health():
-    return {
-        "status": "ok",
-        "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
-        "frontend_dir": FRONTEND_DIR,
-        "index_exists": os.path.exists(INDEX_PATH),
-        "appjs_exists": os.path.exists(APPJS_PATH),
-        "sw_exists": os.path.exists(os.path.join(FRONTEND_DIR, "service-worker.js")),
-        "manifest_exists": os.path.exists(os.path.join(FRONTEND_DIR, "manifest.webmanifest")),
-        "icons_dir_exists": os.path.isdir(os.path.join(FRONTEND_DIR, "icons")),
-        "ai_configured": bool(API_KEY),
-        "model": MODEL_NAME,
-        "stripe_configured": bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL),
-        "jwt_configured": bool(JWT_SECRET and len(JWT_SECRET) >= 32),
-        "allowlist_enabled": bool(ALLOWLIST_SET),
+/* Alyana Luz · Bible AI
+   - WhatsApp/iMessage style chat bubbles
+   - Uses your existing backend endpoints:
+     POST /chat {prompt}
+     POST /devotional {lang}
+     POST /daily_prayer {lang}
+     GET  /bible/books
+     GET  /bible/chapters?book=...
+     GET  /bible/passage?book=...&chapter=...&full_chapter=true OR start/end
+     GET  /me
+     POST /stripe/create-checkout-session
+     POST /stripe/create-portal-session
+*/
+
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  chat: [],
+  activeTab: "chat",
+  account: { logged_in: false, active: false, email: null },
+};
+
+const LS_KEY = "alyana_saved_chats_v1";
+
+function nowTime() {
+  const d = new Date();
+  return d.toLocaleString();
+}
+
+function setStatus(msg, isError=false) {
+  const el = $("chatStatus");
+  el.textContent = msg || "";
+  el.className = "small " + (isError ? "danger" : "");
+}
+
+function addMsg(role, text) {
+  state.chat.push({ role, text, ts: Date.now() });
+  renderChat();
+}
+
+function renderChat() {
+  const wrap = $("messages");
+  wrap.innerHTML = "";
+  for (const m of state.chat) {
+    const row = document.createElement("div");
+    row.className = "msg-row " + (m.role === "me" ? "me" : "bot");
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = m.text;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = (m.role === "me" ? "You" : "Alyana") + " · " + new Date(m.ts).toLocaleTimeString();
+
+    const box = document.createElement("div");
+    box.appendChild(bubble);
+    box.appendChild(meta);
+
+    row.appendChild(box);
+    wrap.appendChild(row);
+  }
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function getSaved() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setSaved(items) {
+  localStorage.setItem(LS_KEY, JSON.stringify(items));
+  renderSaved();
+}
+
+function renderSaved() {
+  const list = $("savedList");
+  const items = getSaved();
+  list.innerHTML = "";
+
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "No saved chats yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "saved-item";
+
+    const left = document.createElement("div");
+    left.innerHTML = `<div class="name">${escapeHtml(it.name)}</div><div class="small">${escapeHtml(it.when)}</div>`;
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+
+    const loadBtn = document.createElement("button");
+    loadBtn.className = "btn";
+    loadBtn.textContent = "Load";
+    loadBtn.onclick = () => {
+      state.chat = Array.isArray(it.chat) ? it.chat : [];
+      renderChat();
+      setStatus(`Loaded "${it.name}"`);
+    };
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn";
+    delBtn.textContent = "Delete";
+    delBtn.onclick = () => {
+      const next = getSaved().filter((x) => x.id !== it.id);
+      setSaved(next);
+    };
+
+    actions.appendChild(loadBtn);
+    actions.appendChild(delBtn);
+
+    row.appendChild(left);
+    row.appendChild(actions);
+
+    list.appendChild(row);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function switchTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+
+  $("view-chat").style.display = tab === "chat" ? "" : "none";
+  $("view-bible").style.display = tab === "bible" ? "" : "none";
+  $("view-devotional").style.display = tab === "devotional" ? "" : "none";
+  $("view-prayer").style.display = tab === "prayer" ? "" : "none";
+}
+
+async function api(url, opts={}) {
+  const res = await fetch(url, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    ...opts,
+  });
+  const ct = res.headers.get("content-type") || "";
+  let data;
+  if (ct.includes("application/json")) data = await res.json();
+  else data = await res.text();
+  if (!res.ok) {
+    const detail = (data && data.detail) ? data.detail : (typeof data === "string" ? data : JSON.stringify(data));
+    throw new Error(`${res.status} ${detail}`);
+  }
+  return data;
+}
+
+async function refreshAccount() {
+  try {
+    const me = await api("/me", { method: "GET", headers: {} });
+    state.account = me;
+    if (me.logged_in && me.active) {
+      $("accountPill").textContent = `Account: active (${me.email})`;
+      $("accountPill").className = "pill";
+    } else if (me.logged_in && !me.active) {
+      $("accountPill").textContent = `Account: inactive (${me.email || "unknown"})`;
+      $("accountPill").className = "pill";
+    } else {
+      $("accountPill").textContent = "Account: not logged in";
+      $("accountPill").className = "pill";
     }
-
-
-# =========================
-# Stripe Subscription Billing
-# =========================
-class CheckoutIn(BaseModel):
-    email: Optional[str] = None
-
-
-class PortalIn(BaseModel):
-    email: Optional[str] = None
-
-
-class LoginIn(BaseModel):
-    email: str
-
-
-@app.post("/login")
-def login(body: LoginIn):
-    _require_jwt_secret()
-    _require_stripe_ready()
-
-    email = (body.email or "").strip().lower()
-    if not email:
-        raise HTTPException(400, "Missing email.")
-
-    _enforce_allowlist(email)
-
-    info = _stripe_check_email_subscription(email)
-    if not info["active"]:
-        raise HTTPException(402, "Subscription inactive or not found.")
-
-    resp = JSONResponse(
-        {"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]}
-    )
-    _set_auth_cookie(resp, email)
-    return resp
-
-
-@app.post("/stripe/create-checkout-session")
-def create_checkout_session(body: CheckoutIn):
-    _require_stripe_ready()
-
-    email = (body.email or "").strip().lower() if body else ""
-    if email:
-        _enforce_allowlist(email)
-
-    try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
-            success_url=f"{APP_BASE_URL}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{APP_BASE_URL}/billing/cancel",
-            customer_email=email if email else None,
-            allow_promotion_codes=True,
-        )
-        return {"url": session.url, "id": session.id}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
-
-
-@app.post("/stripe/create-portal-session")
-def create_portal_session(request: Request, body: PortalIn):
-    _require_stripe_ready()
-
-    email = get_current_email(request) or ((body.email or "").strip().lower() if body else "")
-    if not email:
-        raise HTTPException(400, "Missing email (not logged in).")
-
-    _enforce_allowlist(email)
-
-    cached = _cache_get(email)
-    customer_id = (cached or {}).get("stripe_customer_id")
-    if not customer_id:
-        customer_id = _stripe_find_customer_id_by_email(email)
-
-    if not customer_id:
-        raise HTTPException(404, "No Stripe customer found for that email yet.")
-
-    try:
-        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{APP_BASE_URL}/")
-        return {"url": portal.url}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
-
-
-@app.get("/billing/success", include_in_schema=False)
-def billing_success(session_id: str):
-    _require_stripe_ready()
-    _require_jwt_secret()
-
-    try:
-        session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
-
-        email = ""
-        cd = session.get("customer_details") or {}
-        if isinstance(cd, dict) and cd.get("email"):
-            email = cd["email"]
-        elif session.get("customer_email"):
-            email = session["customer_email"]
-        email = (email or "").strip().lower()
-
-        if email:
-            _enforce_allowlist(email)
-
-        customer_raw = session.get("customer")
-        customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
-
-        sub_obj = session.get("subscription")
-        sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
-
-        status = None
-        current_period_end = None
-
-        try:
-            if isinstance(sub_id, str) and sub_id:
-                sub = stripe.Subscription.retrieve(sub_id)
-                status = sub.get("status")
-                current_period_end = sub.get("current_period_end")
-            elif isinstance(sub_obj, dict) and sub_obj.get("status"):
-                status = sub_obj.get("status")
-                current_period_end = sub_obj.get("current_period_end")
-        except Exception:
-            pass
-
-        if email and isinstance(customer_id, str) and customer_id:
-            _cache_upsert(
-                email,
-                customer_id,
-                (status or "").lower() if status else None,
-                int(current_period_end) if current_period_end else None,
-            )
-
-        resp = RedirectResponse(url="/?billing=success")
-        if email:
-            _set_auth_cookie(resp, email)
-        return resp
-
-    except Exception:
-        return RedirectResponse(url="/?billing=success_error")
-
-
-@app.get("/billing/cancel", include_in_schema=False)
-def billing_cancel():
-    return RedirectResponse(url="/?billing=cancel")
-
-
-@app.get("/me")
-def me(request: Request):
-    email = get_current_email(request)
-    if not email:
-        return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
-
-    _enforce_allowlist(email)
-
-    info = _stripe_check_email_subscription(email)
-    return {
-        "logged_in": True,
-        "email": email,
-        "active": bool(info["active"]),
-        "status": info["status"],
-        "current_period_end": info["current_period_end"],
-    }
-
-
-@app.post("/logout")
-def logout():
-    resp = JSONResponse({"ok": True})
-    return _clear_auth_cookie(resp)
-
-
-# =========================
-# Premium-protected endpoint
-# =========================
-@app.post("/premium/chat")
-def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
-    _require_ai()
-    full_prompt = _build_chat_prompt(body.prompt, body.history, body.lang or "auto")
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
-    return {"status": "success", "email": email, "message": text}
-
-
-# =========================
-# Bible Reader (LOCAL DB)
-# =========================
-DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
-
-
-def _db():
-    if not os.path.exists(DB_PATH):
-        raise HTTPException(status_code=500, detail=f"bible.db not found at {DB_PATH}")
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    return con
-
-
-def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
-    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
-    return [r["name"] for r in rows]
-
-
-def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
-    cols = [c.lower() for c in _get_table_columns(con, "books")]
-    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
-    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
-        cols[1] if len(cols) > 1 else cols[0]
-    )
-    key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
-    return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
-
-
-def _normalize_book_key(book: str) -> str:
-    b = (book or "").strip().lower()
-    b = re.sub(r"\s+", "", b)
-    return b
-
-
-def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
-    raw = (book or "").strip()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Missing book")
-
-    if raw.isdigit():
-        return int(raw)
-
-    mapping = _get_books_table_mapping(con)
-    id_col = mapping["id_col"]
-    name_col = mapping["name_col"]
-    key_col = mapping["key_col"]
-    norm = _normalize_book_key(raw)
-
-    row = con.execute(
-        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)
-    ).fetchone()
-    if row:
-        return int(row["id"])
-
-    row = con.execute(
-        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)
-    ).fetchone()
-    if row:
-        return int(row["id"])
-
-    if key_col:
-        row = con.execute(
-            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)
-        ).fetchone()
-        if row:
-            return int(row["id"])
-
-    raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
-
-
-@app.get("/bible/health")
-def bible_health():
-    con = _db()
-    try:
-        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
-        table_names = [t["name"] for t in tables]
-        if "books" not in table_names or "verses" not in table_names:
-            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
-
-        vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
-        needed = {"book_id", "chapter", "verse", "text"}
-        if not needed.issubset(vcols):
-            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
-
-        count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
-        return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
-    finally:
-        con.close()
-
-
-@app.get("/bible/books")
-def bible_books():
-    con = _db()
-    try:
-        mapping = _get_books_table_mapping(con)
-        id_col = mapping["id_col"]
-        name_col = mapping["name_col"]
-        key_col = mapping["key_col"]
-
-        if key_col:
-            rows = con.execute(
-                f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
-            ).fetchall()
-        else:
-            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
-
-        books = []
-        for r in rows:
-            books.append(
-                {
-                    "id": int(r["id"]),
-                    "name": str(r["name"]),
-                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
-                }
-            )
-
-        return {"books": books}
-    finally:
-        con.close()
-
-
-@app.get("/bible/chapters")
-def bible_chapters(book: str):
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
-        chapters = [int(r["chapter"]) for r in rows]
-        if not chapters:
-            raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
-        return {"book_id": book_id, "chapters": chapters}
-    finally:
-        con.close()
-
-
-@app.get("/bible/verses")
-def bible_verses(book: str, chapter: int):
-    if chapter < 1:
-        raise HTTPException(status_code=400, detail="Invalid chapter")
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-        rows = con.execute(
-            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))
-        ).fetchall()
-        verses = [int(r["verse"]) for r in rows]
-        if not verses:
-            raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
-        return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
-    finally:
-        con.close()
-
-
-@app.get("/bible/passage")
-def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: int = 1, end: Optional[int] = None):
-    if chapter < 1:
-        raise HTTPException(status_code=400, detail="Invalid chapter")
-
-    con = _db()
-    try:
-        book_id = _resolve_book_id(con, book)
-
-        mapping = _get_books_table_mapping(con)
-        id_col = mapping["id_col"]
-        name_col = mapping["name_col"]
-        b = con.execute(f"SELECT {name_col} AS name FROM books WHERE {id_col}=? LIMIT 1", (book_id,)).fetchone()
-        book_name = b["name"] if b else str(book)
-
-        if full_chapter:
-            rows = con.execute(
-                "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
-                (book_id, int(chapter)),
-            ).fetchall()
-            if not rows:
-                raise HTTPException(status_code=404, detail="No chapter text")
-            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-            return {"reference": f"{book_name} {chapter}", "text": text}
-
-        if start < 1:
-            raise HTTPException(status_code=400, detail="Invalid start verse")
-        if end is None or end < start:
-            end = start
-
-        rows = con.execute(
-            """
-            SELECT verse, text
-            FROM verses
-            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
-            ORDER BY verse
-            """,
-            (book_id, int(chapter), int(start), int(end)),
-        ).fetchall()
-
-        if not rows:
-            raise HTTPException(status_code=404, detail="No passage text returned")
-
-        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-        ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
-        return {"reference": ref, "text": text}
-    finally:
-        con.close()
-
-
-# =========================
-# Free chat + Devotional + Daily Prayer Starters
-# =========================
-@app.post("/chat")
-def chat(body: ChatIn):
-    _require_ai()
-    full_prompt = _build_chat_prompt(body.prompt, body.history, body.lang or "auto")
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
-    return {"status": "success", "message": text}
-
-
-@app.post("/devotional")
-def devotional(body: Optional[LangIn] = None):
-    _require_ai()
-    lang = _norm_lang(body.lang if body else "en")
-
-    if lang == "es":
-        prompt = """
-Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.
-Devuelve exactamente esta forma:
-{
-  "scripture": "Libro Capítulo:Verso(s) — texto del verso",
-  "brief_explanation": "2-4 oraciones explicándolo de forma simple"
+  } catch (e) {
+    $("accountPill").textContent = "Account: error";
+    $("accountPill").className = "pill";
+  }
 }
-Reglas:
-- Devuelve SOLO JSON válido (sin markdown).
-- Todo en español.
-- Tono cálido, práctico y breve.
-""".strip()
-    else:
-        prompt = """
-You are Alyana Luz. Create a devotional in STRICT JSON ONLY.
-Return exactly this shape:
-{
-  "scripture": "Book Chapter:Verse(s) — verse text",
-  "brief_explanation": "2-4 sentences explaining it simply"
+
+async function sendChat() {
+  const input = $("chatInput");
+  const text = (input.value || "").trim();
+  if (!text) return;
+
+  input.value = "";
+  addMsg("me", text);
+  setStatus("Sending...");
+
+  try {
+    // Always use /chat (free) to avoid subscription issues while you’re debugging.
+    const out = await api("/chat", { method: "POST", body: JSON.stringify({ prompt: text }) });
+    addMsg("bot", out.message || "(no response)");
+    setStatus("");
+  } catch (e) {
+    addMsg("bot", `Sorry — I hit an error.\n\n${e.message}`);
+    setStatus(`Error: ${e.message}`, true);
+  }
 }
-Rules:
-- Return ONLY valid JSON (no markdown).
-- Everything in English.
-- Warm, practical, brief.
-""".strip()
 
-    text = _generate_text_with_retries(prompt) or "{}"
-    return {"json": text}
-
-
-@app.post("/daily_prayer")
-def daily_prayer(body: Optional[LangIn] = None):
-    _require_ai()
-    lang = _norm_lang(body.lang if body else "en")
-
-    if lang == "es":
-        prompt = """
-Eres Alyana Luz. Genera frases cortas para una oración ACTS en JSON ESTRICTO SOLAMENTE.
-Devuelve exactamente esta forma:
-{
-  "example_adoration": "1-2 frases",
-  "example_confession": "1-2 frases",
-  "example_thanksgiving": "1-2 frases",
-  "example_supplication": "1-2 frases"
+function newChat() {
+  state.chat = [
+    { role: "bot", text: "Hi, I’m Alyana Luz. How can I pray with you or help you explore Scripture today?", ts: Date.now() }
+  ];
+  renderChat();
+  setStatus("");
 }
-Reglas:
-- Devuelve SOLO JSON válido (sin markdown).
-- Todo en español.
-- Tono cálido, breve y práctico.
-""".strip()
-    else:
-        prompt = """
-You are Alyana Luz. Generate short starters for an ACTS prayer in STRICT JSON ONLY.
-Return exactly this shape:
-{
-  "example_adoration": "1-2 sentences",
-  "example_confession": "1-2 sentences",
-  "example_thanksgiving": "1-2 sentences",
-  "example_supplication": "1-2 sentences"
-}
-Rules:
-- Return ONLY valid JSON (no markdown).
-- Everything in English.
-- Warm, brief, practical.
-""".strip()
 
-    text = _generate_text_with_retries(prompt) or "{}"
-    return {"json": text}
+function saveChat() {
+  const name = prompt("Name this chat (example: 'Prayer for school'):");
+  if (!name) return;
+
+  const items = getSaved();
+  items.unshift({
+    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+    name: name.trim(),
+    when: nowTime(),
+    chat: state.chat,
+  });
+  setSaved(items);
+  setStatus(`Saved "${name.trim()}"`);
+}
+
+async function loadBibleBooks() {
+  const out = await api("/bible/books", { method: "GET", headers: {} });
+  const books = out.books || [];
+  const sel = $("bookSelect");
+  sel.innerHTML = "";
+  for (const b of books) {
+    const opt = document.createElement("option");
+    opt.value = b.name; // use name; your backend resolves it
+    opt.textContent = b.name;
+    sel.appendChild(opt);
+  }
+}
+
+async function loadChaptersForBook() {
+  const book = $("bookSelect").value;
+  const out = await api(`/bible/chapters?book=${encodeURIComponent(book)}`, { method: "GET", headers: {} });
+  const chSel = $("chapterSelect");
+  chSel.innerHTML = "";
+  for (const c of out.chapters || []) {
+    const opt = document.createElement("option");
+    opt.value = String(c);
+    opt.textContent = `Chapter ${c}`;
+    chSel.appendChild(opt);
+  }
+}
+
+async function loadFullChapter() {
+  const book = $("bookSelect").value;
+  const chapter = $("chapterSelect").value;
+  const out = await api(`/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=true`, { method: "GET", headers: {} });
+  $("bibleOut").innerHTML = `<div class="muted">${escapeHtml(out.reference || "")}</div><div style="margin-top:10px; white-space:pre-wrap;">${escapeHtml(out.text || "")}</div>`;
+}
+
+async function loadPassage() {
+  const book = $("bookSelect").value;
+  const chapter = $("chapterSelect").value;
+  const start = ($("startVerse").value || "").trim();
+  const end = ($("endVerse").value || "").trim();
+
+  let url = `/bible/passage?book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false`;
+  if (start) url += `&start=${encodeURIComponent(start)}`;
+  if (end) url += `&end=${encodeURIComponent(end)}`;
+
+  const out = await api(url, { method: "GET", headers: {} });
+  $("bibleOut").innerHTML = `<div class="muted">${escapeHtml(out.reference || "")}</div><div style="margin-top:10px; white-space:pre-wrap;">${escapeHtml(out.text || "")}</div>`;
+}
+
+function parseStrictJsonMaybe(s) {
+  if (typeof s !== "string") return s;
+  try { return JSON.parse(s); } catch { return null; }
+}
+
+async function doDevotional() {
+  $("devOut").innerHTML = `<div class="muted">Generating...</div>`;
+  try {
+    const lang = $("devLang").value;
+    const out = await api("/devotional", { method: "POST", body: JSON.stringify({ lang }) });
+    const obj = parseStrictJsonMaybe(out.json);
+    if (!obj) throw new Error("Devotional returned non-JSON text.");
+    $("devOut").innerHTML =
+      `<div class="muted">${escapeHtml(obj.scripture || "")}</div>` +
+      `<div style="margin-top:10px; white-space:pre-wrap;">${escapeHtml(obj.brief_explanation || "")}</div>`;
+  } catch (e) {
+    $("devOut").innerHTML = `<div class="danger">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function doPrayer() {
+  $("prayOut").innerHTML = `<div class="muted">Generating...</div>`;
+  try {
+    const lang = $("prayLang").value;
+    const out = await api("/daily_prayer", { method: "POST", body: JSON.stringify({ lang }) });
+    const obj = parseStrictJsonMaybe(out.json);
+    if (!obj) throw new Error("Daily prayer returned non-JSON text.");
+    $("prayOut").innerHTML =
+      `<div style="white-space:pre-wrap;">
+<b>Adoration:</b> ${escapeHtml(obj.example_adoration || "")}
+
+<b>Confession:</b> ${escapeHtml(obj.example_confession || "")}
+
+<b>Thanksgiving:</b> ${escapeHtml(obj.example_thanksgiving || "")}
+
+<b>Supplication:</b> ${escapeHtml(obj.example_supplication || "")}
+</div>`;
+  } catch (e) {
+    $("prayOut").innerHTML = `<div class="danger">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function support() {
+  try {
+    const email = prompt("Enter the email you will use for Stripe (optional):") || "";
+    const out = await api("/stripe/create-checkout-session", {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim() || null })
+    });
+    if (out.url) window.location.href = out.url;
+  } catch (e) {
+    alert(`Support error: ${e.message}`);
+  }
+}
+
+async function billing() {
+  try {
+    const out = await api("/stripe/create-portal-session", { method: "POST", body: JSON.stringify({}) });
+    if (out.url) window.location.href = out.url;
+  } catch (e) {
+    alert(`Billing error: ${e.message}`);
+  }
+}
+
+function wire() {
+  document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
+  $("sendBtn").onclick = sendChat;
+  $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+  $("newBtn").onclick = newChat;
+  $("saveBtn").onclick = saveChat;
+
+  $("btnSupport").onclick = support;
+  $("btnBilling").onclick = billing;
+
+  $("bookSelect").addEventListener("change", async () => {
+    try { await loadChaptersForBook(); } catch {}
+  });
+  $("loadChapterBtn").onclick = loadFullChapter;
+  $("loadPassageBtn").onclick = loadPassage;
+
+  $("devBtn").onclick = doDevotional;
+  $("prayBtn").onclick = doPrayer;
+}
+
+async function init() {
+  wire();
+  renderSaved();
+  newChat();
+
+  // Bible init
+  try {
+    await loadBibleBooks();
+    await loadChaptersForBook();
+  } catch (e) {
+    $("bibleOut").innerHTML = `<div class="danger">Bible error: ${escapeHtml(e.message)}</div>`;
+  }
+
+  // Account
+  await refreshAccount();
+}
+
+init();
+
 
 
 
