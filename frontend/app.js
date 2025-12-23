@@ -1,5 +1,10 @@
-
-/* Alyana Luz · Bible AI — app.js */
+/* Alyana Luz · Bible AI — app.js
+   - Global Language + Voices (Karen en-AU, Paulina es-MX)
+   - Chat listen + Bible listen (TOGGLE buttons, no Stop buttons)
+   - Bible Spanish output via AI translation when lang=es
+   - Devotional: new guided format + save + streak
+   - Daily Prayer: ACTS sections + save + streak + listen (TOGGLE)
+*/
 
 (() => {
   // -----------------------------
@@ -216,6 +221,7 @@
 
   let uiLang = (localStorage.getItem(LS.uiLang) || "en").toLowerCase().startsWith("es") ? "es" : "en";
 
+  // Voice identifiers you chose
   const VOICES_KEEP = [
     { key: "karen-en-AU", label: "Karen — en-AU", lang: "en-AU", match: (v) => /karen/i.test(v.name) && /^en/i.test(v.lang) },
     { key: "paulina-es-MX", label: "Paulina — es-MX", lang: "es-MX", match: (v) => /paulina/i.test(v.name) && /^es/i.test(v.lang) },
@@ -234,8 +240,8 @@
   let availableVoices = [];
   let activeUtterance = null;
 
-  // NEW: track Bible toggle state
-  let bibleSpeaking = false;
+  // Track what button should show Stop right now (only one source at a time)
+  let speakingSource = null; // "chat" | "bible" | "prayer" | null
 
   function loadVoices() {
     availableVoices = synth ? synth.getVoices() : [];
@@ -251,24 +257,59 @@
     return v || null;
   }
 
-  function stopSpeaking() {
+  function isSpeaking() {
     try {
-      if (synth) synth.cancel();
-    } catch {}
-    activeUtterance = null;
-
-    // If Bible was the one speaking, reset toggle UI state too.
-    bibleSpeaking = false;
-    updateBibleListenButton();
+      return !!(synth && (synth.speaking || synth.pending));
+    } catch {
+      return false;
+    }
   }
 
-  function speakText(text, opts = {}) {
-    if (!synth) return;
+  function updateSpeakButtons() {
+    const t = I18N[uiLang];
 
-    stopSpeaking();
+    const listenLastBtn = document.getElementById("listenLastBtn");
+    const bibleListenBtn = document.getElementById("bibleListenBtn");
+    const prayerListenBtn = document.getElementById("prayerListenBtn");
+
+    // Default labels
+    if (listenLastBtn) listenLastBtn.textContent = t.chat.listenLast;
+    if (bibleListenBtn) bibleListenBtn.textContent = t.bible.listen;
+    if (prayerListenBtn) prayerListenBtn.textContent = t.prayer.listen;
+
+    // If currently speaking, only the active source shows "Stop"
+    if (isSpeaking() && speakingSource) {
+      if (speakingSource === "chat" && listenLastBtn) listenLastBtn.textContent = t.chat.stop;
+      if (speakingSource === "bible" && bibleListenBtn) bibleListenBtn.textContent = t.bible.stop;
+      if (speakingSource === "prayer" && prayerListenBtn) prayerListenBtn.textContent = t.prayer.stop;
+    }
+  }
+
+  function stopSpeaking() {
+    try {
+      if (synth) {
+        synth.cancel();
+        // Firefox/Safari sometimes keep going; double-cancel next tick
+        setTimeout(() => {
+          try { synth.cancel(); } catch {}
+        }, 0);
+      }
+    } catch {}
+    activeUtterance = null;
+    speakingSource = null;
+    updateSpeakButtons();
+  }
+
+  function speakText(text, sourceTag) {
+    if (!synth) return;
 
     const cleaned = (text || "").trim();
     if (!cleaned) return;
+
+    stopSpeaking(); // stop anything currently speaking first
+
+    speakingSource = sourceTag || null;
+    updateSpeakButtons();
 
     loadVoices();
 
@@ -282,9 +323,16 @@
     u.lang = keep.lang;
     if (actual) u.voice = actual;
 
-    // Allow caller to set end handler
-    if (typeof opts.onEnd === "function") u.onend = opts.onEnd;
-    if (typeof opts.onError === "function") u.onerror = opts.onError;
+    u.onend = () => {
+      activeUtterance = null;
+      speakingSource = null;
+      updateSpeakButtons();
+    };
+    u.onerror = () => {
+      activeUtterance = null;
+      speakingSource = null;
+      updateSpeakButtons();
+    };
 
     activeUtterance = u;
     synth.speak(u);
@@ -292,7 +340,9 @@
 
   if (synth) {
     loadVoices();
-    synth.onvoiceschanged = () => loadVoices();
+    synth.onvoiceschanged = () => {
+      loadVoices();
+    };
   }
 
   // -----------------------------
@@ -368,9 +418,10 @@
   const accountPill = $("accountPill");
 
   // -----------------------------
-  // Inject missing UI controls (Language + Voice + Bible Version)
+  // Inject missing UI controls
   // -----------------------------
   function ensureTopControls() {
+    // Chat: add Language + Voice dropdowns if not already present
     if (viewChat && !document.getElementById("globalLangSelect")) {
       const row = document.createElement("div");
       row.className = "row";
@@ -404,22 +455,21 @@
       }
     }
 
+    // Chat: add ONLY Listen Last button (TOGGLE). REMOVE Stop button entirely.
     const composer = viewChat?.querySelector(".composer");
-    if (composer && !document.getElementById("listenLastBtn")) {
-      const listenBtn = document.createElement("button");
-      listenBtn.className = "btn";
-      listenBtn.id = "listenLastBtn";
-      listenBtn.textContent = uiLang === "es" ? I18N.es.chat.listenLast : I18N.en.chat.listenLast;
+    if (composer) {
+      const existingStop = document.getElementById("stopSpeakBtn");
+      if (existingStop) existingStop.remove();
 
-      const stopBtn = document.createElement("button");
-      stopBtn.className = "btn";
-      stopBtn.id = "stopSpeakBtn";
-      stopBtn.textContent = uiLang === "es" ? I18N.es.chat.stop : I18N.en.chat.stop;
-
-      composer.appendChild(listenBtn);
-      composer.appendChild(stopBtn);
+      if (!document.getElementById("listenLastBtn")) {
+        const listenBtn = document.createElement("button");
+        listenBtn.className = "btn";
+        listenBtn.id = "listenLastBtn";
+        composer.appendChild(listenBtn);
+      }
     }
 
+    // Bible: add Version dropdown if not present (UI-only)
     if (viewBible && !document.getElementById("bibleVersionSelect")) {
       const topRow = viewBible.querySelector(".row");
       if (topRow) {
@@ -433,25 +483,30 @@
       }
     }
 
-    // Bible: ONLY inject one button now (toggle). No Stop button.
-    if (viewBible && !document.getElementById("bibleListenBtn")) {
-      const controls = document.createElement("div");
-      controls.className = "row";
-      controls.style.marginTop = "10px";
+    // Bible: create ONLY ONE Listen button (TOGGLE). REMOVE Stop button entirely.
+    if (viewBible) {
+      const existingStop = document.getElementById("bibleStopBtn");
+      if (existingStop) existingStop.remove();
 
-      const listen = document.createElement("button");
-      listen.className = "btn";
-      listen.id = "bibleListenBtn";
+      if (!document.getElementById("bibleListenBtn")) {
+        const controls = document.createElement("div");
+        controls.className = "row";
+        controls.style.marginTop = "10px";
 
-      controls.appendChild(listen);
+        const listen = document.createElement("button");
+        listen.className = "btn";
+        listen.id = "bibleListenBtn";
+        controls.appendChild(listen);
 
-      if (bibleOut && bibleOut.parentNode) {
-        bibleOut.parentNode.insertBefore(controls, bibleOut);
-      } else {
-        viewBible.appendChild(controls);
+        if (bibleOut && bibleOut.parentNode) {
+          bibleOut.parentNode.insertBefore(controls, bibleOut);
+        } else {
+          viewBible.appendChild(controls);
+        }
       }
     }
 
+    // Devotional: remove listen/stop if they exist from older versions
     const devListen = document.getElementById("devListenBtn");
     const devStop = document.getElementById("devStopBtn");
     if (devListen) devListen.remove();
@@ -462,6 +517,7 @@
   // Tabs
   // -----------------------------
   function setActiveTab(tab) {
+    stopSpeaking(); // optional: stop speech when switching tabs
     const tabs = document.querySelectorAll(".tab");
     tabs.forEach((t) => {
       const active = t.getAttribute("data-tab") === tab;
@@ -706,12 +762,6 @@
     version: "default",
   };
 
-  function updateBibleListenButton() {
-    const btn = document.getElementById("bibleListenBtn");
-    if (!btn) return;
-    btn.textContent = bibleSpeaking ? I18N[uiLang].bible.stop : I18N[uiLang].bible.listen;
-  }
-
   async function loadBooks() {
     const j = await apiGet("/bible/books");
     const books = j?.books || [];
@@ -794,20 +844,9 @@ ${englishText}
 
     setBibleOut(reference, shown.text);
 
-    localStorage.setItem(
-      LS.lastBible,
-      JSON.stringify({
-        bookId,
-        chapter,
-        start: "",
-        end: "",
-        reference,
-        englishText: text,
-        displayedText: shown.text,
-        lang: uiLang,
-        version,
-      })
-    );
+    localStorage.setItem(LS.lastBible, JSON.stringify({
+      bookId, chapter, start: "", end: "", reference, englishText: text, displayedText: shown.text, lang: uiLang, version
+    }));
   }
 
   async function loadPassage() {
@@ -827,9 +866,7 @@ ${englishText}
     const end = hasE ? e : start;
 
     const j = await apiGet(
-      `/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(
-        start
-      )}&end=${encodeURIComponent(end)}`
+      `/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
     );
 
     const reference = j?.reference || "";
@@ -848,26 +885,14 @@ ${englishText}
 
     setBibleOut(reference, shown.text);
 
-    localStorage.setItem(
-      LS.lastBible,
-      JSON.stringify({
-        bookId,
-        chapter,
-        start: String(start),
-        end: String(end),
-        reference,
-        englishText: text,
-        displayedText: shown.text,
-        lang: uiLang,
-        version,
-      })
-    );
+    localStorage.setItem(LS.lastBible, JSON.stringify({
+      bookId, chapter, start: String(start), end: String(end), reference, englishText: text, displayedText: shown.text, lang: uiLang, version
+    }));
   }
 
-  // NEW: Bible Listen toggle
-  function toggleBibleListen() {
-    // If already speaking, stop.
-    if (bibleSpeaking) {
+  function listenBibleToggle() {
+    // If anything is speaking and it was started by Bible, stop it
+    if (isSpeaking() && speakingSource === "bible") {
       stopSpeaking();
       return;
     }
@@ -875,25 +900,11 @@ ${englishText}
     const t = (bibleCurrent.displayedText || "").trim();
     if (!t) return;
 
-    bibleSpeaking = true;
-    updateBibleListenButton();
-
-    const textToSpeak = `${bibleCurrent.reference}\n\n${t}`;
-
-    speakText(textToSpeak, {
-      onEnd: () => {
-        bibleSpeaking = false;
-        updateBibleListenButton();
-      },
-      onError: () => {
-        bibleSpeaking = false;
-        updateBibleListenButton();
-      },
-    });
+    speakText(`${bibleCurrent.reference}\n\n${t}`, "bible");
   }
 
   // -----------------------------
-  // Devotional / Prayer (unchanged)
+  // Devotional: new guided format (AI via /chat)
   // -----------------------------
   function ensureDevotionalUI() {
     if (!viewDev) return;
@@ -962,11 +973,7 @@ ${englishText}
   function loadDevotionalDraft() {
     const raw = localStorage.getItem(LS.devotionalDraft);
     if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(raw); } catch { return null; }
   }
 
   function saveDevotionalDraft(draft) {
@@ -1003,7 +1010,7 @@ ${englishText}
 
     if (!devOut) return;
 
-    const lang = devLangSel ? devLangSel.value || uiLang : uiLang;
+    const lang = devLangSel ? (devLangSel.value || uiLang) : uiLang;
     const L = lang.startsWith("es") ? "es" : "en";
 
     devOut.innerHTML = `<div class="muted">${L === "es" ? "Generando…" : "Generating…"}</div>`;
@@ -1081,6 +1088,7 @@ Devuelve exactamente este JSON:
       const draft = loadDevotionalDraft() || {};
       draft.devOutHtml = devOut.innerHTML;
       saveDevotionalDraft(draft);
+
     } catch (e) {
       devOut.innerHTML = `<div class="danger">${escapeHtml(String(e.message || e))}</div>`;
     }
@@ -1092,7 +1100,7 @@ Devuelve exactamente este JSON:
     const draft = loadDevotionalDraft() || {};
     ids.forEach((id) => {
       const el = document.getElementById(id);
-      draft[id] = el ? el.value || "" : "";
+      draft[id] = el ? (el.value || "") : "";
     });
     draft.devOutHtml = devOut ? devOut.innerHTML : "";
     saveDevotionalDraft(draft);
@@ -1118,6 +1126,9 @@ Devuelve exactamente este JSON:
     alert(L === "es" ? "Devocional guardado. Racha actualizada." : "Devotional saved. Streak updated.");
   }
 
+  // -----------------------------
+  // Daily Prayer (ACTS)
+  // -----------------------------
   function ensurePrayerUI() {
     if (!viewPrayer) return;
 
@@ -1155,6 +1166,10 @@ Devuelve exactamente este JSON:
       }
     });
 
+    // Buttons row: SAVE + LISTEN (TOGGLE). Remove Stop button if it exists.
+    const oldStop = document.getElementById("prayerStopBtn");
+    if (oldStop) oldStop.remove();
+
     if (!document.getElementById("prayerSaveBtn")) {
       const row = document.createElement("div");
       row.className = "row";
@@ -1170,12 +1185,16 @@ Devuelve exactamente este JSON:
       listen.id = "prayerListenBtn";
       row.appendChild(listen);
 
-      const stop = document.createElement("button");
-      stop.className = "btn";
-      stop.id = "prayerStopBtn";
-      row.appendChild(stop);
-
       viewPrayer.appendChild(row);
+    } else {
+      // Ensure listen exists
+      if (!document.getElementById("prayerListenBtn")) {
+        const listen = document.createElement("button");
+        listen.className = "btn primary";
+        listen.id = "prayerListenBtn";
+        const row = document.getElementById("prayerSaveBtn")?.parentNode;
+        if (row) row.appendChild(listen);
+      }
     }
   }
 
@@ -1197,11 +1216,7 @@ Devuelve exactamente este JSON:
   function loadPrayerDraft() {
     const raw = localStorage.getItem(LS.prayerDraft);
     if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(raw); } catch { return null; }
   }
 
   function savePrayerDraft(d) {
@@ -1236,7 +1251,7 @@ Devuelve exactamente este JSON:
 
     if (!prayOut) return;
 
-    const lang = prayLangSel ? prayLangSel.value || uiLang : uiLang;
+    const lang = prayLangSel ? (prayLangSel.value || uiLang) : uiLang;
     const L = lang.startsWith("es") ? "es" : "en";
 
     prayOut.innerHTML = `<div class="muted">${L === "es" ? "Generando…" : "Generating…"}</div>`;
@@ -1296,6 +1311,7 @@ Return EXACT JSON:
       const d = loadPrayerDraft() || {};
       d.prayOutHtml = prayOut.innerHTML;
       savePrayerDraft(d);
+
     } catch (e) {
       prayOut.innerHTML = `<div class="danger">${escapeHtml(String(e.message || e))}</div>`;
     }
@@ -1307,7 +1323,7 @@ Return EXACT JSON:
     const d = loadPrayerDraft() || {};
     ["pAdoration", "pConfession", "pThanksgiving", "pSupplication"].forEach((id) => {
       const el = document.getElementById(id);
-      d[id] = el ? el.value || "" : "";
+      d[id] = el ? (el.value || "") : "";
     });
     if (prayOut) d.prayOutHtml = prayOut.innerHTML;
     savePrayerDraft(d);
@@ -1334,10 +1350,19 @@ Return EXACT JSON:
     alert(L === "es" ? "Oración guardada. Racha actualizada." : "Prayer saved. Streak updated.");
   }
 
-  function listenPrayerStarters() {
+  function listenPrayerToggle() {
     if (!prayOut) return;
-    const text = prayOut.innerText || "";
-    speakText(text);
+
+    // If anything is speaking and it was started by Prayer, stop it
+    if (isSpeaking() && speakingSource === "prayer") {
+      stopSpeaking();
+      return;
+    }
+
+    const text = (prayOut.innerText || "").trim();
+    if (!text) return;
+
+    speakText(text, "prayer");
   }
 
   // -----------------------------
@@ -1370,9 +1395,7 @@ Return EXACT JSON:
       if (saveBtn) saveBtn.textContent = t.chat.save;
 
       const listenLastBtn = document.getElementById("listenLastBtn");
-      const stopSpeakBtn = document.getElementById("stopSpeakBtn");
       if (listenLastBtn) listenLastBtn.textContent = t.chat.listenLast;
-      if (stopSpeakBtn) stopSpeakBtn.textContent = t.chat.stop;
 
       if (chatStatus && !chatStatus.textContent) chatStatus.textContent = t.chat.statusReady;
 
@@ -1392,8 +1415,8 @@ Return EXACT JSON:
       if (startVerse) startVerse.placeholder = t.bible.startVerse;
       if (endVerse) endVerse.placeholder = t.bible.endVerse;
 
-      // Toggle button label depends on speaking state
-      updateBibleListenButton();
+      const listen = document.getElementById("bibleListenBtn");
+      if (listen) listen.textContent = t.bible.listen;
 
       const verSel = document.getElementById("bibleVersionSelect");
       if (verSel) {
@@ -1471,15 +1494,15 @@ Return EXACT JSON:
 
       const save = document.getElementById("prayerSaveBtn");
       const listen = document.getElementById("prayerListenBtn");
-      const stop = document.getElementById("prayerStopBtn");
       if (save) save.textContent = t.prayer.save;
       if (listen) listen.textContent = t.prayer.listen;
-      if (stop) stop.textContent = t.prayer.stop;
 
       updatePrayerStreakUI();
 
       if (prayLangSel) prayLangSel.value = uiLang;
     }
+
+    updateSpeakButtons();
   }
 
   function bindGlobalLanguageAndVoice() {
@@ -1495,10 +1518,6 @@ Return EXACT JSON:
         voiceChoice = uiLang === "es" ? "paulina-es-MX" : "karen-en-AU";
         localStorage.setItem(LS.voiceChoice, voiceChoice);
         if (voiceSel) voiceSel.value = voiceChoice;
-
-        // language change should also reset Bible toggle label
-        bibleSpeaking = false;
-        updateBibleListenButton();
 
         applyUILanguage();
         await refreshAccount();
@@ -1524,6 +1543,9 @@ Return EXACT JSON:
     }
   }
 
+  // -----------------------------
+  // Escape HTML
+  // -----------------------------
   function escapeHtml(s) {
     return String(s || "")
       .replaceAll("&", "&amp;")
@@ -1540,6 +1562,7 @@ Return EXACT JSON:
     if (btnSupport) btnSupport.addEventListener("click", handleSupport);
     if (btnBilling) btnBilling.addEventListener("click", handleBilling);
 
+    // Chat
     if (sendBtn) sendBtn.addEventListener("click", sendChat);
     if (chatInput) {
       chatInput.addEventListener("keydown", (e) => {
@@ -1549,17 +1572,21 @@ Return EXACT JSON:
     if (newBtn) newBtn.addEventListener("click", newChat);
     if (saveBtn) saveBtn.addEventListener("click", saveChat);
 
+    // Chat Listen (TOGGLE)
     const listenLastBtn = document.getElementById("listenLastBtn");
-    const stopSpeakBtn = document.getElementById("stopSpeakBtn");
-
     if (listenLastBtn) {
       listenLastBtn.addEventListener("click", () => {
+        // If speaking from chat, stop
+        if (isSpeaking() && speakingSource === "chat") {
+          stopSpeaking();
+          return;
+        }
         const chatArr = loadCurrentChat();
         const text = lastAssistantMessage(chatArr);
-        speakText(text);
+        if (!text) return;
+        speakText(text, "chat");
       });
     }
-    if (stopSpeakBtn) stopSpeakBtn.addEventListener("click", stopSpeaking);
 
     // Bible
     if (bookSelect) {
@@ -1572,9 +1599,9 @@ Return EXACT JSON:
     if (loadChapterBtn) loadChapterBtn.addEventListener("click", loadChapter);
     if (loadPassageBtn) loadPassageBtn.addEventListener("click", loadPassage);
 
-    // Toggle button
+    // Bible Listen (TOGGLE)
     const bibleListenBtn = document.getElementById("bibleListenBtn");
-    if (bibleListenBtn) bibleListenBtn.addEventListener("click", toggleBibleListen);
+    if (bibleListenBtn) bibleListenBtn.addEventListener("click", listenBibleToggle);
 
     // Devotional
     if (devBtn) devBtn.addEventListener("click", generateDevotional);
@@ -1585,10 +1612,8 @@ Return EXACT JSON:
     if (prayBtn) prayBtn.addEventListener("click", generatePrayerStarters);
     const prayerSave = document.getElementById("prayerSaveBtn");
     const prayerListen = document.getElementById("prayerListenBtn");
-    const prayerStop = document.getElementById("prayerStopBtn");
     if (prayerSave) prayerSave.addEventListener("click", savePrayer);
-    if (prayerListen) prayerListen.addEventListener("click", listenPrayerStarters);
-    if (prayerStop) prayerStop.addEventListener("click", stopSpeaking);
+    if (prayerListen) prayerListen.addEventListener("click", listenPrayerToggle);
 
     if (devLangSel) {
       devLangSel.addEventListener("change", () => {
@@ -1601,9 +1626,6 @@ Return EXACT JSON:
         localStorage.setItem(LS.voiceChoice, voiceChoice);
         const voiceSel = document.getElementById("voiceSelect");
         if (voiceSel) voiceSel.value = voiceChoice;
-
-        bibleSpeaking = false;
-        updateBibleListenButton();
 
         applyUILanguage();
       });
@@ -1619,9 +1641,6 @@ Return EXACT JSON:
         localStorage.setItem(LS.voiceChoice, voiceChoice);
         const voiceSel = document.getElementById("voiceSelect");
         if (voiceSel) voiceSel.value = voiceChoice;
-
-        bibleSpeaking = false;
-        updateBibleListenButton();
 
         applyUILanguage();
       });
@@ -1647,22 +1666,13 @@ Return EXACT JSON:
           bibleCurrent.text = last?.englishText || "";
           bibleCurrent.displayedText = last?.displayedText || "";
           bibleCurrent.lang = uiLang;
-
-          setBibleOut(
-            bibleCurrent.reference,
-            uiLang === "es" ? bibleCurrent.displayedText || bibleCurrent.text : bibleCurrent.text
-          );
+          setBibleOut(bibleCurrent.reference, uiLang === "es" ? (bibleCurrent.displayedText || bibleCurrent.text) : bibleCurrent.text);
         } catch {}
       } else {
         setBibleOut("", "", I18N[uiLang].bible.selectPrompt);
       }
-
-      bibleSpeaking = false;
-      updateBibleListenButton();
     } catch {
       setBibleOut("", "", uiLang === "es" ? "Error cargando la Biblia local." : "Error loading local Bible.");
-      bibleSpeaking = false;
-      updateBibleListenButton();
     }
   }
 
@@ -1702,10 +1712,13 @@ Return EXACT JSON:
     await refreshAccount();
 
     if (chatStatus) chatStatus.textContent = I18N[uiLang].chat.statusReady;
+
+    updateSpeakButtons();
   }
 
   boot();
 })();
+
 
 
 
