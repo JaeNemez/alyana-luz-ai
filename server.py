@@ -5,7 +5,7 @@ import hmac
 import hashlib
 import base64
 import sqlite3
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
@@ -24,23 +24,22 @@ app = FastAPI(title="Alyana Luz · Bible AI")
 # Paths (ABSOLUTE)
 # --------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Your repo structure: /frontend/index.html, /frontend/app.js, /frontend/manifest.webmanifest, /frontend/service-worker.js, /frontend/icons/...
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
+
 INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
 APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
 MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
 SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
+
 ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
 
-# Serve static folders for PWA assets
-# IMPORTANT: these paths must match the URLs you reference in index.html/manifest.
-if os.path.isdir(ICONS_DIR):
-    app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
-
-# (Optional) if you keep any other frontend static assets, you can use /static
+# Static mounts
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+# Serve icons at /icons/... because the manifest typically points there
+if os.path.isdir(ICONS_DIR):
+    app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 
 # --------------------
 # ENV
@@ -50,6 +49,7 @@ STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
 
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
+
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
 
 ALLOWLIST_EMAILS_RAW = (os.getenv("ALLOWLIST_EMAILS") or "").strip()
@@ -65,9 +65,7 @@ if ALLOWLIST_EMAILS_RAW:
         if e:
             ALLOWLIST_SET.add(e)
 
-# --------------------
-# Helpers
-# --------------------
+
 def _require_stripe_ready():
     if not STRIPE_SECRET_KEY:
         raise HTTPException(500, "Missing STRIPE_SECRET_KEY in environment.")
@@ -76,15 +74,18 @@ def _require_stripe_ready():
     if not APP_BASE_URL:
         raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
 
+
 def _require_jwt_secret():
     if not JWT_SECRET or len(JWT_SECRET) < 32:
         raise HTTPException(500, "Missing/weak JWT_SECRET. Set a long random string (32+ chars).")
 
+
 def _enforce_allowlist(email: str):
     if not ALLOWLIST_SET:
         return
-    if (email or "").lower() not in ALLOWLIST_SET:
+    if email.lower() not in ALLOWLIST_SET:
         raise HTTPException(403, "This email is not allowed.")
+
 
 # --------------------
 # Signed token cookie helper
@@ -92,13 +93,16 @@ def _enforce_allowlist(email: str):
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
+
 def _b64url_decode(s: str) -> bytes:
     pad = "=" * (-len(s) % 4)
     return base64.urlsafe_b64decode((s + pad).encode())
 
+
 def _sign(data: bytes) -> str:
     sig = hmac.new(JWT_SECRET.encode(), data, hashlib.sha256).digest()
     return _b64url(sig)
+
 
 def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     _require_jwt_secret()
@@ -106,6 +110,7 @@ def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
     payload = f"{email}|{now + exp_seconds}".encode()
     token = _b64url(payload) + "." + _sign(payload)
     return token
+
 
 def _read_token(token: str) -> Optional[dict]:
     try:
@@ -124,7 +129,9 @@ def _read_token(token: str) -> Optional[dict]:
     except Exception:
         return None
 
+
 AUTH_COOKIE_NAME = "alyana_auth"
+
 
 def _set_auth_cookie(resp, email: str):
     token = _make_token(email)
@@ -138,25 +145,30 @@ def _set_auth_cookie(resp, email: str):
         path="/",
     )
 
+
 def _clear_auth_cookie(resp: JSONResponse):
     resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
     return resp
+
 
 def get_current_email(request: Request) -> Optional[str]:
     token = request.cookies.get(AUTH_COOKIE_NAME)
     parsed = _read_token(token) if token else None
     return parsed["email"] if parsed else None
 
+
 # --------------------
-# OPTIONAL local cache for Stripe subscription status
+# OPTIONAL local cache
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
+
 
 def _subs_db():
     os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
     con = sqlite3.connect(SUB_DB_PATH)
     con.row_factory = sqlite3.Row
     return con
+
 
 def _subs_init():
     con = _subs_db()
@@ -176,7 +188,9 @@ def _subs_init():
     finally:
         con.close()
 
+
 _subs_init()
+
 
 def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str], current_period_end: Optional[int]):
     email = (email or "").strip().lower()
@@ -202,6 +216,7 @@ def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str],
     finally:
         con.close()
 
+
 def _cache_get(email: str) -> Optional[dict]:
     email = (email or "").strip().lower()
     if not email:
@@ -213,6 +228,7 @@ def _cache_get(email: str) -> Optional[dict]:
     finally:
         con.close()
 
+
 # --------------------
 # Stripe: lookup subscription directly by email
 # --------------------
@@ -221,7 +237,6 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
     if not email:
         return None
 
-    # Prefer search; fallback to list
     try:
         res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
         if res and res.get("data"):
@@ -237,6 +252,7 @@ def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
         pass
 
     return None
+
 
 def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional[str], Optional[int]]:
     if not customer_id:
@@ -272,69 +288,23 @@ def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional
     cpe = best.get("current_period_end")
     return (status in ACTIVE_STATUSES, status or None, int(cpe) if cpe else None)
 
-def _cache_to_active(cached: dict) -> bool:
-    # If cached says active/trialing, consider active if period end is still in the future (when present).
-    if not cached:
-        return False
-    st = (cached.get("status") or "").lower()
-    cpe = cached.get("current_period_end")
-    if st not in ("active", "trialing"):
-        return False
-    if isinstance(cpe, int) and cpe > 0:
-        return cpe > int(time.time())
-    return True
 
 def _stripe_check_email_subscription(email: str) -> dict:
-    """
-    IMPORTANT CHANGE:
-    - If Stripe is temporarily failing, DO NOT throw 503 to the frontend.
-    - Fall back to cached info instead, so /me doesn't break the UI.
-    """
+    _require_stripe_ready()
+
     email = (email or "").strip().lower()
     if not email:
         return {"email": None, "customer_id": None, "active": False, "status": None, "current_period_end": None}
 
-    cached = _cache_get(email)
+    customer_id = _stripe_find_customer_id_by_email(email)
+    if not customer_id:
+        return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None}
 
-    # If Stripe isn't configured, fall back only to cache
-    if not (STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL):
-        return {
-            "email": email,
-            "customer_id": (cached or {}).get("stripe_customer_id"),
-            "active": _cache_to_active(cached or {}),
-            "status": (cached or {}).get("status"),
-            "current_period_end": (cached or {}).get("current_period_end"),
-            "source": "cache_only",
-        }
+    active, status, cpe = _stripe_get_customer_active_status(customer_id)
+    _cache_upsert(email, customer_id, status, cpe)
 
-    # Stripe configured: try live check, fallback to cache on failure
-    try:
-        customer_id = _stripe_find_customer_id_by_email(email)
-        if not customer_id:
-            return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None, "source": "stripe"}
+    return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
 
-        active, status, cpe = _stripe_get_customer_active_status(customer_id)
-        _cache_upsert(email, customer_id, status, cpe)
-
-        return {
-            "email": email,
-            "customer_id": customer_id,
-            "active": active,
-            "status": status,
-            "current_period_end": cpe,
-            "source": "stripe",
-        }
-    except Exception as e:
-        # Stripe temporary issue: fallback to cache
-        print("Stripe check failed (fallback to cache):", repr(e))
-        return {
-            "email": email,
-            "customer_id": (cached or {}).get("stripe_customer_id"),
-            "active": _cache_to_active(cached or {}),
-            "status": (cached or {}).get("status"),
-            "current_period_end": (cached or {}).get("current_period_end"),
-            "source": "cache_fallback",
-        }
 
 def require_active_user(request: Request) -> str:
     email = get_current_email(request)
@@ -342,10 +312,11 @@ def require_active_user(request: Request) -> str:
         raise HTTPException(401, "Not logged in.")
 
     info = _stripe_check_email_subscription(email)
-    if not info.get("active"):
+    if not info["active"]:
         raise HTTPException(402, "Subscription inactive. Please subscribe.")
 
     return email
+
 
 # --------------------
 # Gemini (AI)
@@ -354,58 +325,78 @@ API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+
+class Msg(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class ChatIn(BaseModel):
     prompt: str
+    history: Optional[List[Msg]] = None  # <-- for memory
+
 
 class LangIn(BaseModel):
     lang: Optional[str] = "en"
+
 
 def _require_ai():
     if not client:
         raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
 
-def _generate_text_with_retries(full_prompt: str, tries: int = 6) -> str:
-    """
-    IMPORTANT CHANGE:
-    - More retries and better backoff.
-    - Return "" on temporary overload instead of raising 503.
-      (Endpoints will convert that into a friendly message.)
-    """
+
+def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
     last_error = None
     for attempt in range(tries):
         try:
             resp = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
-            return (resp.text or "").strip()
+            return resp.text or ""
         except Exception as e:
             last_error = e
             msg = repr(e)
 
-            # transient
             if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
-                time.sleep(1.2 + attempt * 1.1)
+                time.sleep(1 + attempt)
                 continue
 
-            # rate limit
             if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
-                return ""  # friendly fallback handled by endpoint
-
+                raise HTTPException(status_code=429, detail="Alyana reached the AI limit right now. Please try again later.")
             break
 
     print("Gemini error after retries:", repr(last_error))
-    return ""  # friendly fallback handled by endpoint
+    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+
 
 def _norm_lang(lang: Optional[str]) -> str:
     l = (lang or "en").strip().lower()
     return "es" if l.startswith("es") else "en"
 
+
+def _build_chat_prompt(system_prompt: str, user_prompt: str, history: Optional[List[Msg]]) -> str:
+    # Keep memory lightweight: last ~16 messages max
+    lines: List[str] = [system_prompt.strip(), "", "Conversation so far:"]
+    if history:
+        trimmed = history[-16:]
+        for m in trimmed:
+            role = "User" if (m.role or "").lower().startswith("user") else "Alyana"
+            content = (m.content or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+    lines.append("")
+    lines.append(f"User: {user_prompt.strip()}")
+    lines.append("Alyana:")
+    return "\n".join(lines)
+
+
 # =========================
-# Frontend serving
+# Frontend serving (root files)
 # =========================
 @app.get("/", include_in_schema=False)
 async def serve_frontend():
     if not os.path.exists(INDEX_PATH):
         return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
     return FileResponse(INDEX_PATH, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
 
 @app.get("/app.js", include_in_schema=False)
 async def serve_app_js_root():
@@ -417,6 +408,7 @@ async def serve_app_js_root():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
+
 @app.get("/manifest.webmanifest", include_in_schema=False)
 async def serve_manifest():
     if not os.path.exists(MANIFEST_PATH):
@@ -427,8 +419,9 @@ async def serve_manifest():
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
 
+
 @app.get("/service-worker.js", include_in_schema=False)
-async def serve_sw():
+async def serve_service_worker():
     if not os.path.exists(SW_PATH):
         return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
     return FileResponse(
@@ -436,6 +429,7 @@ async def serve_sw():
         media_type="application/javascript",
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
     )
+
 
 @app.get("/health")
 def health():
@@ -455,22 +449,25 @@ def health():
         "allowlist_enabled": bool(ALLOWLIST_SET),
     }
 
+
 # =========================
 # Stripe Subscription Billing
 # =========================
 class CheckoutIn(BaseModel):
     email: Optional[str] = None
 
+
 class PortalIn(BaseModel):
     email: Optional[str] = None
+
 
 class LoginIn(BaseModel):
     email: str
 
+
 @app.post("/login")
 def login(body: LoginIn):
     _require_jwt_secret()
-    # If Stripe is down, login can't be verified; keep strict here.
     _require_stripe_ready()
 
     email = (body.email or "").strip().lower()
@@ -479,15 +476,16 @@ def login(body: LoginIn):
 
     _enforce_allowlist(email)
 
-    info = _stripe_check_email_subscription(email)
-    if not info.get("active"):
+    info = _stripe_check_emailxneil_subscription(email) if False else _stripe_check_email_subscription(email)
+    if not info["active"]:
         raise HTTPException(402, "Subscription inactive or not found.")
 
     resp = JSONResponse(
-        {"ok": True, "email": email, "active": True, "status": info.get("status"), "current_period_end": info.get("current_period_end")}
+        {"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]}
     )
     _set_auth_cookie(resp, email)
     return resp
+
 
 @app.post("/stripe/create-checkout-session")
 def create_checkout_session(body: CheckoutIn):
@@ -510,6 +508,7 @@ def create_checkout_session(body: CheckoutIn):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
 
+
 @app.post("/stripe/create-portal-session")
 def create_portal_session(request: Request, body: PortalIn):
     _require_stripe_ready()
@@ -521,7 +520,10 @@ def create_portal_session(request: Request, body: PortalIn):
     _enforce_allowlist(email)
 
     cached = _cache_get(email)
-    customer_id = (cached or {}).get("stripe_customer_id") or _stripe_find_customer_id_by_email(email)
+    customer_id = (cached or {}).get("stripe_customer_id")
+    if not customer_id:
+        customer_id = _stripe_find_customer_id_by_email(email)
+
     if not customer_id:
         raise HTTPException(404, "No Stripe customer found for that email yet.")
 
@@ -530,6 +532,7 @@ def create_portal_session(request: Request, body: PortalIn):
         return {"url": portal.url}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
+
 
 @app.get("/billing/success", include_in_schema=False)
 def billing_success(session_id: str):
@@ -586,17 +589,14 @@ def billing_success(session_id: str):
     except Exception:
         return RedirectResponse(url="/?billing=success_error")
 
+
 @app.get("/billing/cancel", include_in_schema=False)
 def billing_cancel():
     return RedirectResponse(url="/?billing=cancel")
 
+
 @app.get("/me")
 def me(request: Request):
-    """
-    IMPORTANT CHANGE:
-    - This endpoint should almost NEVER 503.
-    - If Stripe is temporarily down, fall back to cache and return a normal JSON.
-    """
     email = get_current_email(request)
     if not email:
         return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
@@ -607,16 +607,17 @@ def me(request: Request):
     return {
         "logged_in": True,
         "email": email,
-        "active": bool(info.get("active")),
-        "status": info.get("status"),
-        "current_period_end": info.get("current_period_end"),
-        "source": info.get("source"),
+        "active": bool(info["active"]),
+        "status": info["status"],
+        "current_period_end": info["current_period_end"],
     }
+
 
 @app.post("/logout")
 def logout():
     resp = JSONResponse({"ok": True})
     return _clear_auth_cookie(resp)
+
 
 # =========================
 # Premium-protected endpoint
@@ -628,20 +629,19 @@ def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_ac
         "You are Alyana Luz, a warm, scripture-focused assistant. "
         "You pray with the user, suggest Bible passages, and explain verses. "
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
+        "for something technical. Keep answers concise but caring. "
+        "Remember important facts the user shares in this conversation."
     )
-    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
-    text = _generate_text_with_retries(full_prompt)
-
-    if not text:
-        text = "I’m here with you. My response service is a little busy right now—please try again in a moment."
-
+    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "email": email, "message": text}
+
 
 # =========================
 # Bible Reader (LOCAL DB)
 # =========================
 DB_PATH = os.path.join(BASE_DIR, "data", "bible.db")
+
 
 def _db():
     if not os.path.exists(DB_PATH):
@@ -650,9 +650,11 @@ def _db():
     con.row_factory = sqlite3.Row
     return con
 
+
 def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
     rows = con.execute(f"PRAGMA table_info({table})").fetchall()
     return [r["name"] for r in rows]
+
 
 def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     cols = [c.lower() for c in _get_table_columns(con, "books")]
@@ -663,10 +665,12 @@ def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
     key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
     return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
 
+
 def _normalize_book_key(book: str) -> str:
     b = (book or "").strip().lower()
     b = re.sub(r"\s+", "", b)
     return b
+
 
 def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
     raw = (book or "").strip()
@@ -703,6 +707,7 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
 
     raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
 
+
 @app.get("/bible/health")
 def bible_health():
     con = _db()
@@ -721,6 +726,7 @@ def bible_health():
         return {"status": "ok", "db_path": DB_PATH, "verse_count": int(count)}
     finally:
         con.close()
+
 
 @app.get("/bible/books")
 def bible_books():
@@ -752,6 +758,7 @@ def bible_books():
     finally:
         con.close()
 
+
 @app.get("/bible/chapters")
 def bible_chapters(book: str):
     con = _db()
@@ -764,6 +771,7 @@ def bible_chapters(book: str):
         return {"book_id": book_id, "chapters": chapters}
     finally:
         con.close()
+
 
 @app.get("/bible/verses")
 def bible_verses(book: str, chapter: int):
@@ -781,6 +789,7 @@ def bible_verses(book: str, chapter: int):
         return {"book_id": book_id, "chapter": int(chapter), "verses": verses}
     finally:
         con.close()
+
 
 @app.get("/bible/passage")
 def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: int = 1, end: Optional[int] = None):
@@ -831,8 +840,9 @@ def bible_passage(book: str, chapter: int, full_chapter: bool = False, start: in
     finally:
         con.close()
 
+
 # =========================
-# Free chat + Devotional + Daily Prayer Starters
+# Free chat + Devotional + Daily Prayer
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
@@ -841,16 +851,13 @@ def chat(body: ChatIn):
         "You are Alyana Luz, a warm, scripture-focused assistant. "
         "You pray with the user, suggest Bible passages, and explain verses. "
         "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring."
+        "for something technical. Keep answers concise but caring. "
+        "Remember important facts the user shares in this conversation."
     )
-    full_prompt = f"{system_prompt}\n\nUser:\n{body.prompt}\n\nAlyana:"
-    text = _generate_text_with_retries(full_prompt)
-
-    # IMPORTANT: return friendly text instead of raising 503 so UI doesn't break
-    if not text:
-        text = "I’m here with you. My response service is a little busy right now—please try again in a moment."
-
+    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
     return {"status": "success", "message": text}
+
 
 @app.post("/devotional")
 def devotional(body: Optional[LangIn] = None):
@@ -886,6 +893,7 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
 @app.post("/daily_prayer")
 def daily_prayer(body: Optional[LangIn] = None):
@@ -925,6 +933,7 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     return {"json": text}
+
 
 
 
