@@ -1,10 +1,5 @@
-/* Alyana Luz · Bible AI — app.js
-   - Global Language + Voices (Karen en-AU, Paulina es-MX)
-   - Chat listen + Bible listen
-   - Bible Spanish output via AI translation when lang=es
-   - Devotional: new guided format + save + streak
-   - Daily Prayer: ACTS sections + save + streak + listen
-*/
+
+/* Alyana Luz · Bible AI — app.js */
 
 (() => {
   // -----------------------------
@@ -17,7 +12,6 @@
     try {
       return JSON.parse(str);
     } catch {
-      // Sometimes model returns leading/trailing text; try to extract JSON object
       const start = str.indexOf("{");
       const end = str.lastIndexOf("}");
       if (start >= 0 && end > start) {
@@ -30,7 +24,6 @@
   }
 
   function todayKeyLocal() {
-    // local day boundary
     const d = new Date();
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -223,7 +216,6 @@
 
   let uiLang = (localStorage.getItem(LS.uiLang) || "en").toLowerCase().startsWith("es") ? "es" : "en";
 
-  // Voice identifiers you chose
   const VOICES_KEEP = [
     { key: "karen-en-AU", label: "Karen — en-AU", lang: "en-AU", match: (v) => /karen/i.test(v.name) && /^en/i.test(v.lang) },
     { key: "paulina-es-MX", label: "Paulina — es-MX", lang: "es-MX", match: (v) => /paulina/i.test(v.name) && /^es/i.test(v.lang) },
@@ -242,6 +234,9 @@
   let availableVoices = [];
   let activeUtterance = null;
 
+  // NEW: track Bible toggle state
+  let bibleSpeaking = false;
+
   function loadVoices() {
     availableVoices = synth ? synth.getVoices() : [];
     return availableVoices;
@@ -250,7 +245,6 @@
   function pickActualVoiceForChoice(choiceKey) {
     const keep = VOICES_KEEP.find((x) => x.key === choiceKey) || VOICES_KEEP[0];
     const voices = availableVoices || [];
-    // Prefer exact matches (name+lang), else lang match
     let v = voices.find((vv) => keep.match(vv) && vv.lang === keep.lang);
     if (!v) v = voices.find((vv) => keep.match(vv));
     if (!v) v = voices.find((vv) => (vv.lang || "").toLowerCase().startsWith((keep.lang || "").slice(0, 2).toLowerCase()));
@@ -262,42 +256,43 @@
       if (synth) synth.cancel();
     } catch {}
     activeUtterance = null;
+
+    // If Bible was the one speaking, reset toggle UI state too.
+    bibleSpeaking = false;
+    updateBibleListenButton();
   }
 
-  function speakText(text) {
+  function speakText(text, opts = {}) {
     if (!synth) return;
+
     stopSpeaking();
 
     const cleaned = (text || "").trim();
     if (!cleaned) return;
 
-    // Ensure voices are loaded
     loadVoices();
 
     const keep = VOICES_KEEP.find((x) => x.key === voiceChoice) || VOICES_KEEP[0];
     const actual = pickActualVoiceForChoice(keep.key);
 
     const u = new SpeechSynthesisUtterance(cleaned);
-    u.rate = speechRate; // slower
+    u.rate = speechRate;
     u.pitch = 1.0;
     u.volume = 1.0;
-
-    // Force language so it doesn't mix
     u.lang = keep.lang;
-
     if (actual) u.voice = actual;
+
+    // Allow caller to set end handler
+    if (typeof opts.onEnd === "function") u.onend = opts.onEnd;
+    if (typeof opts.onError === "function") u.onerror = opts.onError;
 
     activeUtterance = u;
     synth.speak(u);
   }
 
-  // Ensure voice list loads in Firefox (async)
   if (synth) {
     loadVoices();
-    synth.onvoiceschanged = () => {
-      loadVoices();
-      // no-op, but helps Firefox populate voices
-    };
+    synth.onvoiceschanged = () => loadVoices();
   }
 
   // -----------------------------
@@ -329,7 +324,6 @@
     return r.json();
   }
 
-  // Use /chat (free) for devotional + translations (so we don't depend on old /devotional JSON format)
   async function alyanaChat(prompt, history) {
     const payload = { prompt, history: history || [] };
     const j = await apiPost("/chat", payload);
@@ -377,7 +371,6 @@
   // Inject missing UI controls (Language + Voice + Bible Version)
   // -----------------------------
   function ensureTopControls() {
-    // Chat: add Language + Voice dropdowns if not already present
     if (viewChat && !document.getElementById("globalLangSelect")) {
       const row = document.createElement("div");
       row.className = "row";
@@ -401,7 +394,6 @@
       row.appendChild(langWrap);
       row.appendChild(voiceWrap);
 
-      // Insert after subtitle line (muted) if exists, else after h2
       const h2 = viewChat.querySelector("h2");
       if (h2 && h2.nextElementSibling) {
         h2.parentNode.insertBefore(row, h2.nextElementSibling.nextElementSibling || h2.nextElementSibling);
@@ -412,7 +404,6 @@
       }
     }
 
-    // Chat: add Listen Last + Stop buttons if not present
     const composer = viewChat?.querySelector(".composer");
     if (composer && !document.getElementById("listenLastBtn")) {
       const listenBtn = document.createElement("button");
@@ -429,7 +420,6 @@
       composer.appendChild(stopBtn);
     }
 
-    // Bible: add Version dropdown if not present (UI-only)
     if (viewBible && !document.getElementById("bibleVersionSelect")) {
       const topRow = viewBible.querySelector(".row");
       if (topRow) {
@@ -439,12 +429,11 @@
           <option value="default">${uiLang === "es" ? I18N.es.bible.versionDefault : I18N.en.bible.versionDefault}</option>
           <option value="ui-nlt">NLT (${uiLang === "es" ? I18N.es.bible.versionUiOnly : I18N.en.bible.versionUiOnly})</option>
         `;
-        // Put it before bookSelect for a clean look
         topRow.insertBefore(versionSel, topRow.firstChild);
       }
     }
 
-    // Bible: add Listen + Stop buttons for the passage output (if missing)
+    // Bible: ONLY inject one button now (toggle). No Stop button.
     if (viewBible && !document.getElementById("bibleListenBtn")) {
       const controls = document.createElement("div");
       controls.className = "row";
@@ -454,14 +443,8 @@
       listen.className = "btn";
       listen.id = "bibleListenBtn";
 
-      const stop = document.createElement("button");
-      stop.className = "btn";
-      stop.id = "bibleStopBtn";
-
       controls.appendChild(listen);
-      controls.appendChild(stop);
 
-      // Insert before bibleOut card
       if (bibleOut && bibleOut.parentNode) {
         bibleOut.parentNode.insertBefore(controls, bibleOut);
       } else {
@@ -469,7 +452,6 @@
       }
     }
 
-    // Devotional: remove listen/stop if they exist from older versions
     const devListen = document.getElementById("devListenBtn");
     const devStop = document.getElementById("devStopBtn");
     if (devListen) devListen.remove();
@@ -526,7 +508,6 @@
   }
 
   async function handleSupport() {
-    // Optional email prompt could exist in your other UI; keep simple
     try {
       const j = await apiPost("/stripe/create-checkout-session", {});
       if (j?.url) window.location.href = j.url;
@@ -668,10 +649,8 @@
     chatInput.value = "";
     if (chatStatus) chatStatus.textContent = uiLang === "es" ? "Pensando…" : "Thinking…";
 
-    // Keep history lightweight for backend memory support
     const history = chatArr.slice(-16).map((m) => ({ role: m.role, content: m.content }));
 
-    // Force language of Alyana reply when in Spanish
     const langInstruction =
       uiLang === "es"
         ? "Responde completamente en español (sin mezclar inglés)."
@@ -722,10 +701,16 @@
   let bibleCurrent = {
     reference: "",
     text: "",
-    displayedText: "", // possibly translated
+    displayedText: "",
     lang: "en",
     version: "default",
   };
+
+  function updateBibleListenButton() {
+    const btn = document.getElementById("bibleListenBtn");
+    if (!btn) return;
+    btn.textContent = bibleSpeaking ? I18N[uiLang].bible.stop : I18N[uiLang].bible.listen;
+  }
 
   async function loadBooks() {
     const j = await apiGet("/bible/books");
@@ -766,8 +751,6 @@
 
   async function translateToSpanishIfNeeded(reference, englishText) {
     if (uiLang !== "es") return { reference, text: englishText };
-
-    // If already looks Spanish, skip
     if (/á|é|í|ó|ú|ñ|¿|¡/.test(englishText)) return { reference, text: englishText };
 
     setBibleOut("", "", I18N[uiLang].bible.translating);
@@ -806,15 +789,25 @@ ${englishText}
     bibleCurrent.lang = uiLang;
     bibleCurrent.version = version;
 
-    // Translate display if Spanish is selected
     const shown = await translateToSpanishIfNeeded(reference, text);
     bibleCurrent.displayedText = shown.text;
 
     setBibleOut(reference, shown.text);
 
-    localStorage.setItem(LS.lastBible, JSON.stringify({
-      bookId, chapter, start: "", end: "", reference, englishText: text, displayedText: shown.text, lang: uiLang, version
-    }));
+    localStorage.setItem(
+      LS.lastBible,
+      JSON.stringify({
+        bookId,
+        chapter,
+        start: "",
+        end: "",
+        reference,
+        englishText: text,
+        displayedText: shown.text,
+        lang: uiLang,
+        version,
+      })
+    );
   }
 
   async function loadPassage() {
@@ -834,7 +827,9 @@ ${englishText}
     const end = hasE ? e : start;
 
     const j = await apiGet(
-      `/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+      `/bible/passage?book=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}&full_chapter=false&start=${encodeURIComponent(
+        start
+      )}&end=${encodeURIComponent(end)}`
     );
 
     const reference = j?.reference || "";
@@ -853,25 +848,56 @@ ${englishText}
 
     setBibleOut(reference, shown.text);
 
-    localStorage.setItem(LS.lastBible, JSON.stringify({
-      bookId, chapter, start: String(start), end: String(end), reference, englishText: text, displayedText: shown.text, lang: uiLang, version
-    }));
+    localStorage.setItem(
+      LS.lastBible,
+      JSON.stringify({
+        bookId,
+        chapter,
+        start: String(start),
+        end: String(end),
+        reference,
+        englishText: text,
+        displayedText: shown.text,
+        lang: uiLang,
+        version,
+      })
+    );
   }
 
-  function listenBible() {
+  // NEW: Bible Listen toggle
+  function toggleBibleListen() {
+    // If already speaking, stop.
+    if (bibleSpeaking) {
+      stopSpeaking();
+      return;
+    }
+
     const t = (bibleCurrent.displayedText || "").trim();
     if (!t) return;
-    speakText(`${bibleCurrent.reference}\n\n${t}`);
+
+    bibleSpeaking = true;
+    updateBibleListenButton();
+
+    const textToSpeak = `${bibleCurrent.reference}\n\n${t}`;
+
+    speakText(textToSpeak, {
+      onEnd: () => {
+        bibleSpeaking = false;
+        updateBibleListenButton();
+      },
+      onError: () => {
+        bibleSpeaking = false;
+        updateBibleListenButton();
+      },
+    });
   }
 
   // -----------------------------
-  // Devotional: new guided format (AI via /chat)
+  // Devotional / Prayer (unchanged)
   // -----------------------------
   function ensureDevotionalUI() {
     if (!viewDev) return;
 
-    // If devOut exists already, we’ll use it as the “Scripture + Explanation” box container
-    // Add streak display + Save button if missing
     if (!document.getElementById("devStreakPill")) {
       const pill = document.createElement("div");
       pill.className = "pill";
@@ -889,7 +915,6 @@ ${englishText}
       viewDev.appendChild(btn);
     }
 
-    // Add missing textareas if your HTML doesn’t have them (robust)
     const needed = [
       { id: "devReflection", labelKey: "reflection" },
       { id: "devApplication", labelKey: "application" },
@@ -937,7 +962,11 @@ ${englishText}
   function loadDevotionalDraft() {
     const raw = localStorage.getItem(LS.devotionalDraft);
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   function saveDevotionalDraft(draft) {
@@ -963,7 +992,6 @@ ${englishText}
       el.addEventListener("input", () => {
         const draft = loadDevotionalDraft() || {};
         draft[id] = el.value || "";
-        // keep devOut too
         if (devOut) draft.devOutHtml = devOut.innerHTML;
         saveDevotionalDraft(draft);
       });
@@ -975,8 +1003,7 @@ ${englishText}
 
     if (!devOut) return;
 
-    // IMPORTANT: Use the DEV tab selector (devLangSel) if present, otherwise global uiLang.
-    const lang = devLangSel ? (devLangSel.value || uiLang) : uiLang;
+    const lang = devLangSel ? devLangSel.value || uiLang : uiLang;
     const L = lang.startsWith("es") ? "es" : "en";
 
     devOut.innerHTML = `<div class="muted">${L === "es" ? "Generando…" : "Generating…"}</div>`;
@@ -1036,7 +1063,6 @@ Devuelve exactamente este JSON:
       `;
       devOut.innerHTML = html;
 
-      // Put Alyana’s examples as placeholder help (user still fills)
       const map = {
         devReflection: data.example_reflection,
         devApplication: data.example_application,
@@ -1048,16 +1074,13 @@ Devuelve exactamente este JSON:
         const el = document.getElementById(id);
         const v = (map[id] || "").trim();
         if (el) {
-          // Only set placeholder; don't overwrite user text
           el.placeholder = v ? `${I18N[L].devotional.placeholders.writeHere} (${v})` : I18N[L].devotional.placeholders.writeHere;
         }
       });
 
-      // Save devOut to draft
       const draft = loadDevotionalDraft() || {};
       draft.devOutHtml = devOut.innerHTML;
       saveDevotionalDraft(draft);
-
     } catch (e) {
       devOut.innerHTML = `<div class="danger">${escapeHtml(String(e.message || e))}</div>`;
     }
@@ -1069,23 +1092,20 @@ Devuelve exactamente este JSON:
     const draft = loadDevotionalDraft() || {};
     ids.forEach((id) => {
       const el = document.getElementById(id);
-      draft[id] = el ? (el.value || "") : "";
+      draft[id] = el ? el.value || "" : "";
     });
     draft.devOutHtml = devOut ? devOut.innerHTML : "";
     saveDevotionalDraft(draft);
 
-    // Streak: only increments once per local day
     const today = todayKeyLocal();
     const last = localStorage.getItem(LS.devotionalLastDate) || "";
 
     if (last === today) {
-      // already saved today
       updateDevotionalStreakUI();
       alert(L === "es" ? "Devocional guardado. (Ya contaste hoy para la racha.)" : "Devotional saved. (You already counted today for your streak.)");
       return;
     }
 
-    // If last day was yesterday, increment; else reset to 1
     const lastDate = last ? new Date(last + "T00:00:00") : null;
     const tDate = new Date(today + "T00:00:00");
     let next = 1;
@@ -1098,14 +1118,9 @@ Devuelve exactamente este JSON:
     alert(L === "es" ? "Devocional guardado. Racha actualizada." : "Devotional saved. Streak updated.");
   }
 
-  // -----------------------------
-  // Daily Prayer (ACTS)
-  // -----------------------------
   function ensurePrayerUI() {
     if (!viewPrayer) return;
 
-    // If prayOut exists, we’ll render starters into it as four blocks.
-    // Add streak pill + fields + buttons if missing.
     if (!document.getElementById("prayerStreakPill")) {
       const pill = document.createElement("div");
       pill.className = "pill";
@@ -1182,7 +1197,11 @@ Devuelve exactamente este JSON:
   function loadPrayerDraft() {
     const raw = localStorage.getItem(LS.prayerDraft);
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }
 
   function savePrayerDraft(d) {
@@ -1217,15 +1236,12 @@ Devuelve exactamente este JSON:
 
     if (!prayOut) return;
 
-    // IMPORTANT: Use prayLangSel for generation if present, else global uiLang.
-    const lang = prayLangSel ? (prayLangSel.value || uiLang) : uiLang;
+    const lang = prayLangSel ? prayLangSel.value || uiLang : uiLang;
     const L = lang.startsWith("es") ? "es" : "en";
 
     prayOut.innerHTML = `<div class="muted">${L === "es" ? "Generando…" : "Generating…"}</div>`;
 
     try {
-      // Your backend /daily_prayer exists, but it sometimes mixes.
-      // We’ll generate via /chat with strict language rules.
       const prompt =
         L === "es"
           ? `
@@ -1277,11 +1293,9 @@ Return EXACT JSON:
 
       prayOut.innerHTML = html;
 
-      // Save to draft for persistence
       const d = loadPrayerDraft() || {};
       d.prayOutHtml = prayOut.innerHTML;
       savePrayerDraft(d);
-
     } catch (e) {
       prayOut.innerHTML = `<div class="danger">${escapeHtml(String(e.message || e))}</div>`;
     }
@@ -1293,7 +1307,7 @@ Return EXACT JSON:
     const d = loadPrayerDraft() || {};
     ["pAdoration", "pConfession", "pThanksgiving", "pSupplication"].forEach((id) => {
       const el = document.getElementById(id);
-      d[id] = el ? (el.value || "") : "";
+      d[id] = el ? el.value || "" : "";
     });
     if (prayOut) d.prayOutHtml = prayOut.innerHTML;
     savePrayerDraft(d);
@@ -1332,22 +1346,17 @@ Return EXACT JSON:
   function applyUILanguage() {
     const t = I18N[uiLang];
 
-    // Header buttons/pill
     if (btnSupport) btnSupport.textContent = t.billing.support;
     if (btnBilling) btnBilling.textContent = t.billing.manage;
 
-    // Tabs text
     const tabButtons = document.querySelectorAll(".tab");
     tabButtons.forEach((b) => {
       const key = b.getAttribute("data-tab");
       if (key && t.tabs[key]) b.textContent = t.tabs[key];
     });
 
-    // Saved side panel title/subtitle if present in HTML (we won’t rewire headings aggressively)
-    // Just update empty text when rendering
     renderSavedChats();
 
-    // Chat texts
     if (viewChat) {
       const h2 = viewChat.querySelector("h2");
       if (h2) h2.textContent = t.chat.title;
@@ -1374,7 +1383,6 @@ Return EXACT JSON:
       if (voiceSel) voiceSel.value = voiceChoice;
     }
 
-    // Bible texts
     if (viewBible) {
       const h2 = viewBible.querySelector("h2");
       if (h2) h2.textContent = t.bible.title;
@@ -1384,10 +1392,8 @@ Return EXACT JSON:
       if (startVerse) startVerse.placeholder = t.bible.startVerse;
       if (endVerse) endVerse.placeholder = t.bible.endVerse;
 
-      const listen = document.getElementById("bibleListenBtn");
-      const stop = document.getElementById("bibleStopBtn");
-      if (listen) listen.textContent = t.bible.listen;
-      if (stop) stop.textContent = t.bible.stop;
+      // Toggle button label depends on speaking state
+      updateBibleListenButton();
 
       const verSel = document.getElementById("bibleVersionSelect");
       if (verSel) {
@@ -1395,24 +1401,20 @@ Return EXACT JSON:
         if (verSel.options[1]) verSel.options[1].textContent = `NLT (${t.bible.versionUiOnly})`;
       }
 
-      // If bibleOut is still default prompt, update it
       if (bibleOut && bibleOut.innerText && bibleOut.innerText.includes("Select a book and chapter")) {
         setBibleOut("", "", t.bible.selectPrompt);
       }
     }
 
-    // Devotional texts
     if (viewDev) {
       const h2 = viewDev.querySelector("h2");
       if (h2) h2.textContent = t.devotional.title;
 
       if (devBtn) devBtn.textContent = t.devotional.generate;
 
-      // Instruction line might be your muted line under h2
       const muted = viewDev.querySelector(".muted");
       if (muted) muted.textContent = t.devotional.instruction;
 
-      // Field labels
       const labelMap = [
         { id: "devReflection_label", text: t.devotional.fields.reflection },
         { id: "devApplication_label", text: t.devotional.fields.application },
@@ -1425,7 +1427,6 @@ Return EXACT JSON:
         if (el) el.textContent = x.text;
       });
 
-      // Placeholders if empty
       ["devReflection", "devApplication", "devPrayer", "devClosing", "devFocus"].forEach((id) => {
         const el = document.getElementById(id);
         if (el && !el.placeholder) el.placeholder = t.devotional.placeholders.writeHere;
@@ -1435,11 +1436,9 @@ Return EXACT JSON:
       if (save) save.textContent = t.devotional.save;
       updateDevotionalStreakUI();
 
-      // Devotional language dropdown should follow global (optional)
       if (devLangSel) devLangSel.value = uiLang;
     }
 
-    // Prayer texts
     if (viewPrayer) {
       const h2 = viewPrayer.querySelector("h2");
       if (h2) h2.textContent = t.prayer.title;
@@ -1448,7 +1447,6 @@ Return EXACT JSON:
       const muted = viewPrayer.querySelector(".muted");
       if (muted) muted.textContent = t.prayer.instruction;
 
-      // Labels + placeholders
       const labelPairs = [
         { id: "pAdoration_label", text: t.prayer.labels.yourAdoration },
         { id: "pConfession_label", text: t.prayer.labels.yourConfession },
@@ -1494,15 +1492,17 @@ Return EXACT JSON:
         uiLang = (langSel.value || "en").startsWith("es") ? "es" : "en";
         localStorage.setItem(LS.uiLang, uiLang);
 
-        // Auto-switch voice to matching language (Paulina for es, Karen for en)
         voiceChoice = uiLang === "es" ? "paulina-es-MX" : "karen-en-AU";
         localStorage.setItem(LS.voiceChoice, voiceChoice);
         if (voiceSel) voiceSel.value = voiceChoice;
 
+        // language change should also reset Bible toggle label
+        bibleSpeaking = false;
+        updateBibleListenButton();
+
         applyUILanguage();
         await refreshAccount();
 
-        // If Bible currently loaded, re-translate if switching to Spanish
         if (bibleCurrent.text) {
           const shown = await translateToSpanishIfNeeded(bibleCurrent.reference, bibleCurrent.text);
           bibleCurrent.displayedText = shown.text;
@@ -1524,9 +1524,6 @@ Return EXACT JSON:
     }
   }
 
-  // -----------------------------
-  // Escape HTML
-  // -----------------------------
   function escapeHtml(s) {
     return String(s || "")
       .replaceAll("&", "&amp;")
@@ -1540,11 +1537,9 @@ Return EXACT JSON:
   // Init wiring
   // -----------------------------
   function bindEvents() {
-    // Billing
     if (btnSupport) btnSupport.addEventListener("click", handleSupport);
     if (btnBilling) btnBilling.addEventListener("click", handleBilling);
 
-    // Chat
     if (sendBtn) sendBtn.addEventListener("click", sendChat);
     if (chatInput) {
       chatInput.addEventListener("keydown", (e) => {
@@ -1577,10 +1572,9 @@ Return EXACT JSON:
     if (loadChapterBtn) loadChapterBtn.addEventListener("click", loadChapter);
     if (loadPassageBtn) loadPassageBtn.addEventListener("click", loadPassage);
 
+    // Toggle button
     const bibleListenBtn = document.getElementById("bibleListenBtn");
-    const bibleStopBtn = document.getElementById("bibleStopBtn");
-    if (bibleListenBtn) bibleListenBtn.addEventListener("click", listenBible);
-    if (bibleStopBtn) bibleStopBtn.addEventListener("click", stopSpeaking);
+    if (bibleListenBtn) bibleListenBtn.addEventListener("click", toggleBibleListen);
 
     // Devotional
     if (devBtn) devBtn.addEventListener("click", generateDevotional);
@@ -1596,10 +1590,8 @@ Return EXACT JSON:
     if (prayerListen) prayerListen.addEventListener("click", listenPrayerStarters);
     if (prayerStop) prayerStop.addEventListener("click", stopSpeaking);
 
-    // If devLang/prayLang exist, keep them synced to global
     if (devLangSel) {
       devLangSel.addEventListener("change", () => {
-        // Keep global aligned (your requirement: chat language drives other pages)
         uiLang = (devLangSel.value || "en").startsWith("es") ? "es" : "en";
         localStorage.setItem(LS.uiLang, uiLang);
         const langSel = document.getElementById("globalLangSelect");
@@ -1609,6 +1601,9 @@ Return EXACT JSON:
         localStorage.setItem(LS.voiceChoice, voiceChoice);
         const voiceSel = document.getElementById("voiceSelect");
         if (voiceSel) voiceSel.value = voiceChoice;
+
+        bibleSpeaking = false;
+        updateBibleListenButton();
 
         applyUILanguage();
       });
@@ -1625,6 +1620,9 @@ Return EXACT JSON:
         const voiceSel = document.getElementById("voiceSelect");
         if (voiceSel) voiceSel.value = voiceChoice;
 
+        bibleSpeaking = false;
+        updateBibleListenButton();
+
         applyUILanguage();
       });
     }
@@ -1635,7 +1633,6 @@ Return EXACT JSON:
       await loadBooks();
       if (bookSelect?.value) await loadChaptersForBook(bookSelect.value);
 
-      // Restore last bible state
       const raw = localStorage.getItem(LS.lastBible);
       if (raw) {
         try {
@@ -1646,18 +1643,26 @@ Return EXACT JSON:
           if (startVerse) startVerse.value = last?.start || "";
           if (endVerse) endVerse.value = last?.end || "";
 
-          // Rebuild current display
           bibleCurrent.reference = last?.reference || "";
           bibleCurrent.text = last?.englishText || "";
           bibleCurrent.displayedText = last?.displayedText || "";
           bibleCurrent.lang = uiLang;
-          setBibleOut(bibleCurrent.reference, uiLang === "es" ? (bibleCurrent.displayedText || bibleCurrent.text) : bibleCurrent.text);
+
+          setBibleOut(
+            bibleCurrent.reference,
+            uiLang === "es" ? bibleCurrent.displayedText || bibleCurrent.text : bibleCurrent.text
+          );
         } catch {}
       } else {
         setBibleOut("", "", I18N[uiLang].bible.selectPrompt);
       }
+
+      bibleSpeaking = false;
+      updateBibleListenButton();
     } catch {
       setBibleOut("", "", uiLang === "es" ? "Error cargando la Biblia local." : "Error loading local Bible.");
+      bibleSpeaking = false;
+      updateBibleListenButton();
     }
   }
 
@@ -1682,28 +1687,20 @@ Return EXACT JSON:
     ensureTopControls();
     initTabs();
 
-    // Restore chat
     renderMessages(loadCurrentChat());
     renderSavedChats();
 
-    // Ensure sections exist and drafts load
     initDevotional();
     initPrayer();
 
-    // Apply language/voice + bind
     applyUILanguage();
     bindGlobalLanguageAndVoice();
 
-    // Events
     bindEvents();
 
-    // Bible init
     await initBible();
-
-    // Account
     await refreshAccount();
 
-    // Default status
     if (chatStatus) chatStatus.textContent = I18N[uiLang].chat.statusReady;
   }
 
