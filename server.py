@@ -158,7 +158,7 @@ def get_current_email(request: Request) -> Optional[str]:
 
 
 # --------------------
-# OPTIONAL local cache
+# OPTIONAL local cache (Stripe subscription cache)
 # --------------------
 SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
 
@@ -227,6 +227,81 @@ def _cache_get(email: str) -> Optional[dict]:
         return dict(row) if row else None
     finally:
         con.close()
+
+
+# --------------------
+# AI daily cache (Devotional / Daily Prayer)
+# --------------------
+AI_CACHE_DB_PATH = os.path.join(BASE_DIR, "data", "ai_cache.db")
+
+
+def _ai_cache_db():
+    os.makedirs(os.path.dirname(AI_CACHE_DB_PATH), exist_ok=True)
+    con = sqlite3.connect(AI_CACHE_DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def _ai_cache_init():
+    con = _ai_cache_db()
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_cache (
+                cache_key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+_ai_cache_init()
+
+
+def _ai_cache_get(cache_key: str, max_age_seconds: int = 60 * 60 * 24):
+    if not cache_key:
+        return None
+    con = _ai_cache_db()
+    try:
+        row = con.execute(
+            "SELECT value, created_at FROM ai_cache WHERE cache_key=?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        if int(time.time()) - int(row["created_at"]) > max_age_seconds:
+            return None
+        return str(row["value"])
+    finally:
+        con.close()
+
+
+def _ai_cache_set(cache_key: str, value: str):
+    if not cache_key or value is None:
+        return
+    con = _ai_cache_db()
+    try:
+        con.execute(
+            """
+            INSERT INTO ai_cache (cache_key, value, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                value=excluded.value,
+                created_at=excluded.created_at
+            """,
+            (cache_key, value, int(time.time())),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _today_utc_yyyymmdd():
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 # --------------------
@@ -476,7 +551,8 @@ def login(body: LoginIn):
 
     _enforce_allowlist(email)
 
-    info = _stripe_check_emailxneil_subscription(email) if False else _stripe_check_email_subscription(email)
+    # fixed: remove typo _stripe_check_emailxneil_subscription
+    info = _stripe_check_email_subscription(email)
     if not info["active"]:
         raise HTTPException(402, "Subscription inactive or not found.")
 
@@ -864,41 +940,54 @@ def devotional(body: Optional[LangIn] = None):
     _require_ai()
     lang = _norm_lang(body.lang if body else "en")
 
+    cache_key = f"devotional:{lang}:{_today_utc_yyyymmdd()}"
+    cached = _ai_cache_get(cache_key)
+    if cached:
+        return {"json": cached, "cached": True}
+
     if lang == "es":
         prompt = """
 Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.
 Devuelve exactamente esta forma:
 {
-  "scripture": "Libro Capítulo:Verso(s) — texto del verso",
+  "scripture": "Libro Capítulo:Verso(s) — texto del verso (1-5 versos, breve)",
   "brief_explanation": "2-4 oraciones explicándolo de forma simple"
 }
 Reglas:
 - Devuelve SOLO JSON válido (sin markdown).
 - Todo en español.
-- Tono cálido, práctico y breve.
+- Cita claramente la referencia.
+- Mantén los versos breves (1-5).
 """.strip()
     else:
         prompt = """
 You are Alyana Luz. Create a devotional in STRICT JSON ONLY.
 Return exactly this shape:
 {
-  "scripture": "Book Chapter:Verse(s) — verse text",
+  "scripture": "Book Chapter:Verse(s) — verse text (1-5 verses, brief)",
   "brief_explanation": "2-4 sentences explaining it simply"
 }
 Rules:
 - Return ONLY valid JSON (no markdown).
 - Everything in English.
-- Warm, practical, brief.
+- Clearly cite the reference.
+- Keep verses brief (1-5).
 """.strip()
 
     text = _generate_text_with_retries(prompt) or "{}"
-    return {"json": text}
+    _ai_cache_set(cache_key, text)
+    return {"json": text, "cached": False}
 
 
 @app.post("/daily_prayer")
 def daily_prayer(body: Optional[LangIn] = None):
     _require_ai()
     lang = _norm_lang(body.lang if body else "en")
+
+    cache_key = f"daily_prayer:{lang}:{_today_utc_yyyymmdd()}"
+    cached = _ai_cache_get(cache_key)
+    if cached:
+        return {"json": cached, "cached": True}
 
     if lang == "es":
         prompt = """
@@ -932,10 +1021,5 @@ Rules:
 """.strip()
 
     text = _generate_text_with_retries(prompt) or "{}"
-    return {"json": text}
-
-
-
-
-
-
+    _ai_cache_set(cache_key, text)
+    return {"json": text, "cached": False}
