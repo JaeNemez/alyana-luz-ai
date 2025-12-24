@@ -1,9 +1,11 @@
 /* frontend/app.js
    Alyana Luz • Bible AI
 
-   - Auto-loads Daily Prayer starter when tab opens (if empty)
-   - Updates Daily Prayer label text (EN/ES)
-   - Daily Prayer calls /daily_prayer?lang=en|es
+   Update: Daily Prayer now uses ACTS sections:
+   - Adoration, Confession, Thanksgiving, Supplication (+ Notes)
+   - Alyana generates short starters for each section
+   - User writes real prayer in each section
+   - Save combines sections into one saved entry + streak
 */
 
 (() => {
@@ -25,7 +27,7 @@
   };
 
   // -----------------------------
-  // THEME
+  // THEME (kept)
   // -----------------------------
   const THEME = {
     bg1: "#2b0a50",
@@ -41,65 +43,6 @@
     ok: "#22c55e",
     bubbleUser: "rgba(245, 158, 11, 0.24)",
     bubbleBot: "rgba(255,255,255,0.06)",
-  };
-
-  // -----------------------------
-  // STATE
-  // -----------------------------
-  const state = {
-    tab: "chat",
-    lang: "en", // "en" | "es"
-
-    voices: [],
-    voiceSelected: { en: null, es: null },
-
-    account: { status: "unknown", email: null },
-
-    chat: {
-      messages: loadLS("alyana_chat_messages", []),
-      sending: false,
-      error: null,
-    },
-
-    bible: {
-      status: null,
-
-      books: [],
-      bookId: 1,
-      bookName: "Genesis",
-
-      chapters: [],
-      chapter: 1,
-
-      fullChapter: true,
-      startVerse: "",
-      endVerse: "",
-
-      reference: "",
-      text: "",
-      loading: false,
-      error: null,
-    },
-
-    devotional: {
-      suggestionRaw: "",
-      userText: loadLS("alyana_devotional_draft", ""),
-      saved: loadLS("alyana_devotional_saved", []),
-      streak: loadLS("alyana_devotional_streak", { count: 0, lastDate: null }),
-      error: null,
-      loading: false,
-      autoLoadedOnce: false,
-    },
-
-    prayer: {
-      suggestionRaw: "",
-      userText: loadLS("alyana_prayer_draft", ""),
-      saved: loadLS("alyana_prayer_saved", []),
-      streak: loadLS("alyana_prayer_streak", { count: 0, lastDate: null }),
-      error: null,
-      loading: false,
-      autoLoadedOnce: false,
-    },
   };
 
   // -----------------------------
@@ -155,38 +98,6 @@
     return data;
   }
 
-  function setTab(tab) {
-    state.tab = tab;
-
-    // ✅ AUTO-LOAD starter when opening tabs (so it doesn't look empty like your screenshot)
-    if (tab === "prayer") {
-      autoLoadPrayerStarterIfEmpty();
-    }
-    if (tab === "devotional") {
-      autoLoadDevotionalIfEmpty();
-    }
-
-    render();
-  }
-
-  function setLang(lang) {
-    state.lang = lang === "es" ? "es" : "en";
-
-    // when language changes, reload bible status + books/chapters for that version
-    refreshBibleForLanguage().catch(() => {});
-
-    // also: if user flips language while on prayer tab, refresh starter (optional)
-    if (state.tab === "prayer") {
-      // clear old suggestion so new language loads cleanly
-      state.prayer.suggestionRaw = "";
-      state.prayer.error = null;
-      state.prayer.autoLoadedOnce = false;
-      autoLoadPrayerStarterIfEmpty();
-    }
-
-    render();
-  }
-
   function languageInstruction() {
     return state.lang === "es"
       ? "IMPORTANT: Reply only in Spanish."
@@ -198,7 +109,231 @@
   }
 
   // -----------------------------
-  // TEXT TO SPEECH
+  // DAILY PRAYER PARSING
+  // -----------------------------
+  // We accept a single text blob (like your screenshot) and extract ACTS starters.
+  function normalizeLine(s) {
+    return String(s || "")
+      .replace(/\u2014/g, "-")
+      .replace(/\u2013/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function stripLabelPrefix(line) {
+    // Remove bullets like "- " or "— " and label prefixes "Acknowledgment:" etc.
+    let s = normalizeLine(line);
+    s = s.replace(/^[-•\u2014]\s*/, "");
+    return s.trim();
+  }
+
+  function parsePrayerStarterToACTS(text) {
+    const out = {
+      A: "",
+      C: "",
+      T: "",
+      S: "",
+    };
+
+    const raw = String(text || "").trim();
+    if (!raw) return out;
+
+    // Split lines and try to map into A/C/T/S buckets.
+    const lines = raw
+      .split("\n")
+      .map(l => l.trim())
+      .filter(Boolean);
+
+    // If first line is like "Heavenly Father," keep it as an Adoration starter seed.
+    if (lines.length) {
+      const first = normalizeLine(lines[0]);
+      if (/father|lord|dios|padre/i.test(first) && first.length <= 40) {
+        out.A = first;
+      }
+    }
+
+    // bucket helpers
+    const push = (key, value) => {
+      const v = value.trim();
+      if (!v) return;
+      out[key] = out[key] ? `${out[key]}\n${v}` : v;
+    };
+
+    for (const l0 of lines) {
+      const l = normalizeLine(l0);
+      const lower = l.toLowerCase();
+
+      // detect labels
+      const hasA = /adoration|acknowledg|praise|who you are|santo|alaban|reverenc/i.test(lower);
+      const hasC = /confess|confession|forgive|fallen short|perd[oó]n|confies/i.test(lower);
+      const hasT = /thank|gratitude|thanksgiving|grateful|gracias|agradec/i.test(lower);
+      const hasS = /supplication|petition|request|intercession|bless|help|grant|give me|protection|guide|wisdom|strength|peace|interces/i.test(lower);
+
+      // Also: if the line begins with "— Acknowledgment:" etc.
+      const cleaned = stripLabelPrefix(l0).replace(/^(Acknowledg(e)?ment|Adoration)\s*:\s*/i, "").trim();
+      const cleanedC = stripLabelPrefix(l0).replace(/^(Reflection\/Confession|Confession|Reflection)\s*:\s*/i, "").trim();
+      const cleanedT = stripLabelPrefix(l0).replace(/^(Gratitude|Thanksgiving)\s*:\s*/i, "").trim();
+      const cleanedS = stripLabelPrefix(l0).replace(/^(Petition|Requests|Intercession|Supplication|Surrender)\s*:\s*/i, "").trim();
+
+      // Decide bucket
+      if (/^(acknowledg(e)?ment|adoration)\s*:/i.test(stripLabelPrefix(l0))) push("A", cleaned);
+      else if (/^(reflection\/confession|confession|reflection)\s*:/i.test(stripLabelPrefix(l0))) push("C", cleanedC);
+      else if (/^(gratitude|thanksgiving)\s*:/i.test(stripLabelPrefix(l0))) push("T", cleanedT);
+      else if (/^(petition|requests|intercession|supplication|surrender)\s*:/i.test(stripLabelPrefix(l0))) push("S", cleanedS);
+      else if (hasC) push("C", stripLabelPrefix(l0));
+      else if (hasT) push("T", stripLabelPrefix(l0));
+      else if (hasA) push("A", stripLabelPrefix(l0));
+      else if (hasS) push("S", stripLabelPrefix(l0));
+    }
+
+    // If we never got anything into A and we had a strong opening line, keep it.
+    // Otherwise leave as-is.
+
+    return out;
+  }
+
+  function defaultPrayerDraft() {
+    // New structured draft object
+    return { A: "", C: "", T: "", S: "", N: "" };
+  }
+
+  function migratePrayerDraftIfNeeded(rawDraft) {
+    // Older versions stored a single string. Convert it into Notes (N).
+    if (typeof rawDraft === "string") {
+      const s = rawDraft.trim();
+      const d = defaultPrayerDraft();
+      d.N = s;
+      return d;
+    }
+    if (!rawDraft || typeof rawDraft !== "object") return defaultPrayerDraft();
+
+    // Ensure keys exist
+    return {
+      A: String(rawDraft.A || ""),
+      C: String(rawDraft.C || ""),
+      T: String(rawDraft.T || ""),
+      S: String(rawDraft.S || ""),
+      N: String(rawDraft.N || ""),
+    };
+  }
+
+  function buildCombinedPrayerTextFromSections(sections, lang) {
+    const isEs = lang === "es";
+    const lines = [];
+
+    const title = isEs ? "Oración (ACTS)" : "Prayer (ACTS)";
+    lines.push(title);
+    lines.push("");
+
+    const add = (labelEn, labelEs, key) => {
+      const v = String(sections[key] || "").trim();
+      if (!v) return;
+      lines.push(isEs ? labelEs : labelEn);
+      lines.push(v);
+      lines.push("");
+    };
+
+    add("Adoration:", "Adoración:", "A");
+    add("Confession:", "Confesión:", "C");
+    add("Thanksgiving:", "Acción de gracias:", "T");
+    add("Supplication:", "Súplica:", "S");
+
+    const notes = String(sections.N || "").trim();
+    if (notes) {
+      lines.push(isEs ? "Notas:" : "Notes:");
+      lines.push(notes);
+      lines.push("");
+    }
+
+    return lines.join("\n").trim();
+  }
+
+  // -----------------------------
+  // STATE
+  // -----------------------------
+  const state = {
+    tab: "chat",
+    lang: "en",
+
+    voices: [],
+    voiceSelected: { en: null, es: null },
+
+    account: { status: "unknown", email: null },
+
+    chat: {
+      messages: loadLS("alyana_chat_messages", []),
+      sending: false,
+      error: null,
+    },
+
+    bible: {
+      status: null,
+      books: [],
+      bookId: 1,
+      bookName: "Genesis",
+      chapters: [],
+      chapter: 1,
+      fullChapter: true,
+      startVerse: "",
+      endVerse: "",
+      reference: "",
+      text: "",
+      loading: false,
+      error: null,
+    },
+
+    devotional: {
+      suggestionRaw: "",
+      userText: loadLS("alyana_devotional_draft", ""),
+      saved: loadLS("alyana_devotional_saved", []),
+      streak: loadLS("alyana_devotional_streak", { count: 0, lastDate: null }),
+      error: null,
+      loading: false,
+      autoLoadedOnce: false,
+    },
+
+    prayer: {
+      suggestionRaw: "",
+      starters: { A: "", C: "", T: "", S: "" }, // parsed starters
+      userSections: migratePrayerDraftIfNeeded(loadLS("alyana_prayer_draft", defaultPrayerDraft())),
+      saved: loadLS("alyana_prayer_saved", []),
+      streak: loadLS("alyana_prayer_streak", { count: 0, lastDate: null }),
+      error: null,
+      loading: false,
+      autoLoadedOnce: false,
+    },
+  };
+
+  // -----------------------------
+  // TAB / LANG
+  // -----------------------------
+  function setTab(tab) {
+    state.tab = tab;
+
+    if (tab === "prayer") autoLoadPrayerStarterIfEmpty();
+    if (tab === "devotional") autoLoadDevotionalIfEmpty();
+
+    render();
+  }
+
+  function setLang(lang) {
+    state.lang = lang === "es" ? "es" : "en";
+
+    refreshBibleForLanguage().catch(() => {});
+
+    if (state.tab === "prayer") {
+      state.prayer.suggestionRaw = "";
+      state.prayer.starters = { A: "", C: "", T: "", S: "" };
+      state.prayer.error = null;
+      state.prayer.autoLoadedOnce = false;
+      autoLoadPrayerStarterIfEmpty();
+    }
+
+    render();
+  }
+
+  // -----------------------------
+  // TTS
   // -----------------------------
   function refreshVoices() {
     if (!("speechSynthesis" in window)) return;
@@ -363,13 +498,13 @@
       if (!fullChapter) {
         const sv = String(startVerse || "").trim();
         const ev = String(endVerse || "").trim();
-        if (sv) params.set("start_verse", sv);
-        if (ev) params.set("end_verse", ev);
+        if (sv) params.set("verse_start", sv);
+        if (ev) params.set("verse_end", ev);
       }
 
       const data = await apiFetch(`${API.bibleText}?${params.toString()}`, { method: "GET" });
 
-      const bookName = data?.book_name || state.bible.bookName;
+      const bookName = data?.book || state.bible.bookName;
       const verses = Array.isArray(data?.verses) ? data.verses : [];
 
       if (!verses.length) throw new Error("No verses returned");
@@ -428,20 +563,26 @@
     }
   }
 
-  async function loadPrayerStub() {
+  async function loadPrayerStarter() {
     state.prayer.loading = true;
     state.prayer.error = null;
     state.prayer.suggestionRaw = "";
+    state.prayer.starters = { A: "", C: "", T: "", S: "" };
     render();
 
     try {
       const lang = state.lang === "es" ? "es" : "en";
       const data = await apiFetch(`${API.dailyPrayer}?lang=${encodeURIComponent(lang)}`, { method: "GET" });
 
-      state.prayer.suggestionRaw =
+      const raw =
         typeof data?.prayer === "string"
           ? data.prayer
           : (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+
+      state.prayer.suggestionRaw = raw;
+
+      // Parse into ACTS starters
+      state.prayer.starters = parsePrayerStarterToACTS(raw);
     } catch (e) {
       state.prayer.error = e.message;
     } finally {
@@ -453,10 +594,19 @@
   function autoLoadPrayerStarterIfEmpty() {
     if (state.prayer.autoLoadedOnce) return;
     if (state.prayer.loading) return;
-    if ((state.prayer.suggestionRaw || "").trim()) return;
+
+    // If no starters yet, load
+    const anyStarter =
+      (state.prayer.suggestionRaw || "").trim() ||
+      (state.prayer.starters.A || "").trim() ||
+      (state.prayer.starters.C || "").trim() ||
+      (state.prayer.starters.T || "").trim() ||
+      (state.prayer.starters.S || "").trim();
+
+    if (anyStarter) return;
 
     state.prayer.autoLoadedOnce = true;
-    loadPrayerStub().catch(() => {});
+    loadPrayerStarter().catch(() => {});
   }
 
   function autoLoadDevotionalIfEmpty() {
@@ -509,10 +659,26 @@
   }
 
   function savePrayerEntry() {
-    const text = (state.prayer.userText || "").trim();
-    if (!text) return;
+    const sections = state.prayer.userSections || defaultPrayerDraft();
+    const combined = buildCombinedPrayerTextFromSections(sections, state.lang).trim();
 
-    const entry = { date: todayISO(), lang: state.lang, text };
+    // Require at least one ACTS field (not only blank)
+    const hasAny =
+      String(sections.A || "").trim() ||
+      String(sections.C || "").trim() ||
+      String(sections.T || "").trim() ||
+      String(sections.S || "").trim() ||
+      String(sections.N || "").trim();
+
+    if (!hasAny) return;
+
+    const entry = {
+      date: todayISO(),
+      lang: state.lang,
+      sections: { ...sections },
+      text: combined,
+    };
+
     state.prayer.saved.unshift(entry);
     saveLS("alyana_prayer_saved", state.prayer.saved);
 
@@ -563,7 +729,6 @@
     } finally {
       state.chat.sending = false;
       render();
-
       const el = $("#chatScroll");
       if (el) el.scrollTop = el.scrollHeight;
     }
@@ -577,7 +742,7 @@
   }
 
   // -----------------------------
-  // RENDER
+  // STYLES + RENDER
   // -----------------------------
   function styles() {
     return `
@@ -777,6 +942,36 @@
         display:flex; align-items:center; gap:10px;
         font-size: 12px; color: var(--muted);
       }
+      /* NEW: section blocks for prayer */
+      .sectionBlock{
+        border:1px solid var(--border);
+        border-radius: 16px;
+        padding: 12px;
+        background: rgba(255,255,255,0.04);
+        margin-top: 10px;
+      }
+      .sectionHead{
+        display:flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .sectionTitle{
+        font-weight: 900;
+        font-size: 13px;
+      }
+      .starter{
+        background: rgba(34,197,94,0.08);
+        border:1px solid rgba(34,197,94,0.26);
+        border-radius: 12px;
+        padding: 10px 12px;
+        white-space: pre-wrap;
+        font-size: 13px;
+        line-height: 1.35;
+        margin-bottom: 10px;
+      }
     `;
   }
 
@@ -891,7 +1086,7 @@
     wireContentEvents();
 
     saveLS("alyana_devotional_draft", state.devotional.userText);
-    saveLS("alyana_prayer_draft", state.prayer.userText);
+    saveLS("alyana_prayer_draft", state.prayer.userSections);
   }
 
   function renderSavedSide() {
@@ -1131,6 +1326,25 @@
     const label = state.lang === "es" ? "Obtener ejemplo breve" : "Get starter example";
     const btn = state.lang === "es" ? "Generar" : "Generate";
 
+    const starterA = (state.prayer.starters.A || "").trim();
+    const starterC = (state.prayer.starters.C || "").trim();
+    const starterT = (state.prayer.starters.T || "").trim();
+    const starterS = (state.prayer.starters.S || "").trim();
+
+    const s = state.prayer.userSections;
+
+    const titleA = state.lang === "es" ? "Adoración" : "Adoration";
+    const titleC = state.lang === "es" ? "Confesión" : "Confession";
+    const titleT = state.lang === "es" ? "Acción de gracias" : "Thanksgiving";
+    const titleS = state.lang === "es" ? "Súplica" : "Supplication";
+    const titleN = state.lang === "es" ? "Notas" : "Notes";
+
+    const placeholderA = state.lang === "es" ? "Escribe tu adoración…" : "Write your adoration…";
+    const placeholderC = state.lang === "es" ? "Escribe tu confesión…" : "Write your confession…";
+    const placeholderT = state.lang === "es" ? "Escribe tu agradecimiento…" : "Write your thanksgiving…";
+    const placeholderS = state.lang === "es" ? "Escribe tus peticiones…" : "Write your requests…";
+    const placeholderN = state.lang === "es" ? "Notas (opcional)..." : "Notes (optional)...";
+
     return `
       <div class="card">
         <h2>${state.lang === "es" ? "Oración Diaria" : "Daily Prayer"}</h2>
@@ -1148,13 +1362,52 @@
         </div>
 
         ${state.prayer.error ? `<div class="error">${escapeHtml(state.prayer.error)}</div>` : ""}
-        ${state.prayer.suggestionRaw ? `<div class="ok">${escapeHtml(state.prayer.suggestionRaw)}</div>` : ""}
 
-        <div class="divider"></div>
+        <!-- ACTS Sections -->
+        <div class="sectionBlock">
+          <div class="sectionHead">
+            <div class="sectionTitle">${escapeHtml(titleA)}</div>
+            <button id="listenA" class="btn miniBtn" ${starterA ? "" : "disabled"}>${state.lang === "es" ? "Escuchar" : "Listen"}</button>
+          </div>
+          ${starterA ? `<div class="starter">${escapeHtml(starterA)}</div>` : `<div class="hint">${escapeHtml(state.lang === "es" ? "Sin ejemplo todavía." : "No starter yet.")}</div>`}
+          <textarea id="prayA" class="field" placeholder="${escapeHtml(placeholderA)}">${escapeHtml(s.A || "")}</textarea>
+        </div>
 
-        <textarea id="prayText" class="field" placeholder="${escapeHtml(state.lang === "es" ? "Escribe tu oración aquí…" : "Write your prayer here…")}">${escapeHtml(state.prayer.userText || "")}</textarea>
+        <div class="sectionBlock">
+          <div class="sectionHead">
+            <div class="sectionTitle">${escapeHtml(titleC)}</div>
+            <button id="listenC" class="btn miniBtn" ${starterC ? "" : "disabled"}>${state.lang === "es" ? "Escuchar" : "Listen"}</button>
+          </div>
+          ${starterC ? `<div class="starter">${escapeHtml(starterC)}</div>` : `<div class="hint">${escapeHtml(state.lang === "es" ? "Sin ejemplo todavía." : "No starter yet.")}</div>`}
+          <textarea id="prayC" class="field" placeholder="${escapeHtml(placeholderC)}">${escapeHtml(s.C || "")}</textarea>
+        </div>
 
-        <div class="row" style="justify-content:space-between; margin-top:10px;">
+        <div class="sectionBlock">
+          <div class="sectionHead">
+            <div class="sectionTitle">${escapeHtml(titleT)}</div>
+            <button id="listenT" class="btn miniBtn" ${starterT ? "" : "disabled"}>${state.lang === "es" ? "Escuchar" : "Listen"}</button>
+          </div>
+          ${starterT ? `<div class="starter">${escapeHtml(starterT)}</div>` : `<div class="hint">${escapeHtml(state.lang === "es" ? "Sin ejemplo todavía." : "No starter yet.")}</div>`}
+          <textarea id="prayT" class="field" placeholder="${escapeHtml(placeholderT)}">${escapeHtml(s.T || "")}</textarea>
+        </div>
+
+        <div class="sectionBlock">
+          <div class="sectionHead">
+            <div class="sectionTitle">${escapeHtml(titleS)}</div>
+            <button id="listenS" class="btn miniBtn" ${starterS ? "" : "disabled"}>${state.lang === "es" ? "Escuchar" : "Listen"}</button>
+          </div>
+          ${starterS ? `<div class="starter">${escapeHtml(starterS)}</div>` : `<div class="hint">${escapeHtml(state.lang === "es" ? "Sin ejemplo todavía." : "No starter yet.")}</div>`}
+          <textarea id="prayS" class="field" placeholder="${escapeHtml(placeholderS)}">${escapeHtml(s.S || "")}</textarea>
+        </div>
+
+        <div class="sectionBlock">
+          <div class="sectionHead">
+            <div class="sectionTitle">${escapeHtml(titleN)}</div>
+          </div>
+          <textarea id="prayN" class="field" placeholder="${escapeHtml(placeholderN)}">${escapeHtml(s.N || "")}</textarea>
+        </div>
+
+        <div class="row" style="justify-content:space-between; margin-top:12px;">
           <div class="kpi">
             <div class="pill">Streak: <strong>${state.prayer.streak?.count || 0}</strong></div>
           </div>
@@ -1284,16 +1537,24 @@
       });
     }
 
-    // Prayer
+    // Prayer (ACTS)
     if (state.tab === "prayer") {
-      const prayText = $("#prayText");
-      if (prayText) prayText.addEventListener("input", (e) => {
-        state.prayer.userText = e.target.value;
-        saveLS("alyana_prayer_draft", state.prayer.userText);
-      });
+      const a = $("#prayA");
+      const c = $("#prayC");
+      const t = $("#prayT");
+      const s = $("#prayS");
+      const n = $("#prayN");
+
+      const persist = () => saveLS("alyana_prayer_draft", state.prayer.userSections);
+
+      if (a) a.addEventListener("input", (e) => { state.prayer.userSections.A = e.target.value; persist(); });
+      if (c) c.addEventListener("input", (e) => { state.prayer.userSections.C = e.target.value; persist(); });
+      if (t) t.addEventListener("input", (e) => { state.prayer.userSections.T = e.target.value; persist(); });
+      if (s) s.addEventListener("input", (e) => { state.prayer.userSections.S = e.target.value; persist(); });
+      if (n) n.addEventListener("input", (e) => { state.prayer.userSections.N = e.target.value; persist(); });
 
       const genBtn = $("#genPrayerBtn");
-      if (genBtn) genBtn.addEventListener("click", loadPrayerStub);
+      if (genBtn) genBtn.addEventListener("click", loadPrayerStarter);
 
       const saveBtn = $("#savePrayerBtn");
       if (saveBtn) saveBtn.addEventListener("click", savePrayerEntry);
@@ -1306,6 +1567,15 @@
         saveLS("alyana_prayer_streak", state.prayer.streak);
         render();
       });
+
+      const listenA = $("#listenA");
+      const listenC = $("#listenC");
+      const listenT = $("#listenT");
+      const listenS = $("#listenS");
+      if (listenA) listenA.addEventListener("click", () => speak(state.prayer.starters.A || ""));
+      if (listenC) listenC.addEventListener("click", () => speak(state.prayer.starters.C || ""));
+      if (listenT) listenT.addEventListener("click", () => speak(state.prayer.starters.T || ""));
+      if (listenS) listenS.addEventListener("click", () => speak(state.prayer.starters.S || ""));
     }
   }
 
@@ -1330,13 +1600,13 @@
     await loadAccount();
     await refreshBibleForLanguage();
 
-    // If user opens app on prayer tab later, you can auto-load too
     if (state.tab === "prayer") autoLoadPrayerStarterIfEmpty();
     if (state.tab === "devotional") autoLoadDevotionalIfEmpty();
   }
 
   init();
 })();
+
 
 
 
