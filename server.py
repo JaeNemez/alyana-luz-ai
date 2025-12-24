@@ -1,4 +1,3 @@
-# server.py
 import os
 import re
 import time
@@ -6,12 +5,12 @@ import hmac
 import hashlib
 import base64
 import sqlite3
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Any
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from dotenv import load_dotenv
 import stripe
@@ -33,13 +32,10 @@ MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
 SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
 ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
 
-DATA_DIR = os.path.join(BASE_DIR, "data")
-
 # Static mounts
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-# Serve icons at /icons/... because the manifest typically points there
 if os.path.isdir(ICONS_DIR):
     app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 
@@ -49,6 +45,7 @@ if os.path.isdir(ICONS_DIR):
 STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
 STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
+
 APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
 
@@ -83,7 +80,7 @@ def _require_jwt_secret():
 def _enforce_allowlist(email: str):
     if not ALLOWLIST_SET:
         return
-    if (email or "").lower() not in ALLOWLIST_SET:
+    if email.lower() not in ALLOWLIST_SET:
         raise HTTPException(403, "This email is not allowed.")
 
 
@@ -160,7 +157,7 @@ def get_current_email(request: Request) -> Optional[str]:
 # --------------------
 # OPTIONAL local cache (Stripe subscription cache)
 # --------------------
-SUB_DB_PATH = os.path.join(DATA_DIR, "subs_cache.db")
+SUB_DB_PATH = os.path.join(BASE_DIR, "data", "subs_cache.db")
 
 
 def _subs_db():
@@ -232,7 +229,7 @@ def _cache_get(email: str) -> Optional[dict]:
 # --------------------
 # AI daily cache (Devotional / Daily Prayer)
 # --------------------
-AI_CACHE_DB_PATH = os.path.join(DATA_DIR, "ai_cache.db")
+AI_CACHE_DB_PATH = os.path.join(BASE_DIR, "data", "ai_cache.db")
 
 
 def _ai_cache_db():
@@ -407,8 +404,13 @@ class Msg(BaseModel):
 
 
 class ChatIn(BaseModel):
-    prompt: str
+    # Support BOTH payload shapes:
+    # 1) your old/new server shape: {prompt, history, lang}
+    # 2) your current app.js shape: {message, lang}
+    prompt: Optional[str] = None
+    message: Optional[str] = None
     history: Optional[List[Msg]] = None
+    lang: Optional[str] = "en"
 
 
 class LangIn(BaseModel):
@@ -460,6 +462,33 @@ def _build_chat_prompt(system_prompt: str, user_prompt: str, history: Optional[L
     lines.append(f"User: {user_prompt.strip()}")
     lines.append("Alyana:")
     return "\n".join(lines)
+
+
+def _extract_user_prompt(body: ChatIn) -> str:
+    # prefer prompt, else message
+    txt = (body.prompt or body.message or "").strip()
+    if not txt:
+        raise HTTPException(status_code=400, detail="Missing prompt/message.")
+    return txt
+
+
+def _system_prompt_for_lang(lang: str) -> str:
+    # Force language output strictly
+    if lang == "es":
+        return (
+            "Eres Alyana Luz, una asistente cálida y centrada en la Escritura. "
+            "Oras con el usuario, recomiendas pasajes bíblicos y explicas versículos con sencillez. "
+            "Responde SIEMPRE en español claro y natural (sin JSON ni código) a menos que el usuario pida algo técnico. "
+            "Mantén las respuestas concisas pero compasivas. "
+            "Recuerda hechos importantes que el usuario comparta en esta conversación."
+        )
+    return (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring. "
+        "Remember important facts the user shares in this conversation."
+    )
 
 
 # =========================
@@ -521,8 +550,6 @@ def health():
         "stripe_configured": bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL),
         "jwt_configured": bool(JWT_SECRET and len(JWT_SECRET) >= 32),
         "allowlist_enabled": bool(ALLOWLIST_SET),
-        "data_dir_exists": os.path.isdir(DATA_DIR),
-        "bible_dbs_found": [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".db")] if os.path.isdir(DATA_DIR) else [],
     }
 
 
@@ -701,73 +728,49 @@ def logout():
 @app.post("/premium/chat")
 def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
     _require_ai()
-    system_prompt = (
-        "You are Alyana Luz, a warm, scripture-focused assistant. "
-        "You pray with the user, suggest Bible passages, and explain verses. "
-        "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring. "
-        "If the user is writing in Spanish, reply fully in Spanish."
-    )
-    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
-    return {"status": "success", "email": email, "message": text}
+    lang = _norm_lang(body.lang)
+    user_prompt = _extract_user_prompt(body)
+    system_prompt = _system_prompt_for_lang(lang)
+    full_prompt = _build_chat_prompt(system_prompt, user_prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or ("Lo siento, no pude responder ahora." if lang == "es" else "Sorry, I couldn't respond right now.")
+    return {"status": "success", "email": email, "message": text, "lang": lang}
 
 
 # =========================
-# Bible Reader (MULTI-DB)
+# Bible Reader (LOCAL DBs)
 # =========================
-# Put dbs in /data:
-# - data/bible.db        (your current English)
-# - data/rvr1909.db      (Spanish you will generate in Option B)
-#
-# The db must have:
-# - books table
-# - verses table with columns: book_id, chapter, verse, text
-#
-# You can add more later by dropping more .db files into /data.
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_EN_PATH = os.path.join(DATA_DIR, "bible.db")
+DB_ES_RVR_PATH = os.path.join(DATA_DIR, "bible_es_rvr.db")
 
-BIBLE_DB_FILES: Dict[str, str] = {
-    "kjv": os.path.join(DATA_DIR, "bible.db"),      # existing
-    "rvr1909": os.path.join(DATA_DIR, "rvr1909.db") # you will generate
+# You can add more DBs later, always local/free:
+BIBLE_VERSIONS: Dict[str, Dict[str, str]] = {
+    "en_default": {"lang": "en", "path": DB_EN_PATH, "label": "English (default)"},
+    "es_rvr": {"lang": "es", "path": DB_ES_RVR_PATH, "label": "Español (RVR)"},
 }
 
-BIBLE_DB_LABELS: Dict[str, str] = {
-    "kjv": "KJV (English, local)",
-    "rvr1909": "RVR 1909 (Español, local)"
-}
 
-DEFAULT_BIBLE_VERSION = os.getenv("DEFAULT_BIBLE_VERSION", "kjv").strip().lower() or "kjv"
+def _pick_bible_db(lang: Optional[str], version: Optional[str]) -> Tuple[str, str]:
+    """Return (version_key, db_path)."""
+    l = _norm_lang(lang)
+    v = (version or "").strip()
 
+    if v and v in BIBLE_VERSIONS:
+        return v, BIBLE_VERSIONS[v]["path"]
 
-def _list_bible_versions() -> List[dict]:
-    out = []
-    for key, path in BIBLE_DB_FILES.items():
-        out.append(
-            {
-                "key": key,
-                "label": BIBLE_DB_LABELS.get(key, key),
-                "path": path,
-                "exists": os.path.exists(path),
-            }
-        )
-    return out
+    # Default selection by language:
+    if l == "es":
+        return "es_rvr", BIBLE_VERSIONS["es_rvr"]["path"]
+
+    return "en_default", BIBLE_VERSIONS["en_default"]["path"]
 
 
-def _pick_db(version: Optional[str]) -> Tuple[str, str]:
-    v = (version or DEFAULT_BIBLE_VERSION or "kjv").strip().lower()
-    if v not in BIBLE_DB_FILES:
-        # If unknown, fall back to default
-        v = DEFAULT_BIBLE_VERSION if DEFAULT_BIBLE_VERSION in BIBLE_DB_FILES else "kjv"
-    return v, BIBLE_DB_FILES[v]
-
-
-def _db(version: Optional[str] = None):
-    v, db_path = _pick_db(version)
+def _db(db_path: str):
     if not os.path.exists(db_path):
-        raise HTTPException(status_code=404, detail=f"Bible DB file not found for version='{v}': {db_path}")
+        raise HTTPException(status_code=500, detail=f"Bible DB not found at {db_path}")
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    return con, v, db_path
+    return con
 
 
 def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
@@ -829,12 +832,17 @@ def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
 
 @app.get("/bible/versions")
 def bible_versions():
-    return {"default": DEFAULT_BIBLE_VERSION, "versions": _list_bible_versions()}
+    # Helpful for later UI: list available versions
+    out = []
+    for k, v in BIBLE_VERSIONS.items():
+        out.append({"key": k, "lang": v["lang"], "label": v["label"], "exists": os.path.exists(v["path"])})
+    return {"versions": out}
 
 
 @app.get("/bible/health")
-def bible_health(version: Optional[str] = None):
-    con, v, db_path = _db(version)
+def bible_health(lang: Optional[str] = None, version: Optional[str] = None):
+    ver_key, db_path = _pick_bible_db(lang, version)
+    con = _db(db_path)
     try:
         tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
         table_names = [t["name"] for t in tables]
@@ -847,26 +855,21 @@ def bible_health(version: Optional[str] = None):
             raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
 
         count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
-        return {
-            "status": "ok",
-            "version": v,
-            "label": BIBLE_DB_LABELS.get(v, v),
-            "db_path": db_path,
-            "verse_count": int(count),
-        }
+        return {"status": "ok", "version": ver_key, "db_path": db_path, "verse_count": int(count)}
     finally:
         con.close()
 
 
-# Back-compat for your frontend (it calls /bible/status)
+# Compatibility alias for your frontend/app.js (it calls /bible/status)
 @app.get("/bible/status")
-def bible_status(version: Optional[str] = None):
-    return bible_health(version=version)
+def bible_status(lang: Optional[str] = None, version: Optional[str] = None):
+    return bible_health(lang=lang, version=version)
 
 
 @app.get("/bible/books")
-def bible_books(version: Optional[str] = None):
-    con, v, _ = _db(version)
+def bible_books(lang: Optional[str] = None, version: Optional[str] = None):
+    ver_key, db_path = _pick_bible_db(lang, version)
+    con = _db(db_path)
     try:
         mapping = _get_books_table_mapping(con)
         id_col = mapping["id_col"]
@@ -881,44 +884,46 @@ def bible_books(version: Optional[str] = None):
             rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
 
         books = []
+        names = []
         for r in rows:
+            nm = str(r["name"])
+            names.append(nm)
             books.append(
                 {
                     "id": int(r["id"]),
-                    "name": str(r["name"]),
+                    "name": nm,
                     "key": str(r["book_key"]) if "book_key" in r.keys() else None,
                 }
             )
 
-        return {"version": v, "books": books}
+        # Return BOTH shapes so any frontend can use it:
+        return {"version": ver_key, "books": names, "book_objects": books}
     finally:
         con.close()
 
 
 @app.get("/bible/chapters")
-def bible_chapters(book: str, version: Optional[str] = None):
-    con, v, _ = _db(version)
+def bible_chapters(book: str, lang: Optional[str] = None, version: Optional[str] = None):
+    ver_key, db_path = _pick_bible_db(lang, version)
+    con = _db(db_path)
     try:
         book_id = _resolve_book_id(con, book)
         rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
         chapters = [int(r["chapter"]) for r in rows]
         if not chapters:
             raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
-        return {
-            "version": v,
-            "book_id": book_id,
-            "chapters": chapters,
-            "count": len(chapters),  # back-compat for UIs that expect a count
-        }
+        # Return BOTH list + count (your app.js looks for count-ish values)
+        return {"version": ver_key, "book_id": book_id, "chapters": chapters, "count": len(chapters)}
     finally:
         con.close()
 
 
 @app.get("/bible/verses")
-def bible_verses(book: str, chapter: int, version: Optional[str] = None):
+def bible_verses(book: str, chapter: int, lang: Optional[str] = None, version: Optional[str] = None):
     if chapter < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter")
-    con, v, _ = _db(version)
+    ver_key, db_path = _pick_bible_db(lang, version)
+    con = _db(db_path)
     try:
         book_id = _resolve_book_id(con, book)
         rows = con.execute(
@@ -927,7 +932,7 @@ def bible_verses(book: str, chapter: int, version: Optional[str] = None):
         verses = [int(r["verse"]) for r in rows]
         if not verses:
             raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
-        return {"version": v, "book_id": book_id, "chapter": int(chapter), "verses": verses}
+        return {"version": ver_key, "book_id": book_id, "chapter": int(chapter), "verses": verses}
     finally:
         con.close()
 
@@ -939,12 +944,14 @@ def bible_passage(
     full_chapter: bool = False,
     start: int = 1,
     end: Optional[int] = None,
+    lang: Optional[str] = None,
     version: Optional[str] = None,
 ):
     if chapter < 1:
         raise HTTPException(status_code=400, detail="Invalid chapter")
 
-    con, v, _ = _db(version)
+    ver_key, db_path = _pick_bible_db(lang, version)
+    con = _db(db_path)
     try:
         book_id = _resolve_book_id(con, book)
 
@@ -962,7 +969,7 @@ def bible_passage(
             if not rows:
                 raise HTTPException(status_code=404, detail="No chapter text")
             text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
-            return {"version": v, "reference": f"{book_name} {chapter}", "text": text}
+            return {"version": ver_key, "reference": f"{book_name} {chapter}", "text": text}
 
         if start < 1:
             raise HTTPException(status_code=400, detail="Invalid start verse")
@@ -984,50 +991,46 @@ def bible_passage(
 
         text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
         ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
-        return {"version": v, "reference": ref, "text": text}
+        return {"version": ver_key, "reference": ref, "text": text}
     finally:
         con.close()
 
 
-# Back-compat for your frontend (it calls /bible/text?book=&chapter=&start=&end=&mode=)
+# Compatibility endpoint for your frontend/app.js (it calls /bible/text?book=...&chapter=...&start=...&end=...&mode=...)
 @app.get("/bible/text")
 def bible_text(
     book: str,
     chapter: int,
-    start: Optional[int] = None,
-    end: Optional[int] = None,
-    mode: Optional[str] = None,
-    full_chapter: Optional[bool] = None,
+    start: Optional[str] = "",
+    end: Optional[str] = "",
+    mode: Optional[str] = "",
+    lang: Optional[str] = None,
     version: Optional[str] = None,
 ):
     m = (mode or "").strip().lower()
-    fc = bool(full_chapter) if full_chapter is not None else (m == "chapter" and not start and not end)
-    if m == "chapter":
-        fc = True
-    if fc:
-        return bible_passage(book=book, chapter=chapter, full_chapter=True, version=version)
+    s = int(start) if str(start).strip().isdigit() else None
+    e = int(end) if str(end).strip().isdigit() else None
 
-    s = int(start) if start is not None and str(start).strip() != "" else 1
-    e = int(end) if end is not None and str(end).strip() != "" else None
-    return bible_passage(book=book, chapter=chapter, full_chapter=False, start=s, end=e, version=version)
+    if m == "chapter" or (not s and not e):
+        return bible_passage(book=book, chapter=chapter, full_chapter=True, lang=lang, version=version)
+
+    if s is None:
+        s = 1
+    return bible_passage(book=book, chapter=chapter, full_chapter=False, start=s, end=e, lang=lang, version=version)
 
 
 # =========================
-# Free chat + Devotional + Daily Prayer (Spanish supported)
+# Free chat + Devotional + Daily Prayer
 # =========================
 @app.post("/chat")
 def chat(body: ChatIn):
     _require_ai()
-    system_prompt = (
-        "You are Alyana Luz, a warm, scripture-focused assistant. "
-        "You pray with the user, suggest Bible passages, and explain verses. "
-        "Reply in friendly, natural text (no JSON or code) unless the user asks "
-        "for something technical. Keep answers concise but caring. "
-        "If the user is writing in Spanish, reply fully in Spanish."
-    )
-    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
-    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
-    return {"status": "success", "message": text}
+    lang = _norm_lang(body.lang)
+    user_prompt = _extract_user_prompt(body)
+    system_prompt = _system_prompt_for_lang(lang)
+    full_prompt = _build_chat_prompt(system_prompt, user_prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or ("Lo siento, no pude responder ahora." if lang == "es" else "Sorry, I couldn't respond right now.")
+    return {"status": "success", "message": text, "lang": lang}
 
 
 @app.post("/devotional")
@@ -1038,7 +1041,7 @@ def devotional(body: Optional[LangIn] = None):
     cache_key = f"devotional:{lang}:{_today_utc_yyyymmdd()}"
     cached = _ai_cache_get(cache_key)
     if cached:
-        return {"json": cached, "cached": True}
+        return {"text": cached, "json": cached, "cached": True, "lang": lang}
 
     if lang == "es":
         prompt = """
@@ -1071,7 +1074,7 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     _ai_cache_set(cache_key, text)
-    return {"json": text, "cached": False}
+    return {"text": text, "json": text, "cached": False, "lang": lang}
 
 
 @app.post("/daily_prayer")
@@ -1082,7 +1085,7 @@ def daily_prayer(body: Optional[LangIn] = None):
     cache_key = f"daily_prayer:{lang}:{_today_utc_yyyymmdd()}"
     cached = _ai_cache_get(cache_key)
     if cached:
-        return {"json": cached, "cached": True}
+        return {"text": cached, "json": cached, "cached": True, "lang": lang}
 
     if lang == "es":
         prompt = """
@@ -1117,7 +1120,8 @@ Rules:
 
     text = _generate_text_with_retries(prompt) or "{}"
     _ai_cache_set(cache_key, text)
-    return {"json": text, "cached": False}
+    return {"text": text, "json": text, "cached": False, "lang": lang}
+
 
 
 
