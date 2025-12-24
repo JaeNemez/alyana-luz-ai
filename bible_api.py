@@ -1,0 +1,201 @@
+# bible_api.py
+from __future__ import annotations
+
+import os
+import sqlite3
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+
+from fastapi import APIRouter, HTTPException, Query
+
+router = APIRouter(prefix="/bible", tags=["bible"])
+
+# Map "version" -> sqlite filename inside ./data
+# Keep these names EXACTLY as your repo files.
+DB_MAP = {
+    "en_default": "bible.db",
+    "rvr1909": "bible_es_rvr.db",
+    # aliases (optional)
+    "es_rvr": "bible_es_rvr.db",
+    "es": "bible_es_rvr.db",
+}
+
+def _data_dir() -> Path:
+    # Always resolve relative to this file so it works on Render and locally
+    here = Path(__file__).resolve().parent
+    return here / "data"
+
+def resolve_version(version: Optional[str]) -> str:
+    v = (version or "en_default").strip()
+    if not v:
+        v = "en_default"
+    return v
+
+def resolve_db_path(version: Optional[str]) -> Path:
+    v = resolve_version(version)
+    filename = DB_MAP.get(v)
+    if not filename:
+        # If they pass unknown version, be explicit
+        raise HTTPException(status_code=400, detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}")
+    p = _data_dir() / filename
+    return p
+
+def open_db(db_path: Path) -> sqlite3.Connection:
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail=f"Bible DB not found at {db_path}")
+    con = sqlite3.connect(str(db_path))
+    con.row_factory = sqlite3.Row
+    return con
+
+def verse_count(con: sqlite3.Connection) -> int:
+    row = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()
+    return int(row["c"]) if row else 0
+
+def get_books(con: sqlite3.Connection) -> List[Dict[str, Any]]:
+    rows = con.execute("SELECT id, name FROM books ORDER BY id").fetchall()
+    return [{"id": int(r["id"]), "name": str(r["name"])} for r in rows]
+
+def get_book_id_by_name(con: sqlite3.Connection, book_name: str) -> Optional[int]:
+    # case-insensitive exact match first
+    row = con.execute("SELECT id FROM books WHERE LOWER(name)=LOWER(?) LIMIT 1", (book_name.strip(),)).fetchone()
+    if row:
+        return int(row["id"])
+    # fallback: contains match
+    row = con.execute("SELECT id FROM books WHERE LOWER(name) LIKE LOWER(?) LIMIT 1", (f"%{book_name.strip()}%",)).fetchone()
+    if row:
+        return int(row["id"])
+    return None
+
+def get_max_chapter(con: sqlite3.Connection, book_id: int) -> int:
+    row = con.execute("SELECT MAX(chapter) AS m FROM verses WHERE book_id=?", (book_id,)).fetchone()
+    m = row["m"] if row else None
+    return int(m) if m is not None else 0
+
+def get_max_verse(con: sqlite3.Connection, book_id: int, chapter: int) -> int:
+    row = con.execute(
+        "SELECT MAX(verse) AS m FROM verses WHERE book_id=? AND chapter=?",
+        (book_id, chapter),
+    ).fetchone()
+    m = row["m"] if row else None
+    return int(m) if m is not None else 0
+
+@router.get("/status")
+def bible_status(version: Optional[str] = Query(default="en_default")) -> Dict[str, Any]:
+    db_path = resolve_db_path(version)
+    con = open_db(db_path)
+    try:
+        c = verse_count(con)
+        return {
+            "status": "ok",
+            "version": resolve_version(version),
+            "db_path": str(db_path),
+            "verse_count": c,
+        }
+    finally:
+        con.close()
+
+@router.get("/books")
+def bible_books(version: Optional[str] = Query(default="en_default")) -> Dict[str, Any]:
+    db_path = resolve_db_path(version)
+    con = open_db(db_path)
+    try:
+        books = get_books(con)
+        return {"version": resolve_version(version), "books": books}
+    finally:
+        con.close()
+
+@router.get("/chapters")
+def bible_chapters(
+    version: Optional[str] = Query(default="en_default"),
+    book_id: Optional[int] = Query(default=None),
+    book: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    db_path = resolve_db_path(version)
+    con = open_db(db_path)
+    try:
+        bid = book_id
+        if bid is None and book:
+            bid = get_book_id_by_name(con, book)
+        if bid is None:
+            raise HTTPException(status_code=400, detail="Missing book_id or book")
+
+        max_ch = get_max_chapter(con, int(bid))
+        if max_ch <= 0:
+            raise HTTPException(status_code=404, detail="Book not found (no chapters)")
+
+        return {
+            "version": resolve_version(version),
+            "book_id": int(bid),
+            "chapters": list(range(1, max_ch + 1)),
+        }
+    finally:
+        con.close()
+
+@router.get("/text")
+def bible_text(
+    version: Optional[str] = Query(default="en_default"),
+    book_id: Optional[int] = Query(default=None),
+    book: Optional[str] = Query(default=None),
+    chapter: int = Query(..., ge=1),
+    verse_start: Optional[int] = Query(default=None, ge=1),
+    verse_end: Optional[int] = Query(default=None, ge=1),
+    whole_chapter: bool = Query(default=False),
+) -> Dict[str, Any]:
+    db_path = resolve_db_path(version)
+    con = open_db(db_path)
+    try:
+        bid = book_id
+        if bid is None and book:
+            bid = get_book_id_by_name(con, book)
+        if bid is None:
+            raise HTTPException(status_code=400, detail="Missing book_id or book")
+
+        bid = int(bid)
+
+        # If whole chapter requested, ignore verse_start/end
+        if whole_chapter or (verse_start is None and verse_end is None):
+            rows = con.execute(
+                """
+                SELECT verse, text
+                FROM verses
+                WHERE book_id=? AND chapter=?
+                ORDER BY verse
+                """,
+                (bid, chapter),
+            ).fetchall()
+        else:
+            vs = int(verse_start) if verse_start is not None else 1
+            ve = int(verse_end) if verse_end is not None else vs
+            if ve < vs:
+                vs, ve = ve, vs
+
+            rows = con.execute(
+                """
+                SELECT verse, text
+                FROM verses
+                WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
+                ORDER BY verse
+                """,
+                (bid, chapter, vs, ve),
+            ).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        # book name for display
+        b = con.execute("SELECT name FROM books WHERE id=? LIMIT 1", (bid,)).fetchone()
+        book_name = str(b["name"]) if b else str(bid)
+
+        verses = [{"verse": int(r["verse"]), "text": str(r["text"])} for r in rows]
+        text_joined = "\n".join([f"{v['verse']}. {v['text']}" for v in verses])
+
+        return {
+            "version": resolve_version(version),
+            "book_id": bid,
+            "book": book_name,
+            "chapter": int(chapter),
+            "verses": verses,
+            "text": text_joined,
+        }
+    finally:
+        con.close()
