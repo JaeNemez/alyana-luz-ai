@@ -1,678 +1,1123 @@
 # server.py
-# Alyana Luz • Bible AI (FastAPI)
-#
-# What this update does:
-# 1) Fixes Spanish AI responses everywhere (chat / devotional / daily prayer) via lang forcing.
-# 2) Adds FREE multi-local-DB Bible version support (multiple SQLite files in /data).
-#    - You can drop new DB files into ./data (ex: rvr1909.db) with no API cost.
-#    - Server exposes /bible/versions and accepts ?version=... on bible endpoints.
-# 3) Makes Bible endpoints match the frontend/app.js you’re using now:
-#    - GET  /bible/health
-#    - GET  /bible/versions
-#    - GET  /bible/books?version=
-#    - GET  /bible/chapters?book=Genesis&version=
-#    - GET  /bible/passage?book=Genesis&chapter=1&full_chapter=true&start=1&end=&version=
-# 4) Fixes “[object Object]” style bible output issues by always returning {reference, text}
-#
-# IMPORTANT NOTE:
-# - Your current bible.db appears to be ENGLISH. Spanish will NOT appear in Read Bible
-#   until you add a Spanish DB (example: data/rvr1909.db) and select it using ?version=rvr1909.
-# - The AI Spanish replies are independent of the Bible DB language.
-
 import os
-import json
+import re
 import time
+import hmac
+import hashlib
+import base64
 import sqlite3
-import unicodedata
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional, Dict, List, Tuple
 
-from fastapi import FastAPI, Body, Query, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from dotenv import load_dotenv
+import stripe
+from google import genai
 
-# -----------------------------
-# APP
-# -----------------------------
-app = FastAPI(title="Alyana Luz • Bible AI")
+load_dotenv()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten later if you want
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Alyana Luz · Bible AI")
 
+# --------------------
+# Paths (ABSOLUTE)
+# --------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
-
-# -----------------------------
-# AI (Agent)
-# -----------------------------
-# Your agent.py (Gemini-based) should expose run_bible_ai(prompt: str) -> str
-try:
-    from agent import run_bible_ai  # type: ignore
-except Exception:
-    run_bible_ai = None  # type: ignore
-
-
-def force_language(prefix_lang: str, text: str) -> str:
-    """
-    Ensures the model replies ONLY in the requested language by hard prefixing.
-    """
-    if prefix_lang == "es":
-        return f"IMPORTANTE: Responde SOLO en español.\n\n{text}"
-    return f"IMPORTANT: Reply ONLY in English.\n\n{text}"
-
-
-def safe_json_dumps(obj: Any) -> str:
-    try:
-        return json.dumps(obj, ensure_ascii=False)
-    except Exception:
-        return json.dumps({"error": "Could not serialize"})
-
-
-# Very simple daily in-memory cache (optional)
-_CACHE: Dict[str, Dict[str, Any]] = {}
-
-
-def cache_get(key: str) -> Optional[Dict[str, Any]]:
-    v = _CACHE.get(key)
-    if not v:
-        return None
-    return v
-
-
-def cache_set(key: str, payload: Dict[str, Any]) -> None:
-    _CACHE[key] = payload
-
-
-def today_key() -> str:
-    return time.strftime("%Y-%m-%d", time.localtime())
-
-
-# -----------------------------
-# BIBLE VERSIONS (multi-DB, free)
-# -----------------------------
-def normalize_key(s: str) -> str:
-    s = s.strip().lower()
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = s.replace("&", "and")
-    s = "".join(ch if ch.isalnum() else " " for ch in s)
-    s = " ".join(s.split())
-    return s
-
-
-def version_registry() -> Dict[str, Dict[str, str]]:
-    """
-    Configure your Bible DB files here.
-    Put the actual sqlite files in ./data.
-
-    Current default DB:
-      data/bible.db  (your existing one — looks like KJV/English)
-
-    Add more:
-      data/rvr1909.db   (Spanish)
-      data/web.db       (English WEB)
-      etc.
-    """
-    return {
-        "kjv": {
-            "label": "KJV (English, local)",
-            "lang": "en",
-            "path": os.path.join(DATA_DIR, "bible.db"),
-        },
-        # Add your Spanish DB file here when you have it:
-        "rvr1909": {
-            "label": "RVR 1909 (Español, local)",
-            "lang": "es",
-            "path": os.path.join(DATA_DIR, "rvr1909.db"),
-        },
-        # Example placeholder:
-        # "rv1960": {"label":"RVR 1960 (Español, local)","lang":"es","path":os.path.join(DATA_DIR,"rv1960.db")},
-    }
-
-
-def available_versions() -> List[Dict[str, Any]]:
-    out = []
-    for vid, meta in version_registry().items():
-        path = meta["path"]
-        out.append(
-            {
-                "id": vid,
-                "label": meta["label"],
-                "lang": meta["lang"],
-                "exists": os.path.isfile(path),
-            }
-        )
-    return out
-
-
-def pick_default_version(lang: str) -> str:
-    """
-    If user is in Spanish, prefer a Spanish DB IF it exists.
-    Else fallback to KJV.
-    """
-    versions = version_registry()
-    if lang == "es":
-        for vid, meta in versions.items():
-            if meta.get("lang") == "es" and os.path.isfile(meta["path"]):
-                return vid
-    return "kjv"
-
-
-def get_db_path(version: Optional[str], lang: str) -> Tuple[str, Dict[str, str]]:
-    versions = version_registry()
-    vid = (version or "").strip() or pick_default_version(lang)
-    if vid not in versions:
-        raise HTTPException(status_code=400, detail=f"Unknown version '{vid}'. Use /bible/versions.")
-    meta = versions[vid]
-    path = meta["path"]
-    if not os.path.isfile(path):
-        # version exists in registry but file not present yet
-        raise HTTPException(
-            status_code=400,
-            detail=f"Bible DB file missing for version '{vid}'. Expected: {os.path.basename(path)} in /data",
-        )
-    return path, meta
-
-
-def open_db(path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def detect_schema(conn: sqlite3.Connection) -> Dict[str, Any]:
-    """
-    Tries to adapt to common Bible sqlite schemas.
-    We support:
-      - books table: (id, name) or (book_id, name)
-      - verses table: with columns like book_id/book, chapter, verse, text/scripture/content
-    """
-    cur = conn.cursor()
-    tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-
-    def cols(table: str) -> List[str]:
-        try:
-            rows = cur.execute(f"PRAGMA table_info({table})").fetchall()
-            return [r[1] for r in rows]
-        except Exception:
-            return []
-
-    schema = {"tables": list(tables), "books_table": None, "verses_table": None, "books_cols": [], "verses_cols": []}
-
-    # pick books table
-    for t in ["books", "book", "bible_books"]:
-        if t in tables:
-            schema["books_table"] = t
-            schema["books_cols"] = cols(t)
-            break
-
-    # pick verses table
-    for t in ["verses", "verse", "bible_verses", "scriptures"]:
-        if t in tables:
-            schema["verses_table"] = t
-            schema["verses_cols"] = cols(t)
-            break
-
-    return schema
-
-
-def books_list(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
-    schema = detect_schema(conn)
-    bt = schema["books_table"]
-    if not bt:
-        # fallback: infer from verses table if no books table
-        vt = schema["verses_table"]
-        if not vt:
-            return []
-        vcols = schema["verses_cols"]
-        book_col = "book"
-        if "book_id" in vcols:
-            book_col = "book_id"
-        elif "book" in vcols:
-            book_col = "book"
-        elif "b" in vcols:
-            book_col = "b"
-
-        rows = conn.execute(f"SELECT DISTINCT {book_col} AS b FROM {vt} ORDER BY b").fetchall()
-        return [{"id": r["b"], "name": str(r["b"]), "key": normalize_key(str(r["b"]))} for r in rows]
-
-    bcols = schema["books_cols"]
-    id_col = "id" if "id" in bcols else ("book_id" if "book_id" in bcols else bcols[0])
-    name_col = "name" if "name" in bcols else ("title" if "title" in bcols else bcols[-1])
-
-    rows = conn.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM {bt} ORDER BY id").fetchall()
-    out = []
-    for r in rows:
-        name = str(r["name"])
-        out.append({"id": r["id"], "name": name, "key": normalize_key(name)})
-    return out
-
-
-def resolve_book_id(conn: sqlite3.Connection, book_name: str) -> Tuple[Optional[int], str]:
-    """
-    Returns (book_id, display_name).
-    If schema has books table, we match by name loosely.
-    Otherwise we return None and use book_name directly in verses queries.
-    """
-    schema = detect_schema(conn)
-    bt = schema["books_table"]
-    if not bt:
-        return None, book_name
-
-    bcols = schema["books_cols"]
-    id_col = "id" if "id" in bcols else ("book_id" if "book_id" in bcols else bcols[0])
-    name_col = "name" if "name" in bcols else ("title" if "title" in bcols else bcols[-1])
-
-    target = normalize_key(book_name)
-
-    rows = conn.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM {bt}").fetchall()
-    # exact normalized match
-    for r in rows:
-        if normalize_key(str(r["name"])) == target:
-            return int(r["id"]), str(r["name"])
-    # contains match
-    for r in rows:
-        if target in normalize_key(str(r["name"])):
-            return int(r["id"]), str(r["name"])
-    # fallback: first row
-    if rows:
-        return int(rows[0]["id"]), str(rows[0]["name"])
-
-    return None, book_name
-
-
-def chapters_for_book(conn: sqlite3.Connection, book_name: str) -> List[int]:
-    schema = detect_schema(conn)
-    vt = schema["verses_table"]
-    if not vt:
-        return []
-
-    vcols = schema["verses_cols"]
-
-    # determine columns
-    chapter_col = "chapter" if "chapter" in vcols else ("c" if "c" in vcols else None)
-    if not chapter_col:
-        return []
-
-    book_id, _ = resolve_book_id(conn, book_name)
-
-    # book column selection
-    book_col = None
-    if "book_id" in vcols:
-        book_col = "book_id"
-    elif "book" in vcols:
-        book_col = "book"
-    elif "b" in vcols:
-        book_col = "b"
-
-    if not book_col:
-        return []
-
-    if book_id is not None and book_col == "book_id":
-        rows = conn.execute(
-            f"SELECT DISTINCT {chapter_col} AS ch FROM {vt} WHERE {book_col}=? ORDER BY ch",
-            (book_id,),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"SELECT DISTINCT {chapter_col} AS ch FROM {vt} WHERE {book_col}=? ORDER BY ch",
-            (book_name,),
-        ).fetchall()
-
-    out = []
-    for r in rows:
-        try:
-            out.append(int(r["ch"]))
-        except Exception:
-            pass
-    return out
-
-
-def passage_text(
-    conn: sqlite3.Connection,
-    book_name: str,
-    chapter: int,
-    full_chapter: bool,
-    start: int,
-    end: Optional[int],
-) -> Tuple[str, str]:
-    schema = detect_schema(conn)
-    vt = schema["verses_table"]
-    if not vt:
-        raise HTTPException(status_code=500, detail="Bible DB missing verses table.")
-
-    vcols = schema["verses_cols"]
-
-    # columns
-    chapter_col = "chapter" if "chapter" in vcols else ("c" if "c" in vcols else None)
-    verse_col = "verse" if "verse" in vcols else ("v" if "v" in vcols else None)
-    text_col = None
-    for cand in ["text", "scripture", "content", "t"]:
-        if cand in vcols:
-            text_col = cand
-            break
-
-    if not chapter_col or not verse_col or not text_col:
-        raise HTTPException(status_code=500, detail="Bible DB schema not supported (missing chapter/verse/text columns).")
-
-    # book columns
-    book_col = None
-    if "book_id" in vcols:
-        book_col = "book_id"
-    elif "book" in vcols:
-        book_col = "book"
-    elif "b" in vcols:
-        book_col = "b"
-
-    if not book_col:
-        raise HTTPException(status_code=500, detail="Bible DB schema not supported (missing book column).")
-
-    book_id, display_book = resolve_book_id(conn, book_name)
-
-    params: List[Any] = []
-    where = f"{chapter_col}=?"
-    params.append(int(chapter))
-
-    if book_id is not None and book_col == "book_id":
-        where = f"{book_col}=? AND " + where
-        params.insert(0, int(book_id))
-    else:
-        where = f"{book_col}=? AND " + where
-        params.insert(0, book_name)
-
-    if full_chapter:
-        # entire chapter
-        q = f"""
-            SELECT {verse_col} AS v, {text_col} AS t
-            FROM {vt}
-            WHERE {where}
-            ORDER BY v
-        """
-    else:
-        # passage range
-        s = max(int(start), 1)
-        e = int(end) if end is not None else s
-        if e < s:
-            e = s
-        where2 = where + f" AND {verse_col}>=? AND {verse_col}<=?"
-        params2 = params + [s, e]
-        q = f"""
-            SELECT {verse_col} AS v, {text_col} AS t
-            FROM {vt}
-            WHERE {where2}
-            ORDER BY v
-        """
-        params = params2
-
-    rows = conn.execute(q, tuple(params)).fetchall()
-    if not rows:
-        ref = f"{display_book} {chapter}"
-        return ref, ""
-
-    verses = []
-    for r in rows:
-        vnum = r["v"]
-        txt = r["t"]
-        verses.append(f"{vnum} {txt}")
-
-    # Build reference
-    if full_chapter:
-        ref = f"{display_book} {chapter}"
-    else:
-        s = max(int(start), 1)
-        e = int(end) if end is not None else s
-        ref = f"{display_book} {chapter}:{s}-{e}"
-
-    return ref, "\n".join(verses)
-
-
-# -----------------------------
-# STATIC FRONTEND
-# -----------------------------
+INDEX_PATH = os.path.join(FRONTEND_DIR, "index.html")
+APPJS_PATH = os.path.join(FRONTEND_DIR, "app.js")
+MANIFEST_PATH = os.path.join(FRONTEND_DIR, "manifest.webmanifest")
+SW_PATH = os.path.join(FRONTEND_DIR, "service-worker.js")
+ICONS_DIR = os.path.join(FRONTEND_DIR, "icons")
+
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+# Static mounts
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
+# Serve icons at /icons/... because the manifest typically points there
+if os.path.isdir(ICONS_DIR):
+    app.mount("/icons", StaticFiles(directory=ICONS_DIR), name="icons")
 
-@app.get("/")
-def root():
-    index_path = os.path.join(FRONTEND_DIR, "index.html")
-    if os.path.isfile(index_path):
-        return FileResponse(index_path)
-    return JSONResponse({"ok": True, "message": "Frontend not found. Put index.html in /frontend."})
+# --------------------
+# ENV
+# --------------------
+STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()  # optional
+APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
+
+ALLOWLIST_EMAILS_RAW = (os.getenv("ALLOWLIST_EMAILS") or "").strip()
+DEV_TRUST_LOCAL = (os.getenv("DEV_TRUST_LOCAL") or "").strip().lower() in ("1", "true", "yes")
+
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+
+ALLOWLIST_SET = set()
+if ALLOWLIST_EMAILS_RAW:
+    for e in ALLOWLIST_EMAILS_RAW.split(","):
+        e = (e or "").strip().lower()
+        if e:
+            ALLOWLIST_SET.add(e)
 
 
-# -----------------------------
-# ACCOUNT (simple stub)
-# -----------------------------
+def _require_stripe_ready():
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Missing STRIPE_SECRET_KEY in environment.")
+    if not STRIPE_PRICE_ID:
+        raise HTTPException(500, "Missing STRIPE_PRICE_ID in environment.")
+    if not APP_BASE_URL:
+        raise HTTPException(500, "Missing APP_BASE_URL in environment (must be your Render https URL).")
+
+
+def _require_jwt_secret():
+    if not JWT_SECRET or len(JWT_SECRET) < 32:
+        raise HTTPException(500, "Missing/weak JWT_SECRET. Set a long random string (32+ chars).")
+
+
+def _enforce_allowlist(email: str):
+    if not ALLOWLIST_SET:
+        return
+    if (email or "").lower() not in ALLOWLIST_SET:
+        raise HTTPException(403, "This email is not allowed.")
+
+
+# --------------------
+# Signed token cookie helper
+# --------------------
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode().rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode())
+
+
+def _sign(data: bytes) -> str:
+    sig = hmac.new(JWT_SECRET.encode(), data, hashlib.sha256).digest()
+    return _b64url(sig)
+
+
+def _make_token(email: str, exp_seconds: int = 60 * 60 * 24 * 7) -> str:
+    _require_jwt_secret()
+    now = int(time.time())
+    payload = f"{email}|{now + exp_seconds}".encode()
+    token = _b64url(payload) + "." + _sign(payload)
+    return token
+
+
+def _read_token(token: str) -> Optional[dict]:
+    try:
+        _require_jwt_secret()
+        if not token or "." not in token:
+            return None
+        p, s = token.split(".", 1)
+        payload = _b64url_decode(p)
+        expected = _sign(payload)
+        if not hmac.compare_digest(s, expected):
+            return None
+        email, exp = payload.decode().split("|", 1)
+        if int(exp) < int(time.time()):
+            return None
+        return {"email": email}
+    except Exception:
+        return None
+
+
+AUTH_COOKIE_NAME = "alyana_auth"
+
+
+def _set_auth_cookie(resp, email: str):
+    token = _make_token(email)
+    resp.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        secure=(False if DEV_TRUST_LOCAL else True),
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+    )
+
+
+def _clear_auth_cookie(resp: JSONResponse):
+    resp.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+    return resp
+
+
+def get_current_email(request: Request) -> Optional[str]:
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    parsed = _read_token(token) if token else None
+    return parsed["email"] if parsed else None
+
+
+# --------------------
+# OPTIONAL local cache (Stripe subscription cache)
+# --------------------
+SUB_DB_PATH = os.path.join(DATA_DIR, "subs_cache.db")
+
+
+def _subs_db():
+    os.makedirs(os.path.dirname(SUB_DB_PATH), exist_ok=True)
+    con = sqlite3.connect(SUB_DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def _subs_init():
+    con = _subs_db()
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subs_cache (
+                email TEXT PRIMARY KEY,
+                stripe_customer_id TEXT,
+                status TEXT,
+                current_period_end INTEGER,
+                updated_at INTEGER
+            )
+            """
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+_subs_init()
+
+
+def _cache_upsert(email: str, customer_id: Optional[str], status: Optional[str], current_period_end: Optional[int]):
+    email = (email or "").strip().lower()
+    customer_id = (customer_id or "").strip() if isinstance(customer_id, str) else None
+    if not email:
+        return
+    now = int(time.time())
+    con = _subs_db()
+    try:
+        con.execute(
+            """
+            INSERT INTO subs_cache (email, stripe_customer_id, status, current_period_end, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(email) DO UPDATE SET
+                stripe_customer_id=excluded.stripe_customer_id,
+                status=excluded.status,
+                current_period_end=excluded.current_period_end,
+                updated_at=excluded.updated_at
+            """,
+            (email, customer_id, status, current_period_end, now),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _cache_get(email: str) -> Optional[dict]:
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    con = _subs_db()
+    try:
+        row = con.execute("SELECT * FROM subs_cache WHERE email=?", (email,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        con.close()
+
+
+# --------------------
+# AI daily cache (Devotional / Daily Prayer)
+# --------------------
+AI_CACHE_DB_PATH = os.path.join(DATA_DIR, "ai_cache.db")
+
+
+def _ai_cache_db():
+    os.makedirs(os.path.dirname(AI_CACHE_DB_PATH), exist_ok=True)
+    con = sqlite3.connect(AI_CACHE_DB_PATH)
+    con.row_factory = sqlite3.Row
+    return con
+
+
+def _ai_cache_init():
+    con = _ai_cache_db()
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_cache (
+                cache_key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+_ai_cache_init()
+
+
+def _ai_cache_get(cache_key: str, max_age_seconds: int = 60 * 60 * 24):
+    if not cache_key:
+        return None
+    con = _ai_cache_db()
+    try:
+        row = con.execute(
+            "SELECT value, created_at FROM ai_cache WHERE cache_key=?",
+            (cache_key,),
+        ).fetchone()
+        if not row:
+            return None
+        if int(time.time()) - int(row["created_at"]) > max_age_seconds:
+            return None
+        return str(row["value"])
+    finally:
+        con.close()
+
+
+def _ai_cache_set(cache_key: str, value: str):
+    if not cache_key or value is None:
+        return
+    con = _ai_cache_db()
+    try:
+        con.execute(
+            """
+            INSERT INTO ai_cache (cache_key, value, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(cache_key) DO UPDATE SET
+                value=excluded.value,
+                created_at=excluded.created_at
+            """,
+            (cache_key, value, int(time.time())),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _today_utc_yyyymmdd():
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
+# --------------------
+# Stripe: lookup subscription directly by email
+# --------------------
+def _stripe_find_customer_id_by_email(email: str) -> Optional[str]:
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+
+    try:
+        res = stripe.Customer.search(query=f"email:'{email}'", limit=1)
+        if res and res.get("data"):
+            return res["data"][0].get("id")
+    except Exception:
+        pass
+
+    try:
+        res = stripe.Customer.list(email=email, limit=1)
+        if res and res.get("data"):
+            return res["data"][0].get("id")
+    except Exception:
+        pass
+
+    return None
+
+
+def _stripe_get_customer_active_status(customer_id: str) -> Tuple[bool, Optional[str], Optional[int]]:
+    if not customer_id:
+        return (False, None, None)
+
+    subs = stripe.Subscription.list(customer=customer_id, status="all", limit=10)
+    if not subs or not subs.get("data"):
+        return (False, None, None)
+
+    ACTIVE_STATUSES = {"active", "trialing"}
+
+    best = None
+    best_rank = -1
+    for s in subs["data"]:
+        st = (s.get("status") or "").lower()
+        rank = 0
+        if st == "active":
+            rank = 4
+        elif st == "trialing":
+            rank = 3
+        elif st == "past_due":
+            rank = 2
+        elif st == "incomplete":
+            rank = 1
+        if rank > best_rank:
+            best_rank = rank
+            best = s
+
+    if not best:
+        return (False, None, None)
+
+    status = (best.get("status") or "").lower()
+    cpe = best.get("current_period_end")
+    return (status in ACTIVE_STATUSES, status or None, int(cpe) if cpe else None)
+
+
+def _stripe_check_email_subscription(email: str) -> dict:
+    _require_stripe_ready()
+
+    email = (email or "").strip().lower()
+    if not email:
+        return {"email": None, "customer_id": None, "active": False, "status": None, "current_period_end": None}
+
+    customer_id = _stripe_find_customer_id_by_email(email)
+    if not customer_id:
+        return {"email": email, "customer_id": None, "active": False, "status": None, "current_period_end": None}
+
+    active, status, cpe = _stripe_get_customer_active_status(customer_id)
+    _cache_upsert(email, customer_id, status, cpe)
+
+    return {"email": email, "customer_id": customer_id, "active": active, "status": status, "current_period_end": cpe}
+
+
+def require_active_user(request: Request) -> str:
+    email = get_current_email(request)
+    if not email:
+        raise HTTPException(401, "Not logged in.")
+
+    info = _stripe_check_email_subscription(email)
+    if not info["active"]:
+        raise HTTPException(402, "Subscription inactive. Please subscribe.")
+
+    return email
+
+
+# --------------------
+# Gemini (AI)
+# --------------------
+API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+client = genai.Client(api_key=API_KEY) if API_KEY else None
+MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+
+class Msg(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class ChatIn(BaseModel):
+    prompt: str
+    history: Optional[List[Msg]] = None
+
+
+class LangIn(BaseModel):
+    lang: Optional[str] = "en"
+
+
+def _require_ai():
+    if not client:
+        raise HTTPException(status_code=503, detail="AI key not configured (set GEMINI_API_KEY / GOOGLE_API_KEY).")
+
+
+def _generate_text_with_retries(full_prompt: str, tries: int = 3) -> str:
+    last_error = None
+    for attempt in range(tries):
+        try:
+            resp = client.models.generate_content(model=MODEL_NAME, contents=full_prompt)
+            return resp.text or ""
+        except Exception as e:
+            last_error = e
+            msg = repr(e)
+
+            if ("UNAVAILABLE" in msg) or ("503" in msg) or ("overloaded" in msg):
+                time.sleep(1 + attempt)
+                continue
+
+            if ("429" in msg) or ("RESOURCE_EXHAUSTED" in msg):
+                raise HTTPException(status_code=429, detail="Alyana reached the AI limit right now. Please try again later.")
+            break
+
+    print("Gemini error after retries:", repr(last_error))
+    raise HTTPException(status_code=503, detail="AI error. Please try again in a bit.")
+
+
+def _norm_lang(lang: Optional[str]) -> str:
+    l = (lang or "en").strip().lower()
+    return "es" if l.startswith("es") else "en"
+
+
+def _build_chat_prompt(system_prompt: str, user_prompt: str, history: Optional[List[Msg]]) -> str:
+    lines: List[str] = [system_prompt.strip(), "", "Conversation so far:"]
+    if history:
+        trimmed = history[-16:]
+        for m in trimmed:
+            role = "User" if (m.role or "").lower().startswith("user") else "Alyana"
+            content = (m.content or "").strip()
+            if content:
+                lines.append(f"{role}: {content}")
+    lines.append("")
+    lines.append(f"User: {user_prompt.strip()}")
+    lines.append("Alyana:")
+    return "\n".join(lines)
+
+
+# =========================
+# Frontend serving (root files)
+# =========================
+@app.get("/", include_in_schema=False)
+async def serve_frontend():
+    if not os.path.exists(INDEX_PATH):
+        return PlainTextResponse(f"Missing {INDEX_PATH}", status_code=500)
+    return FileResponse(INDEX_PATH, headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"})
+
+
+@app.get("/app.js", include_in_schema=False)
+async def serve_app_js_root():
+    if not os.path.exists(APPJS_PATH):
+        return PlainTextResponse(f"Missing {APPJS_PATH}. Put app.js inside frontend/app.js", status_code=404)
+    return FileResponse(
+        APPJS_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def serve_manifest():
+    if not os.path.exists(MANIFEST_PATH):
+        return PlainTextResponse(f"Missing {MANIFEST_PATH}", status_code=404)
+    return FileResponse(
+        MANIFEST_PATH,
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+async def serve_service_worker():
+    if not os.path.exists(SW_PATH):
+        return PlainTextResponse(f"Missing {SW_PATH}", status_code=404)
+    return FileResponse(
+        SW_PATH,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
+        "frontend_dir": FRONTEND_DIR,
+        "index_exists": os.path.exists(INDEX_PATH),
+        "appjs_exists": os.path.exists(APPJS_PATH),
+        "sw_exists": os.path.exists(SW_PATH),
+        "manifest_exists": os.path.exists(MANIFEST_PATH),
+        "icons_dir_exists": os.path.isdir(ICONS_DIR),
+        "ai_configured": bool(API_KEY),
+        "model": MODEL_NAME,
+        "stripe_configured": bool(STRIPE_SECRET_KEY and STRIPE_PRICE_ID and APP_BASE_URL),
+        "jwt_configured": bool(JWT_SECRET and len(JWT_SECRET) >= 32),
+        "allowlist_enabled": bool(ALLOWLIST_SET),
+        "data_dir_exists": os.path.isdir(DATA_DIR),
+        "bible_dbs_found": [f for f in os.listdir(DATA_DIR) if f.lower().endswith(".db")] if os.path.isdir(DATA_DIR) else [],
+    }
+
+
+# =========================
+# Stripe Subscription Billing
+# =========================
+class CheckoutIn(BaseModel):
+    email: Optional[str] = None
+
+
+class PortalIn(BaseModel):
+    email: Optional[str] = None
+
+
+class LoginIn(BaseModel):
+    email: str
+
+
+@app.post("/login")
+def login(body: LoginIn):
+    _require_jwt_secret()
+    _require_stripe_ready()
+
+    email = (body.email or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "Missing email.")
+
+    _enforce_allowlist(email)
+
+    info = _stripe_check_email_subscription(email)
+    if not info["active"]:
+        raise HTTPException(402, "Subscription inactive or not found.")
+
+    resp = JSONResponse(
+        {"ok": True, "email": email, "active": True, "status": info["status"], "current_period_end": info["current_period_end"]}
+    )
+    _set_auth_cookie(resp, email)
+    return resp
+
+
+@app.post("/stripe/create-checkout-session")
+def create_checkout_session(body: CheckoutIn):
+    _require_stripe_ready()
+
+    email = (body.email or "").strip().lower() if body else ""
+    if email:
+        _enforce_allowlist(email)
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            line_items=[{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            success_url=f"{APP_BASE_URL}/billing/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{APP_BASE_URL}/billing/cancel",
+            customer_email=email if email else None,
+            allow_promotion_codes=True,
+        )
+        return {"url": session.url, "id": session.id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Stripe error: {str(e)}")
+
+
+@app.post("/stripe/create-portal-session")
+def create_portal_session(request: Request, body: PortalIn):
+    _require_stripe_ready()
+
+    email = get_current_email(request) or ((body.email or "").strip().lower() if body else "")
+    if not email:
+        raise HTTPException(400, "Missing email (not logged in).")
+
+    _enforce_allowlist(email)
+
+    cached = _cache_get(email)
+    customer_id = (cached or {}).get("stripe_customer_id")
+    if not customer_id:
+        customer_id = _stripe_find_customer_id_by_email(email)
+
+    if not customer_id:
+        raise HTTPException(404, "No Stripe customer found for that email yet.")
+
+    try:
+        portal = stripe.billing_portal.Session.create(customer=customer_id, return_url=f"{APP_BASE_URL}/")
+        return {"url": portal.url}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Stripe portal error: {str(e)}")
+
+
+@app.get("/billing/success", include_in_schema=False)
+def billing_success(session_id: str):
+    _require_stripe_ready()
+    _require_jwt_secret()
+
+    try:
+        session = stripe.checkout.Session.retrieve(session_id, expand=["customer", "subscription"])
+
+        email = ""
+        cd = session.get("customer_details") or {}
+        if isinstance(cd, dict) and cd.get("email"):
+            email = cd["email"]
+        elif session.get("customer_email"):
+            email = session["customer_email"]
+        email = (email or "").strip().lower()
+
+        if email:
+            _enforce_allowlist(email)
+
+        customer_raw = session.get("customer")
+        customer_id = customer_raw.get("id") if isinstance(customer_raw, dict) else customer_raw
+
+        sub_obj = session.get("subscription")
+        sub_id = sub_obj.get("id") if isinstance(sub_obj, dict) else sub_obj
+
+        status = None
+        current_period_end = None
+
+        try:
+            if isinstance(sub_id, str) and sub_id:
+                sub = stripe.Subscription.retrieve(sub_id)
+                status = sub.get("status")
+                current_period_end = sub.get("current_period_end")
+            elif isinstance(sub_obj, dict) and sub_obj.get("status"):
+                status = sub_obj.get("status")
+                current_period_end = sub_obj.get("current_period_end")
+        except Exception:
+            pass
+
+        if email and isinstance(customer_id, str) and customer_id:
+            _cache_upsert(
+                email,
+                customer_id,
+                (status or "").lower() if status else None,
+                int(current_period_end) if current_period_end else None,
+            )
+
+        resp = RedirectResponse(url="/?billing=success")
+        if email:
+            _set_auth_cookie(resp, email)
+        return resp
+
+    except Exception:
+        return RedirectResponse(url="/?billing=success_error")
+
+
+@app.get("/billing/cancel", include_in_schema=False)
+def billing_cancel():
+    return RedirectResponse(url="/?billing=cancel")
+
+
 @app.get("/me")
-def me():
-    # If you add real auth later, replace this.
-    email = os.environ.get("ALYANA_EMAIL") or os.environ.get("USER_EMAIL") or None
-    return {"email": email, "active": True if email else False}
+def me(request: Request):
+    email = get_current_email(request)
+    if not email:
+        return {"logged_in": False, "email": None, "active": False, "status": None, "current_period_end": None}
+
+    _enforce_allowlist(email)
+
+    info = _stripe_check_email_subscription(email)
+    return {
+        "logged_in": True,
+        "email": email,
+        "active": bool(info["active"]),
+        "status": info["status"],
+        "current_period_end": info["current_period_end"],
+    }
 
 
-# -----------------------------
-# CHAT
-# -----------------------------
-@app.post("/chat")
-def chat(payload: Dict[str, Any] = Body(...)):
-    if run_bible_ai is None:
-        raise HTTPException(status_code=500, detail="agent.py not available or failed to import run_bible_ai().")
-
-    prompt = str(payload.get("prompt") or "").strip()
-    history = payload.get("history") or []
-
-    # Determine lang:
-    # - If prompt already includes the language instruction, good.
-    # - Otherwise infer from prompt markers. (Frontend adds instruction now.)
-    lang = "es" if "Responde SOLO en español" in prompt or "español" in prompt.lower() else "en"
-
-    # Build a single prompt for the agent (history + new prompt)
-    # Keep it readable and stable.
-    history_lines = []
-    if isinstance(history, list):
-        for m in history[-16:]:
-            role = (m or {}).get("role", "")
-            content = (m or {}).get("content", "")
-            if role in ("user", "assistant") and str(content).strip():
-                history_lines.append(f"{role.upper()}: {content}")
-
-    combined = ""
-    if history_lines:
-        combined += "Conversation so far:\n" + "\n".join(history_lines) + "\n\n"
-
-    combined += "User:\n" + prompt
-
-    combined = force_language(lang, combined)
-
-    try:
-        reply = run_bible_ai(combined)
-        return {"message": str(reply)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat error: {e}")
+@app.post("/logout")
+def logout():
+    resp = JSONResponse({"ok": True})
+    return _clear_auth_cookie(resp)
 
 
-# -----------------------------
-# DEVOTIONAL (returns { json: "<stringified JSON>" })
-# -----------------------------
-@app.post("/devotional")
-def devotional(payload: Dict[str, Any] = Body(...)):
-    if run_bible_ai is None:
-        raise HTTPException(status_code=500, detail="agent.py not available or failed to import run_bible_ai().")
-
-    lang = str(payload.get("lang") or "en").lower()
-    lang = "es" if lang.startswith("es") else "en"
-
-    cache_key = f"devotional:{today_key()}:{lang}"
-    cached = cache_get(cache_key)
-    if cached:
-        return {"json": cached["json"], "cached": True}
-
-    prompt = (
-        "Create a short devotional suggestion in STRICT JSON with keys:\n"
-        '  "scripture": string,\n'
-        '  "brief_explanation": string\n'
-        "No markdown. No extra keys.\n"
+# =========================
+# Premium-protected endpoint
+# =========================
+@app.post("/premium/chat")
+def premium_chat(request: Request, body: ChatIn, email: str = Depends(require_active_user)):
+    _require_ai()
+    system_prompt = (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring. "
+        "If the user is writing in Spanish, reply fully in Spanish."
     )
-    prompt = force_language(lang, prompt)
-
-    try:
-        text = run_bible_ai(prompt)
-        # Ensure it is JSON; if model returns extra text, wrap in safe object
-        parsed = None
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = {"scripture": "", "brief_explanation": str(text)}
-
-        out_json = safe_json_dumps(parsed)
-        cache_set(cache_key, {"json": out_json})
-        return {"json": out_json, "cached": False}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Devotional error: {e}")
+    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
+    return {"status": "success", "email": email, "message": text}
 
 
-# -----------------------------
-# DAILY PRAYER (returns { json: "<stringified JSON>" })
-# -----------------------------
-@app.post("/daily_prayer")
-def daily_prayer(payload: Dict[str, Any] = Body(...)):
-    if run_bible_ai is None:
-        raise HTTPException(status_code=500, detail="agent.py not available or failed to import run_bible_ai().")
+# =========================
+# Bible Reader (MULTI-DB)
+# =========================
+# Put dbs in /data:
+# - data/bible.db        (your current English)
+# - data/rvr1909.db      (Spanish you will generate in Option B)
+#
+# The db must have:
+# - books table
+# - verses table with columns: book_id, chapter, verse, text
+#
+# You can add more later by dropping more .db files into /data.
 
-    lang = str(payload.get("lang") or "en").lower()
-    lang = "es" if lang.startswith("es") else "en"
+BIBLE_DB_FILES: Dict[str, str] = {
+    "kjv": os.path.join(DATA_DIR, "bible.db"),      # existing
+    "rvr1909": os.path.join(DATA_DIR, "rvr1909.db") # you will generate
+}
 
-    cache_key = f"prayer:{today_key()}:{lang}"
-    cached = cache_get(cache_key)
-    if cached:
-        return {"json": cached["json"], "cached": True}
+BIBLE_DB_LABELS: Dict[str, str] = {
+    "kjv": "KJV (English, local)",
+    "rvr1909": "RVR 1909 (Español, local)"
+}
 
-    prompt = (
-        "Create prayer starters in STRICT JSON with keys:\n"
-        '  "example_adoration": string,\n'
-        '  "example_confession": string,\n'
-        '  "example_thanksgiving": string,\n'
-        '  "example_supplication": string\n'
-        "No markdown. No extra keys.\n"
-    )
-    prompt = force_language(lang, prompt)
+DEFAULT_BIBLE_VERSION = os.getenv("DEFAULT_BIBLE_VERSION", "kjv").strip().lower() or "kjv"
 
-    try:
-        text = run_bible_ai(prompt)
-        parsed = None
-        try:
-            parsed = json.loads(text)
-        except Exception:
-            parsed = {
-                "example_adoration": "",
-                "example_confession": "",
-                "example_thanksgiving": "",
-                "example_supplication": str(text),
+
+def _list_bible_versions() -> List[dict]:
+    out = []
+    for key, path in BIBLE_DB_FILES.items():
+        out.append(
+            {
+                "key": key,
+                "label": BIBLE_DB_LABELS.get(key, key),
+                "path": path,
+                "exists": os.path.exists(path),
             }
-
-        out_json = safe_json_dumps(parsed)
-        cache_set(cache_key, {"json": out_json})
-        return {"json": out_json, "cached": False}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Daily prayer error: {e}")
+        )
+    return out
 
 
-# -----------------------------
-# BIBLE API
-# -----------------------------
+def _pick_db(version: Optional[str]) -> Tuple[str, str]:
+    v = (version or DEFAULT_BIBLE_VERSION or "kjv").strip().lower()
+    if v not in BIBLE_DB_FILES:
+        # If unknown, fall back to default
+        v = DEFAULT_BIBLE_VERSION if DEFAULT_BIBLE_VERSION in BIBLE_DB_FILES else "kjv"
+    return v, BIBLE_DB_FILES[v]
+
+
+def _db(version: Optional[str] = None):
+    v, db_path = _pick_db(version)
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail=f"Bible DB file not found for version='{v}': {db_path}")
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    return con, v, db_path
+
+
+def _get_table_columns(con: sqlite3.Connection, table: str) -> List[str]:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    return [r["name"] for r in rows]
+
+
+def _get_books_table_mapping(con: sqlite3.Connection) -> Dict[str, str]:
+    cols = [c.lower() for c in _get_table_columns(con, "books")]
+    id_col = next((c for c in ["id", "book_id", "pk"] if c in cols), None) or (cols[0] if cols else "id")
+    name_col = next((c for c in ["name", "book", "title", "label"] if c in cols), None) or (
+        cols[1] if len(cols) > 1 else cols[0]
+    )
+    key_col = next((c for c in ["key", "slug", "code", "abbr", "short_name", "shortname"] if c in cols), "")
+    return {"id_col": id_col, "name_col": name_col, "key_col": key_col}
+
+
+def _normalize_book_key(book: str) -> str:
+    b = (book or "").strip().lower()
+    b = re.sub(r"\s+", "", b)
+    return b
+
+
+def _resolve_book_id(con: sqlite3.Connection, book: str) -> int:
+    raw = (book or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Missing book")
+
+    if raw.isdigit():
+        return int(raw)
+
+    mapping = _get_books_table_mapping(con)
+    id_col = mapping["id_col"]
+    name_col = mapping["name_col"]
+    key_col = mapping["key_col"]
+    norm = _normalize_book_key(raw)
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE LOWER({name_col}) = LOWER(?) LIMIT 1", (raw,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    row = con.execute(
+        f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({name_col}), ' ', '') = ? LIMIT 1", (norm,)
+    ).fetchone()
+    if row:
+        return int(row["id"])
+
+    if key_col:
+        row = con.execute(
+            f"SELECT {id_col} AS id FROM books WHERE REPLACE(LOWER({key_col}), ' ', '') = ? LIMIT 1", (norm,)
+        ).fetchone()
+        if row:
+            return int(row["id"])
+
+    raise HTTPException(status_code=404, detail=f"Book not found: {raw}")
+
+
 @app.get("/bible/versions")
 def bible_versions():
-    return {"versions": available_versions()}
+    return {"default": DEFAULT_BIBLE_VERSION, "versions": _list_bible_versions()}
 
 
 @app.get("/bible/health")
-def bible_health(version: Optional[str] = Query(default=None), lang: str = Query(default="en")):
-    lang = "es" if str(lang).lower().startswith("es") else "en"
-    path, meta = get_db_path(version, lang)
-
+def bible_health(version: Optional[str] = None):
+    con, v, db_path = _db(version)
     try:
-        conn = open_db(path)
-        schema = detect_schema(conn)
-        # attempt a verse count (best-effort)
-        verse_count = None
-        if schema["verses_table"]:
-            vt = schema["verses_table"]
-            verse_count = conn.execute(f"SELECT COUNT(1) AS n FROM {vt}").fetchone()["n"]
-        conn.close()
+        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchall()
+        table_names = [t["name"] for t in tables]
+        if "books" not in table_names or "verses" not in table_names:
+            raise HTTPException(status_code=500, detail=f"Missing tables. Found: {table_names}")
+
+        vcols = set([c.lower() for c in _get_table_columns(con, "verses")])
+        needed = {"book_id", "chapter", "verse", "text"}
+        if not needed.issubset(vcols):
+            raise HTTPException(status_code=500, detail=f"verses table missing columns. Found: {sorted(vcols)}")
+
+        count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
         return {
             "status": "ok",
-            "version": meta["label"],
-            "version_id": version or pick_default_version(lang),
-            "verse_count": verse_count,
+            "version": v,
+            "label": BIBLE_DB_LABELS.get(v, v),
+            "db_path": db_path,
+            "verse_count": int(count),
         }
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"status": "error", "detail": str(e)}
+    finally:
+        con.close()
+
+
+# Back-compat for your frontend (it calls /bible/status)
+@app.get("/bible/status")
+def bible_status(version: Optional[str] = None):
+    return bible_health(version=version)
 
 
 @app.get("/bible/books")
-def bible_books(version: Optional[str] = Query(default=None), lang: str = Query(default="en")):
-    lang = "es" if str(lang).lower().startswith("es") else "en"
-    path, meta = get_db_path(version, lang)
-
-    conn = open_db(path)
+def bible_books(version: Optional[str] = None):
+    con, v, _ = _db(version)
     try:
-        books = books_list(conn)
-        return {"version": meta["label"], "version_id": version or pick_default_version(lang), "books": books}
+        mapping = _get_books_table_mapping(con)
+        id_col = mapping["id_col"]
+        name_col = mapping["name_col"]
+        key_col = mapping["key_col"]
+
+        if key_col:
+            rows = con.execute(
+                f"SELECT {id_col} AS id, {name_col} AS name, {key_col} AS book_key FROM books ORDER BY {id_col}"
+            ).fetchall()
+        else:
+            rows = con.execute(f"SELECT {id_col} AS id, {name_col} AS name FROM books ORDER BY {id_col}").fetchall()
+
+        books = []
+        for r in rows:
+            books.append(
+                {
+                    "id": int(r["id"]),
+                    "name": str(r["name"]),
+                    "key": str(r["book_key"]) if "book_key" in r.keys() else None,
+                }
+            )
+
+        return {"version": v, "books": books}
     finally:
-        conn.close()
+        con.close()
 
 
 @app.get("/bible/chapters")
-def bible_chapters(
-    book: str = Query(...),
-    version: Optional[str] = Query(default=None),
-    lang: str = Query(default="en"),
-):
-    lang = "es" if str(lang).lower().startswith("es") else "en"
-    path, meta = get_db_path(version, lang)
-
-    conn = open_db(path)
+def bible_chapters(book: str, version: Optional[str] = None):
+    con, v, _ = _db(version)
     try:
-        chapters = chapters_for_book(conn, book)
-        return {"version": meta["label"], "version_id": version or pick_default_version(lang), "book": book, "chapters": chapters}
+        book_id = _resolve_book_id(con, book)
+        rows = con.execute("SELECT DISTINCT chapter FROM verses WHERE book_id=? ORDER BY chapter", (book_id,)).fetchall()
+        chapters = [int(r["chapter"]) for r in rows]
+        if not chapters:
+            raise HTTPException(status_code=404, detail=f"No chapters for book_id={book_id}")
+        return {
+            "version": v,
+            "book_id": book_id,
+            "chapters": chapters,
+            "count": len(chapters),  # back-compat for UIs that expect a count
+        }
     finally:
-        conn.close()
+        con.close()
+
+
+@app.get("/bible/verses")
+def bible_verses(book: str, chapter: int, version: Optional[str] = None):
+    if chapter < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter")
+    con, v, _ = _db(version)
+    try:
+        book_id = _resolve_book_id(con, book)
+        rows = con.execute(
+            "SELECT verse FROM verses WHERE book_id=? AND chapter=? ORDER BY verse", (book_id, int(chapter))
+        ).fetchall()
+        verses = [int(r["verse"]) for r in rows]
+        if not verses:
+            raise HTTPException(status_code=404, detail=f"No verses for book_id={book_id} ch={chapter}")
+        return {"version": v, "book_id": book_id, "chapter": int(chapter), "verses": verses}
+    finally:
+        con.close()
 
 
 @app.get("/bible/passage")
 def bible_passage(
-    book: str = Query(...),
-    chapter: int = Query(...),
-    full_chapter: bool = Query(default=True),
-    start: int = Query(default=1),
-    end: Optional[int] = Query(default=None),
-    version: Optional[str] = Query(default=None),
-    lang: str = Query(default="en"),
+    book: str,
+    chapter: int,
+    full_chapter: bool = False,
+    start: int = 1,
+    end: Optional[int] = None,
+    version: Optional[str] = None,
 ):
-    lang = "es" if str(lang).lower().startswith("es") else "en"
-    path, meta = get_db_path(version, lang)
+    if chapter < 1:
+        raise HTTPException(status_code=400, detail="Invalid chapter")
 
-    conn = open_db(path)
+    con, v, _ = _db(version)
     try:
-        ref, txt = passage_text(conn, book, int(chapter), bool(full_chapter), int(start), end)
-        return {
-            "version": meta["label"],
-            "version_id": version or pick_default_version(lang),
-            "reference": ref,
-            "text": txt,
-        }
+        book_id = _resolve_book_id(con, book)
+
+        mapping = _get_books_table_mapping(con)
+        id_col = mapping["id_col"]
+        name_col = mapping["name_col"]
+        b = con.execute(f"SELECT {name_col} AS name FROM books WHERE {id_col}=? LIMIT 1", (book_id,)).fetchone()
+        book_name = b["name"] if b else str(book)
+
+        if full_chapter:
+            rows = con.execute(
+                "SELECT verse, text FROM verses WHERE book_id=? AND chapter=? ORDER BY verse",
+                (book_id, int(chapter)),
+            ).fetchall()
+            if not rows:
+                raise HTTPException(status_code=404, detail="No chapter text")
+            text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+            return {"version": v, "reference": f"{book_name} {chapter}", "text": text}
+
+        if start < 1:
+            raise HTTPException(status_code=400, detail="Invalid start verse")
+        if end is None or end < start:
+            end = start
+
+        rows = con.execute(
+            """
+            SELECT verse, text
+            FROM verses
+            WHERE book_id=? AND chapter=? AND verse BETWEEN ? AND ?
+            ORDER BY verse
+            """,
+            (book_id, int(chapter), int(start), int(end)),
+        ).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No passage text returned")
+
+        text = "\n".join([f'{r["verse"]} {r["text"]}' for r in rows]).strip()
+        ref = f"{book_name} {chapter}:{start}" if start == end else f"{book_name} {chapter}:{start}-{end}"
+        return {"version": v, "reference": ref, "text": text}
     finally:
-        conn.close()
+        con.close()
+
+
+# Back-compat for your frontend (it calls /bible/text?book=&chapter=&start=&end=&mode=)
+@app.get("/bible/text")
+def bible_text(
+    book: str,
+    chapter: int,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    mode: Optional[str] = None,
+    full_chapter: Optional[bool] = None,
+    version: Optional[str] = None,
+):
+    m = (mode or "").strip().lower()
+    fc = bool(full_chapter) if full_chapter is not None else (m == "chapter" and not start and not end)
+    if m == "chapter":
+        fc = True
+    if fc:
+        return bible_passage(book=book, chapter=chapter, full_chapter=True, version=version)
+
+    s = int(start) if start is not None and str(start).strip() != "" else 1
+    e = int(end) if end is not None and str(end).strip() != "" else None
+    return bible_passage(book=book, chapter=chapter, full_chapter=False, start=s, end=e, version=version)
+
+
+# =========================
+# Free chat + Devotional + Daily Prayer (Spanish supported)
+# =========================
+@app.post("/chat")
+def chat(body: ChatIn):
+    _require_ai()
+    system_prompt = (
+        "You are Alyana Luz, a warm, scripture-focused assistant. "
+        "You pray with the user, suggest Bible passages, and explain verses. "
+        "Reply in friendly, natural text (no JSON or code) unless the user asks "
+        "for something technical. Keep answers concise but caring. "
+        "If the user is writing in Spanish, reply fully in Spanish."
+    )
+    full_prompt = _build_chat_prompt(system_prompt, body.prompt, body.history)
+    text = _generate_text_with_retries(full_prompt) or "Sorry, I couldn't respond right now."
+    return {"status": "success", "message": text}
+
+
+@app.post("/devotional")
+def devotional(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    cache_key = f"devotional:{lang}:{_today_utc_yyyymmdd()}"
+    cached = _ai_cache_get(cache_key)
+    if cached:
+        return {"json": cached, "cached": True}
+
+    if lang == "es":
+        prompt = """
+Eres Alyana Luz. Crea un devocional en JSON ESTRICTO SOLAMENTE.
+Devuelve exactamente esta forma:
+{
+  "scripture": "Libro Capítulo:Verso(s) — texto del verso (1-5 versos, breve)",
+  "brief_explanation": "2-4 oraciones explicándolo de forma simple"
+}
+Reglas:
+- Devuelve SOLO JSON válido (sin markdown).
+- Todo en español.
+- Cita claramente la referencia.
+- Mantén los versos breves (1-5).
+""".strip()
+    else:
+        prompt = """
+You are Alyana Luz. Create a devotional in STRICT JSON ONLY.
+Return exactly this shape:
+{
+  "scripture": "Book Chapter:Verse(s) — verse text (1-5 verses, brief)",
+  "brief_explanation": "2-4 sentences explaining it simply"
+}
+Rules:
+- Return ONLY valid JSON (no markdown).
+- Everything in English.
+- Clearly cite the reference.
+- Keep verses brief (1-5).
+""".strip()
+
+    text = _generate_text_with_retries(prompt) or "{}"
+    _ai_cache_set(cache_key, text)
+    return {"json": text, "cached": False}
+
+
+@app.post("/daily_prayer")
+def daily_prayer(body: Optional[LangIn] = None):
+    _require_ai()
+    lang = _norm_lang(body.lang if body else "en")
+
+    cache_key = f"daily_prayer:{lang}:{_today_utc_yyyymmdd()}"
+    cached = _ai_cache_get(cache_key)
+    if cached:
+        return {"json": cached, "cached": True}
+
+    if lang == "es":
+        prompt = """
+Eres Alyana Luz. Genera frases cortas para una oración ACTS en JSON ESTRICTO SOLAMENTE.
+Devuelve exactamente esta forma:
+{
+  "example_adoration": "1-2 frases",
+  "example_confession": "1-2 frases",
+  "example_thanksgiving": "1-2 frases",
+  "example_supplication": "1-2 frases"
+}
+Reglas:
+- Devuelve SOLO JSON válido (sin markdown).
+- Todo en español.
+- Tono cálido, breve y práctico.
+""".strip()
+    else:
+        prompt = """
+You are Alyana Luz. Generate short starters for an ACTS prayer in STRICT JSON ONLY.
+Return exactly this shape:
+{
+  "example_adoration": "1-2 sentences",
+  "example_confession": "1-2 sentences",
+  "example_thanksgiving": "1-2 sentences",
+  "example_supplication": "1-2 sentences"
+}
+Rules:
+- Return ONLY valid JSON (no markdown).
+- Everything in English.
+- Warm, brief, practical.
+""".strip()
+
+    text = _generate_text_with_retries(prompt) or "{}"
+    _ai_cache_set(cache_key, text)
+    return {"json": text, "cached": False}
+
 
 
