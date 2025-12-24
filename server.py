@@ -1,11 +1,17 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 # Bible API router
 from bible_api import router as bible_router
+
+# Try to import Gemini brain (optional at runtime)
+try:
+    from agent import run_bible_ai  # type: ignore
+except Exception:
+    run_bible_ai = None  # if key missing or import fails, we fallback
 
 # -----------------------------
 # Paths
@@ -52,6 +58,67 @@ def _safe_resolve_under(base: Path, target: Path) -> Path:
     return target
 
 
+def _normalize_lang(lang: str | None) -> str:
+    v = (lang or "").strip().lower()
+    return "es" if v.startswith("es") else "en"
+
+
+def _fallback_prayer_starter(lang: str) -> str:
+    if lang == "es":
+        return (
+            "Padre Celestial,\n"
+            "— Reconocimiento: Tú eres santo, fiel y cercano.\n"
+            "— Gratitud: Gracias por este nuevo día y por Tu cuidado.\n"
+            "— Reflexión/Confesión: Perdóname donde he fallado y renueva mi corazón.\n"
+            "— Petición: Dame sabiduría, paciencia y paz para lo que venga hoy.\n"
+            "— Intercesión: Bendice a mi familia y ayuda a quienes sufren o están necesitados.\n"
+            "— Rendición: Pongo este día en Tus manos; hágase Tu voluntad. Amén."
+        )
+    return (
+        "Heavenly Father,\n"
+        "— Acknowledgment: You are holy, faithful, and near.\n"
+        "— Gratitude: Thank You for this new day and Your constant care.\n"
+        "— Reflection/Confession: Forgive me where I’ve fallen short; renew my heart.\n"
+        "— Petition: Give me wisdom, patience, and peace for what’s ahead today.\n"
+        "— Intercession: Bless my family and help those who are hurting or in need.\n"
+        "— Surrender: I place this day in Your hands; Your will be done. Amen."
+    )
+
+
+def _build_daily_prayer_prompt(lang: str) -> str:
+    if lang == "es":
+        return (
+            "IMPORTANTE: Responde solo en español.\n\n"
+            "Genera un ejemplo breve de 'oración diaria' para ayudar a iniciar al usuario.\n"
+            "Debe seguir exactamente estos 6 elementos, con frases cortas (1–2 líneas por elemento):\n"
+            "1) Reconocimiento de Dios\n"
+            "2) Gratitud\n"
+            "3) Reflexión/Confesión\n"
+            "4) Petición (para hoy)\n"
+            "5) Intercesión (por otros)\n"
+            "6) Compromiso/Rendición\n\n"
+            "Formato requerido:\n"
+            "Comienza con 'Padre Celestial,' y usa viñetas con '—' para cada elemento.\n"
+            "Termina con 'Amén.'\n"
+            "Manténlo cálido, sencillo, y no más de 10–12 líneas."
+        )
+    return (
+        "IMPORTANT: Reply only in English.\n\n"
+        "Generate a brief 'daily prayer' example to help the user get started.\n"
+        "It must follow exactly these 6 elements, with short phrases (1–2 lines per element):\n"
+        "1) Acknowledgment of God\n"
+        "2) Gratitude\n"
+        "3) Reflection/Confession\n"
+        "4) Petition (for today)\n"
+        "5) Intercession (for others)\n"
+        "6) Commitment/Surrender\n\n"
+        "Required format:\n"
+        "Start with 'Heavenly Father,' and use bullets with '—' for each element.\n"
+        "End with 'Amen.'\n"
+        "Keep it warm, simple, and no more than 10–12 lines."
+    )
+
+
 # -----------------------------
 # API health/basic endpoints
 # -----------------------------
@@ -66,8 +133,24 @@ def devotional():
 
 
 @app.get("/daily_prayer")
-def daily_prayer():
-    return {"ok": True, "prayer": "Coming soon."}
+def daily_prayer(lang: str | None = Query(default=None)):
+    """
+    Returns a short starter example. User still writes the real prayer on the client.
+    """
+    L = _normalize_lang(lang)
+
+    # Try Gemini if available; otherwise fallback
+    if run_bible_ai:
+        try:
+            prompt = _build_daily_prayer_prompt(L)
+            text = run_bible_ai(prompt, context=None)
+            text = (text or "").strip()
+            if text:
+                return {"ok": True, "lang": L, "prayer": text}
+        except Exception:
+            pass
+
+    return {"ok": True, "lang": L, "prayer": _fallback_prayer_starter(L)}
 
 
 @app.post("/chat")
@@ -131,25 +214,23 @@ def serve_frontend_fallback(path: str):
     BUT: do NOT fallback for API-style routes (prevents HTML being returned to API calls)
     """
 
-    # ✅ NEVER fallback for these prefixes — return real 404 JSON instead
     blocked_prefixes = (
-        "bible",       # /bible/*
-        "me",          # /me
-        "chat",        # /chat
-        "devotional",  # /devotional
-        "daily_prayer" # /daily_prayer
+        "bible",
+        "me",
+        "chat",
+        "devotional",
+        "daily_prayer",
     )
     first_segment = (path.split("/", 1)[0] or "").strip().lower()
     if first_segment in blocked_prefixes:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    # If requested file exists under frontend, serve it
     candidate = _safe_resolve_under(FRONTEND_DIR, FRONTEND_DIR / path)
     if candidate.exists() and candidate.is_file():
         return FileResponse(str(candidate))
 
-    # Otherwise serve SPA entry
     if INDEX_HTML.exists():
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
