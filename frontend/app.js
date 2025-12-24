@@ -1,358 +1,659 @@
-from __future__ import annotations
+/* frontend/app.js
+   Alyana Luz • Bible AI
+   - IMPORTANT: This file DOES NOT rewrite the DOM.
+   - It assumes your full UI is already in frontend/index.html
+*/
 
-from pathlib import Path
-import os
-import sqlite3
-import hashlib
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+(function () {
+  "use strict";
 
-from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+  // -----------------------------
+  // Small helpers
+  // -----------------------------
+  const $ = (id) => document.getElementById(id);
+  const qs = (sel, root = document) => root.querySelector(sel);
+  const qsa = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-# Bible API router
-from bible_api import router as bible_router, DB_MAP
+  function setText(el, text) {
+    if (!el) return;
+    el.textContent = text;
+  }
 
-# Optional Gemini
-GEMINI_AVAILABLE = False
-try:
-    from dotenv import load_dotenv
-    from google import genai
-    from google.genai import types
-    GEMINI_AVAILABLE = True
-except Exception:
-    GEMINI_AVAILABLE = False
+  function show(el, on) {
+    if (!el) return;
+    el.style.display = on ? "" : "none";
+  }
 
+  async function fetchJSON(url, opts) {
+    const res = await fetch(url, opts);
+    const ct = res.headers.get("content-type") || "";
+    const isJson = ct.includes("application/json");
+    const data = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
+    if (!res.ok) {
+      const msg = isJson && data && data.detail ? data.detail : `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+    return data;
+  }
 
-# -----------------------------
-# Paths
-# -----------------------------
-ROOT_DIR = Path(__file__).resolve().parent
-FRONTEND_DIR = ROOT_DIR / "frontend"
-ICONS_DIR = FRONTEND_DIR / "icons"
+  function todayKeyLocal() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
 
-INDEX_HTML = FRONTEND_DIR / "index.html"
-APP_JS = FRONTEND_DIR / "app.js"
-MANIFEST = FRONTEND_DIR / "manifest.webmanifest"
-SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
+  function readLS(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      return JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  }
 
+  function writeLS(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
 
-# -----------------------------
-# App
-# -----------------------------
-app = FastAPI()
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
 
-# Register API routers FIRST
-app.include_router(bible_router)
+  // -----------------------------
+  // Init guard: if required elements are missing, don't crash
+  // -----------------------------
+  function requiredIdsExist() {
+    // If these are missing, you're not serving the full UI index.html
+    return !!($("jsStatus") && $("chatSection") && $("devotionalSection") && $("prayerSection"));
+  }
 
-# CORS (tighten later)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+  // -----------------------------
+  // Navigation (tabs)
+  // -----------------------------
+  function initNavigation() {
+    const buttons = qsa(".menu-btn");
+    const sections = qsa(".app-section");
 
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.getAttribute("data-target");
+        buttons.forEach((b) => b.classList.toggle("active", b === btn));
+        sections.forEach((s) => s.classList.toggle("active", s.id === target));
+      });
+    });
+  }
 
-# -----------------------------
-# Helpers
-# -----------------------------
-def _safe_resolve_under(base: Path, target: Path) -> Path:
-    base = base.resolve()
-    target = target.resolve()
-    if base not in target.parents and target != base:
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return target
+  // -----------------------------
+  // CHAT (simple stub + local save)
+  // -----------------------------
+  const CHAT_LS_KEY = "alyana_chat_saves_v1";
 
-def _data_dir() -> Path:
-    here = Path(__file__).resolve().parent
-    return here / "data"
+  function renderChatBubble(role, text) {
+    const chat = $("chat");
+    if (!chat) return;
 
-def _resolve_db_path(version: Optional[str]) -> Path:
-    v = (version or "en_default").strip() or "en_default"
-    filename = DB_MAP.get(v)
-    if not filename:
-        raise HTTPException(status_code=400, detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}")
-    p = _data_dir() / filename
-    if not p.exists():
-        raise HTTPException(status_code=404, detail=f"Bible DB not found at {p}")
-    return p
+    const row = document.createElement("div");
+    row.className = `bubble-row ${role}`;
 
-def _open_db(path: Path) -> sqlite3.Connection:
-    con = sqlite3.connect(str(path))
-    con.row_factory = sqlite3.Row
-    return con
+    const bubble = document.createElement("div");
+    bubble.className = `bubble ${role === "user" ? "user" : role === "bot" ? "bot" : "system"}`;
+    bubble.textContent = text;
 
-def _today_utc_key() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row.appendChild(bubble);
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
 
-def _stable_index(day: str, version: str, modulo: int) -> int:
-    # deterministic per day + version
-    h = hashlib.sha256(f"{day}|{version}".encode("utf-8")).hexdigest()
-    n = int(h[:16], 16)
-    return n % max(1, modulo)
+  function getChatTranscriptText() {
+    const chat = $("chat");
+    if (!chat) return "";
+    const rows = qsa(".bubble-row", chat);
+    const parts = rows.map((r) => {
+      const isUser = r.classList.contains("user");
+      const isBot = r.classList.contains("bot");
+      const who = isUser ? "You" : isBot ? "Alyana" : "System";
+      const bubble = qs(".bubble", r);
+      return `${who}: ${bubble ? bubble.textContent : ""}`;
+    });
+    return parts.join("\n");
+  }
 
-def _get_daily_verse(con: sqlite3.Connection, version: str) -> Dict[str, Any]:
-    # count rows using ROWID (works even if no "id" column)
-    row = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()
-    total = int(row["c"]) if row and row["c"] is not None else 0
-    if total <= 0:
-        raise HTTPException(status_code=500, detail="Bible DB has no verses.")
+  function renderSavedChats() {
+    const list = $("chatSavedList");
+    if (!list) return;
 
-    day = _today_utc_key()
-    offset = _stable_index(day, version, total)
+    const saves = readLS(CHAT_LS_KEY, []);
+    list.innerHTML = "";
 
-    # pull a single verse at offset, ordered by ROWID
-    v = con.execute(
-        """
-        SELECT v.book_id, v.chapter, v.verse, v.text
-        FROM verses v
-        ORDER BY v.ROWID
-        LIMIT 1 OFFSET ?
-        """,
-        (offset,),
-    ).fetchone()
-    if not v:
-        raise HTTPException(status_code=500, detail="Could not select daily verse.")
-
-    b = con.execute("SELECT name FROM books WHERE id=? LIMIT 1", (int(v["book_id"]),)).fetchone()
-    book_name = str(b["name"]) if b else str(v["book_id"])
-
-    ref = f"{book_name} {int(v['chapter'])}:{int(v['verse'])}"
-    scripture = str(v["text"])
-
-    return {
-        "day": day,
-        "reference": ref,
-        "scripture": scripture,
-        "book": book_name,
-        "chapter": int(v["chapter"]),
-        "verse": int(v["verse"]),
+    if (!saves.length) {
+      list.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
+      return;
     }
 
-def _fallback_starters(lang: str) -> Dict[str, Any]:
-    if lang == "es":
-        return {
-            "theme": "Confiar en Dios hoy",
-            "starters": {
-                "context": "Ejemplo: Este pasaje nos invita a mirar a Dios y no a nuestras fuerzas.",
-                "reflection": "Ejemplo: Dios es fiel incluso cuando yo me siento inseguro.",
-                "application": "Ejemplo: Hoy elijo obedecer a Dios en una decisión específica.",
-                "prayer": "Ejemplo: “Señor, ayúdame a confiar en Ti hoy…”",
-            },
-        }
-    return {
-        "theme": "Trusting God Today",
-        "starters": {
-            "context": "Example: This passage calls me to look to God instead of my own strength.",
-            "reflection": "Example: God is faithful even when I feel unsure.",
-            "application": "Example: Today I will obey God in one specific area.",
-            "prayer": "Example: “Lord, help me trust You today…”",
-        },
+    saves.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = saves.length - 1 - idxFromEnd;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${item.title || "Chat"} • ${item.day || ""}`;
+
+      btn.addEventListener("click", () => {
+        const chat = $("chat");
+        if (chat) chat.innerHTML = "";
+        renderChatBubble("system", `Loaded: ${item.title || "Chat"}`);
+        (item.lines || []).forEach((ln) => {
+          const role = ln.role || "bot";
+          renderChatBubble(role, ln.text || "");
+        });
+      });
+
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = "Delete";
+      del.style.marginTop = "8px";
+
+      del.addEventListener("click", () => {
+        const next = readLS(CHAT_LS_KEY, []);
+        next.splice(idx, 1);
+        writeLS(CHAT_LS_KEY, next);
+        renderSavedChats();
+      });
+
+      const wrap = document.createElement("div");
+      wrap.className = "block";
+      wrap.appendChild(btn);
+      wrap.appendChild(del);
+      list.appendChild(wrap);
+    });
+  }
+
+  function initChat() {
+    const form = $("chatForm");
+    const input = $("chatInput");
+    const newBtn = $("chatNewBtn");
+    const saveBtn = $("chatSaveBtn");
+
+    if (!form || !input || !newBtn || !saveBtn) return;
+
+    renderChatBubble("system", "Welcome. Ask for a prayer, verses, or guidance.");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = (input.value || "").trim();
+      if (!msg) return;
+      input.value = "";
+
+      renderChatBubble("user", msg);
+
+      try {
+        const data = await fetchJSON("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: msg }),
+        });
+        renderChatBubble("bot", data.reply || "…");
+      } catch (err) {
+        renderChatBubble("system", `Error: ${err.message || err}`);
+      }
+    });
+
+    newBtn.addEventListener("click", () => {
+      const chat = $("chat");
+      if (chat) chat.innerHTML = "";
+      renderChatBubble("system", "New chat started.");
+    });
+
+    saveBtn.addEventListener("click", () => {
+      const day = todayKeyLocal();
+      const transcript = qsa(".bubble-row", $("chat") || document).map((r) => {
+        const role = r.classList.contains("user") ? "user" : r.classList.contains("bot") ? "bot" : "system";
+        const bubble = qs(".bubble", r);
+        return { role, text: bubble ? bubble.textContent : "" };
+      });
+
+      const title = `Chat ${day}`;
+      const saves = readLS(CHAT_LS_KEY, []);
+      saves.push({ day, title, lines: transcript });
+      writeLS(CHAT_LS_KEY, saves);
+
+      renderSavedChats();
+      renderChatBubble("system", "Saved chat to this device.");
+    });
+
+    renderSavedChats();
+  }
+
+  // -----------------------------
+  // DEVOTIONAL (sections + user inputs + save + streak)
+  // -----------------------------
+  const DEV_LS_KEY = "alyana_devotionals_v2";
+  const DEV_STREAK_KEY = "alyana_devotional_streak_v1";
+
+  function calcStreak(daysSet) {
+    // daysSet = { "YYYY-MM-DD": true }
+    let streak = 0;
+    let d = new Date();
+    // count backwards from today
+    while (true) {
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (daysSet[key]) {
+        streak += 1;
+        d.setDate(d.getDate() - 1);
+      } else {
+        break;
+      }
+    }
+    return streak;
+  }
+
+  function updateDevStreakUI() {
+    const pill = $("devStreakPill");
+    const data = readLS(DEV_STREAK_KEY, { days: {} });
+    const streak = calcStreak(data.days || {});
+    setText(pill, `Streak: ${streak}`);
+  }
+
+  function renderDevSavedList() {
+    const list = $("devSavedList");
+    if (!list) return;
+
+    const saves = readLS(DEV_LS_KEY, []);
+    list.innerHTML = "";
+
+    if (!saves.length) {
+      list.innerHTML = `<small style="opacity:0.75;">No saved devotionals yet.</small>`;
+      return;
     }
 
-def _gemini_generate_devotional(lang: str, reference: str, scripture: str) -> Dict[str, Any]:
-    # If key missing or libs missing, raise so caller can fallback
-    if not GEMINI_AVAILABLE:
-        raise RuntimeError("Gemini not available")
+    saves.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = saves.length - 1 - idxFromEnd;
 
-    load_dotenv()
-    key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise RuntimeError("No Gemini API key")
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${item.day || ""} • ${item.theme || "Devotional"}`;
 
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+      btn.addEventListener("click", () => {
+        setText($("devTheme"), item.theme || "—");
+        setText($("devScriptureRef"), item.reference || "—");
+        setText($("devScriptureText"), item.scripture || "—");
 
-    client = genai.Client(api_key=key)
+        setText($("devStarterContext"), item.starters?.context || "—");
+        setText($("devStarterReflection"), item.starters?.reflection || "—");
+        setText($("devStarterApplication"), item.starters?.application || "—");
+        setText($("devStarterPrayer"), item.starters?.prayer || "—");
 
-    if lang == "es":
-        sys = (
-            "Eres Alyana Luz, una IA bíblica suave y alentadora.\n"
-            "Genera SOLO texto breve y útil.\n"
-            "Devuelve 1) un tema corto, 2) 4 ejemplos breves: contexto, reflexión, aplicación, oración.\n"
-            "Mantén cada ejemplo en 1–2 líneas.\n"
-            "No uses listas largas ni explicaciones extensas.\n"
-        )
-        user = (
-            f"Pasaje del día:\n{reference}\n{scripture}\n\n"
-            "Entrega exactamente este formato:\n"
-            "THEME: ...\n"
-            "CONTEXT: ...\n"
-            "REFLECTION: ...\n"
-            "APPLICATION: ...\n"
-            "PRAYER: ...\n"
-        )
-    else:
-        sys = (
-            "You are Alyana Luz, a gentle encouraging Bible AI.\n"
-            "Generate ONLY brief helpful text.\n"
-            "Return 1) a short theme, 2) 4 brief starters: context, reflection, application, prayer.\n"
-            "Keep each starter to 1–2 lines.\n"
-            "No long explanations.\n"
-        )
-        user = (
-            f"Daily passage:\n{reference}\n{scripture}\n\n"
-            "Return exactly this format:\n"
-            "THEME: ...\n"
-            "CONTEXT: ...\n"
-            "REFLECTION: ...\n"
-            "APPLICATION: ...\n"
-            "PRAYER: ...\n"
-        )
+        $("devMyContext").value = item.my?.context || "";
+        $("devMyReflection").value = item.my?.reflection || "";
+        $("devMyApplication").value = item.my?.application || "";
+        $("devMyPrayer").value = item.my?.prayer || "";
+        $("devMyNotes").value = item.my?.notes || "";
+      });
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=[types.Part.from_text(sys + "\n\n" + user)],
-    )
-    text = (resp.text or "").strip()
-    if not text:
-        raise RuntimeError("Empty Gemini response")
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = "Delete";
+      del.style.marginTop = "8px";
 
-    # Parse simple lines
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    out = {"theme": "", "starters": {"context": "", "reflection": "", "application": "", "prayer": ""}}
+      del.addEventListener("click", () => {
+        const next = readLS(DEV_LS_KEY, []);
+        next.splice(idx, 1);
+        writeLS(DEV_LS_KEY, next);
+        renderDevSavedList();
+      });
 
-    def take(prefix: str) -> str:
-      for ln in lines:
-        if ln.upper().startswith(prefix):
-          return ln.split(":", 1)[1].strip() if ":" in ln else ""
-      return ""
+      const wrap = document.createElement("div");
+      wrap.className = "block";
+      wrap.appendChild(btn);
+      wrap.appendChild(del);
+      list.appendChild(wrap);
+    });
+  }
 
-    out["theme"] = take("THEME")
-    out["starters"]["context"] = take("CONTEXT")
-    out["starters"]["reflection"] = take("REFLECTION")
-    out["starters"]["application"] = take("APPLICATION")
-    out["starters"]["prayer"] = take("PRAYER")
+  function setDevLangUI(lang) {
+    const intro = $("devIntro");
+    const req = $("devReqNote");
+    if (lang === "es") {
+      setText(intro, "Alyana te da ejemplos breves. Tú escribes y guardas tu devocional real.");
+      setText(req, "Requerido para guardar (racha): Contexto + Reflexión + Aplicación + Oración.");
+      setText($("devNow1"), "Ahora escribe el tuyo:");
+      setText($("devNow2"), "Ahora escribe el tuyo:");
+      setText($("devNow3"), "Ahora escribe el tuyo:");
+      setText($("devNow4"), "Ahora escribe tu oración real:");
+    } else {
+      setText(intro, "Alyana gives short starter examples. You write and save your real devotional.");
+      setText(req, "Required to save (streak): Context + Reflection + Application + Prayer.");
+      setText($("devNow1"), "Now write yours:");
+      setText($("devNow2"), "Now write yours:");
+      setText($("devNow3"), "Now write yours:");
+      setText($("devNow4"), "Now write your real prayer:");
+    }
+  }
 
-    # Minimal sanity
-    if not out["theme"]:
-        raise RuntimeError("Gemini parse failed: theme missing")
+  async function generateDevotional() {
+    const uiLangSel = $("devUiLang");
+    const lang = (uiLangSel ? uiLangSel.value : "en") || "en";
+    setDevLangUI(lang);
 
-    return out
+    // version: you can wire a selector later; for now match your backend default
+    const version = "en_default";
 
+    setText($("devTheme"), "Loading…");
+    setText($("devScriptureRef"), "Loading…");
+    setText($("devScriptureText"), "Loading…");
+    setText($("devStarterContext"), "Loading…");
+    setText($("devStarterReflection"), "Loading…");
+    setText($("devStarterApplication"), "Loading…");
+    setText($("devStarterPrayer"), "Loading…");
 
-# -----------------------------
-# API health/basic endpoints
-# -----------------------------
-@app.get("/me")
-def me():
-    return {"ok": True}
+    const data = await fetchJSON(`/devotional?lang=${encodeURIComponent(lang)}&version=${encodeURIComponent(version)}`);
 
+    setText($("devTheme"), data.theme || "—");
+    setText($("devScriptureRef"), data.reference || "—");
+    setText($("devScriptureText"), data.scripture || "—");
 
-@app.get("/devotional")
-def devotional(
-    lang: str = Query(default="en"),
-    version: str = Query(default="en_default"),
-) -> Dict[str, Any]:
-    lang = (lang or "en").strip().lower()
-    if lang not in ("en", "es"):
-        lang = "en"
+    setText($("devStarterContext"), data.starters?.context || "—");
+    setText($("devStarterReflection"), data.starters?.reflection || "—");
+    setText($("devStarterApplication"), data.starters?.application || "—");
+    setText($("devStarterPrayer"), data.starters?.prayer || "—");
 
-    db_path = _resolve_db_path(version)
-    con = _open_db(db_path)
-    try:
-        daily = _get_daily_verse(con, version)
-    finally:
-        con.close()
+    // clear user inputs for the day (user still writes)
+    $("devMyContext").value = "";
+    $("devMyReflection").value = "";
+    $("devMyApplication").value = "";
+    $("devMyPrayer").value = "";
+    $("devMyNotes").value = "";
+  }
 
-    # Use Gemini if available, else fallback
-    try:
-        gen = _gemini_generate_devotional(lang, daily["reference"], daily["scripture"])
-    except Exception:
-        gen = _fallback_starters(lang)
+  function saveDevotional() {
+    const theme = ($("devTheme")?.textContent || "").trim();
+    const reference = ($("devScriptureRef")?.textContent || "").trim();
+    const scripture = ($("devScriptureText")?.textContent || "").trim();
 
-    return {
-        "ok": True,
-        "day": daily["day"],
-        "lang": lang,
-        "version": version,
-        "theme": gen["theme"],
-        "reference": daily["reference"],
-        "scripture": daily["scripture"],
-        "starters": gen["starters"],
+    const starters = {
+      context: ($("devStarterContext")?.textContent || "").trim(),
+      reflection: ($("devStarterReflection")?.textContent || "").trim(),
+      application: ($("devStarterApplication")?.textContent || "").trim(),
+      prayer: ($("devStarterPrayer")?.textContent || "").trim(),
+    };
+
+    const my = {
+      context: ($("devMyContext")?.value || "").trim(),
+      reflection: ($("devMyReflection")?.value || "").trim(),
+      application: ($("devMyApplication")?.value || "").trim(),
+      prayer: ($("devMyPrayer")?.value || "").trim(),
+      notes: ($("devMyNotes")?.value || "").trim(),
+    };
+
+    // streak requirements
+    if (!my.context || !my.reflection || !my.application || !my.prayer) {
+      alert("To save (and count a streak), please fill: Context + Reflection + Application + Prayer.");
+      return;
     }
 
+    const day = todayKeyLocal();
+    const saves = readLS(DEV_LS_KEY, []);
+    saves.push({ day, theme, reference, scripture, starters, my });
+    writeLS(DEV_LS_KEY, saves);
 
-@app.get("/daily_prayer")
-def daily_prayer():
-    return {"ok": True, "prayer": "Coming soon."}
+    const streakData = readLS(DEV_STREAK_KEY, { days: {} });
+    streakData.days = streakData.days || {};
+    streakData.days[day] = true;
+    writeLS(DEV_STREAK_KEY, streakData);
 
+    updateDevStreakUI();
+    renderDevSavedList();
+    alert("Saved devotional. Streak updated.");
+  }
 
-@app.post("/chat")
-async def chat(req: Request):
-    body = await req.json()
-    user_message = body.get("message", "")
-    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
+  function initDevotional() {
+    const langSel = $("devUiLang");
+    const genBtn = $("devotionalBtn");
+    const saveBtn = $("devSaveBtn");
+    if (!langSel || !genBtn || !saveBtn) return;
 
+    langSel.addEventListener("change", () => setDevLangUI(langSel.value));
+    setDevLangUI(langSel.value || "en");
 
-# -----------------------------
-# Frontend / Static serving
-# -----------------------------
-@app.get("/", include_in_schema=False)
-def serve_index():
-    if not INDEX_HTML.exists():
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"frontend/index.html not found at {str(INDEX_HTML)}"},
-        )
-    return FileResponse(str(INDEX_HTML))
+    genBtn.addEventListener("click", async () => {
+      try {
+        await generateDevotional();
+      } catch (err) {
+        alert(`Devotional error: ${err.message || err}`);
+      }
+    });
 
+    saveBtn.addEventListener("click", saveDevotional);
 
-@app.get("/app.js", include_in_schema=False)
-def serve_app_js():
-    if not APP_JS.exists():
-        raise HTTPException(status_code=404, detail="app.js not found")
-    return FileResponse(str(APP_JS))
+    updateDevStreakUI();
+    renderDevSavedList();
+  }
 
+  // -----------------------------
+  // DAILY PRAYER (ACTS sections + user inputs + save + streak)
+  // -----------------------------
+  const PR_LS_KEY = "alyana_prayers_v2";
+  const PR_STREAK_KEY = "alyana_prayer_streak_v1";
 
-@app.get("/manifest.webmanifest", include_in_schema=False)
-def serve_manifest():
-    if not MANIFEST.exists():
-        raise HTTPException(status_code=404, detail="manifest.webmanifest not found")
-    return FileResponse(str(MANIFEST))
+  function updatePrayerStreakUI() {
+    const pill = $("prStreakPill");
+    const data = readLS(PR_STREAK_KEY, { days: {} });
+    const streak = calcStreak(data.days || {});
+    setText(pill, `Streak: ${streak}`);
+  }
 
+  function renderPrayerSavedList() {
+    const list = $("prSavedList");
+    if (!list) return;
 
-@app.get("/service-worker.js", include_in_schema=False)
-def serve_service_worker():
-    if not SERVICE_WORKER.exists():
-        raise HTTPException(status_code=404, detail="service-worker.js not found")
-    return FileResponse(str(SERVICE_WORKER))
+    const saves = readLS(PR_LS_KEY, []);
+    list.innerHTML = "";
 
+    if (!saves.length) {
+      list.innerHTML = `<small style="opacity:0.75;">No saved prayers yet.</small>`;
+      return;
+    }
 
-@app.get("/icons/{icon_name}", include_in_schema=False)
-def serve_icons(icon_name: str):
-    p = _safe_resolve_under(ICONS_DIR, ICONS_DIR / icon_name)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="Icon not found")
-    return FileResponse(str(p))
+    saves.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = saves.length - 1 - idxFromEnd;
 
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${item.day || ""} • Prayer`;
 
-# -----------------------------
-# Catch-all fallback (SPA)
-# -----------------------------
-@app.get("/{path:path}", include_in_schema=False)
-def serve_frontend_fallback(path: str):
-    blocked_prefixes = (
-        "bible",
-        "me",
-        "chat",
-        "devotional",
-        "daily_prayer",
-    )
-    first_segment = (path.split("/", 1)[0] or "").strip().lower()
-    if first_segment in blocked_prefixes:
-        raise HTTPException(status_code=404, detail="Not Found")
+      btn.addEventListener("click", () => {
+        setText($("pA"), item.starters?.adoration || "—");
+        setText($("pC"), item.starters?.confession || "—");
+        setText($("pT"), item.starters?.thanksgiving || "—");
+        setText($("pS"), item.starters?.supplication || "—");
 
-    candidate = _safe_resolve_under(FRONTEND_DIR, FRONTEND_DIR / path)
-    if candidate.exists() and candidate.is_file():
-        return FileResponse(str(candidate))
+        $("myAdoration").value = item.my?.adoration || "";
+        $("myConfession").value = item.my?.confession || "";
+        $("myThanksgiving").value = item.my?.thanksgiving || "";
+        $("mySupplication").value = item.my?.supplication || "";
+        $("prayerNotes").value = item.my?.notes || "";
+      });
 
-    if INDEX_HTML.exists():
-        return FileResponse(str(INDEX_HTML))
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = "Delete";
+      del.style.marginTop = "8px";
 
-    raise HTTPException(status_code=404, detail="Not Found")
+      del.addEventListener("click", () => {
+        const next = readLS(PR_LS_KEY, []);
+        next.splice(idx, 1);
+        writeLS(PR_LS_KEY, next);
+        renderPrayerSavedList();
+      });
+
+      const wrap = document.createElement("div");
+      wrap.className = "block";
+      wrap.appendChild(btn);
+      wrap.appendChild(del);
+      list.appendChild(wrap);
+    });
+  }
+
+  function setPrayerLangUI(lang) {
+    const intro = $("prIntro");
+    if (lang === "es") {
+      setText(intro, "Alyana te da un ejemplo breve. Tú escribes y guardas tu oración real.");
+      setText($("prNow1"), "Ahora escribe la tuya:");
+      setText($("prNow2"), "Ahora escribe la tuya:");
+      setText($("prNow3"), "Ahora escribe la tuya:");
+      setText($("prNow4"), "Ahora escribe la tuya:");
+    } else {
+      setText(intro, "Alyana gives a short starter example. You write and save your real prayer.");
+      setText($("prNow1"), "Now write your own:");
+      setText($("prNow2"), "Now write your own:");
+      setText($("prNow3"), "Now write your own:");
+      setText($("prNow4"), "Now write your own:");
+    }
+  }
+
+  async function generatePrayerStarters() {
+    const langSel = $("prUiLang");
+    const lang = (langSel ? langSel.value : "en") || "en";
+    setPrayerLangUI(lang);
+
+    const version = "en_default";
+
+    setText($("pA"), "Loading…");
+    setText($("pC"), "Loading…");
+    setText($("pT"), "Loading…");
+    setText($("pS"), "Loading…");
+
+    const data = await fetchJSON(`/daily_prayer?lang=${encodeURIComponent(lang)}&version=${encodeURIComponent(version)}`);
+
+    setText($("pA"), data.starters?.adoration || "—");
+    setText($("pC"), data.starters?.confession || "—");
+    setText($("pT"), data.starters?.thanksgiving || "—");
+    setText($("pS"), data.starters?.supplication || "—");
+
+    // clear user inputs (they write the real prayer)
+    $("myAdoration").value = "";
+    $("myConfession").value = "";
+    $("myThanksgiving").value = "";
+    $("mySupplication").value = "";
+    $("prayerNotes").value = "";
+  }
+
+  function savePrayer() {
+    const starters = {
+      adoration: ($("pA")?.textContent || "").trim(),
+      confession: ($("pC")?.textContent || "").trim(),
+      thanksgiving: ($("pT")?.textContent || "").trim(),
+      supplication: ($("pS")?.textContent || "").trim(),
+    };
+
+    const my = {
+      adoration: ($("myAdoration")?.value || "").trim(),
+      confession: ($("myConfession")?.value || "").trim(),
+      thanksgiving: ($("myThanksgiving")?.value || "").trim(),
+      supplication: ($("mySupplication")?.value || "").trim(),
+      notes: ($("prayerNotes")?.value || "").trim(),
+    };
+
+    // require all 4 sections for streak integrity
+    if (!my.adoration || !my.confession || !my.thanksgiving || !my.supplication) {
+      alert("To save (and count a streak), please fill: Adoration + Confession + Thanksgiving + Supplication.");
+      return;
+    }
+
+    const day = todayKeyLocal();
+    const saves = readLS(PR_LS_KEY, []);
+    saves.push({ day, starters, my });
+    writeLS(PR_LS_KEY, saves);
+
+    const streakData = readLS(PR_STREAK_KEY, { days: {} });
+    streakData.days = streakData.days || {};
+    streakData.days[day] = true;
+    writeLS(PR_STREAK_KEY, streakData);
+
+    updatePrayerStreakUI();
+    renderPrayerSavedList();
+    alert("Saved prayer. Streak updated.");
+  }
+
+  function initPrayer() {
+    const langSel = $("prUiLang");
+    const genBtn = $("prayerBtn");
+    const saveBtn = $("prSaveBtn");
+
+    if (!langSel || !genBtn || !saveBtn) return;
+
+    langSel.addEventListener("change", () => setPrayerLangUI(langSel.value));
+    setPrayerLangUI(langSel.value || "en");
+
+    genBtn.addEventListener("click", async () => {
+      try {
+        await generatePrayerStarters();
+      } catch (err) {
+        alert(`Daily Prayer error: ${err.message || err}`);
+      }
+    });
+
+    saveBtn.addEventListener("click", savePrayer);
+
+    updatePrayerStreakUI();
+    renderPrayerSavedList();
+  }
+
+  // -----------------------------
+  // Bible DB status (optional little indicator)
+  // -----------------------------
+  async function initBibleDbStatus() {
+    const el = $("bibleDbStatus");
+    if (!el) return;
+    try {
+      const data = await fetchJSON("/bible/status?version=en_default");
+      setText(el, `Bible DB OK • ${data.version} • verses: ${data.verse_count}`);
+    } catch (err) {
+      setText(el, `Bible DB error: ${err.message || err}`);
+    }
+  }
+
+  // -----------------------------
+  // Boot
+  // -----------------------------
+  window.addEventListener("load", async () => {
+    const jsPill = $("jsStatus");
+    if (jsPill) setText(jsPill, "JS: running");
+
+    if (!requiredIdsExist()) {
+      // If you see this in console, you're not serving the full UI index.html
+      console.error("Alyana UI elements missing. Are you serving the full frontend/index.html?");
+      if (jsPill) setText(jsPill, "JS: wrong index.html");
+      return;
+    }
+
+    try {
+      initNavigation();
+      initChat();
+      initDevotional();
+      initPrayer();
+      await initBibleDbStatus();
+
+      if (jsPill) setText(jsPill, "JS: ready");
+    } catch (err) {
+      console.error(err);
+      if (jsPill) setText(jsPill, "JS: error");
+    }
+  });
+})();
+
 
 
 
