@@ -1,114 +1,47 @@
-# server.py
 import os
-import json
 import sqlite3
-from typing import Optional, List, Dict, Any
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
-# Optional: your Gemini/agent integration (kept safe if missing)
-try:
-    from agent import run_bible_ai  # expected in your project
-except Exception:
-    run_bible_ai = None
+# -----------------------------
+# Paths
+# -----------------------------
+ROOT_DIR = Path(__file__).resolve().parent
+DATA_DIR = ROOT_DIR / "data"
+FRONTEND_DIR = ROOT_DIR / "frontend"
 
+INDEX_HTML = FRONTEND_DIR / "index.html"
+APP_JS = FRONTEND_DIR / "app.js"
+MANIFEST = FRONTEND_DIR / "manifest.webmanifest"
+SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
+ICONS_DIR = FRONTEND_DIR / "icons"
 
-APP_TITLE = "Alyana Luz • Bible AI"
-
-# --- Paths (work on local + Render) ---
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-FRONTEND_DIR = BASE_DIR / "frontend"
-
-# --- Bible DB versions (FREE + LOCAL) ---
-# IMPORTANT: keys here must match what frontend sends as `version=...`
-BIBLE_VERSIONS: Dict[str, Dict[str, str]] = {
+# -----------------------------
+# Bible DB Versions
+# -----------------------------
+BIBLE_VERSIONS: Dict[str, Dict[str, Any]] = {
     "en_default": {
         "label": "KJV (English, local)",
-        "path": str(DATA_DIR / "bible.db"),
-        "lang": "en",
+        "path": DATA_DIR / "bible.db",
     },
     "es_rvr": {
         "label": "RVR (Español, local)",
-        "path": str(DATA_DIR / "bible_es_rvr.db"),
-        "lang": "es",
+        "path": DATA_DIR / "bible_es_rvr.db",
     },
 }
-DEFAULT_VERSION_KEY = "en_default"
 
+DEFAULT_BIBLE_VERSION = os.getenv("BIBLE_DEFAULT_VERSION", "en_default")
 
-def _resolve_version(version: Optional[str]) -> str:
-    if version and version in BIBLE_VERSIONS:
-        return version
-    return DEFAULT_VERSION_KEY
+# -----------------------------
+# App
+# -----------------------------
+app = FastAPI()
 
-
-def _db_exists(db_path: str) -> bool:
-    return Path(db_path).exists()
-
-
-def _connect(db_path: str) -> sqlite3.Connection:
-    if not _db_exists(db_path):
-        raise FileNotFoundError(db_path)
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    return con
-
-
-def _verse_count(con: sqlite3.Connection) -> int:
-    row = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()
-    return int(row["c"]) if row else 0
-
-
-def _list_books(con: sqlite3.Connection) -> List[Dict[str, Any]]:
-    rows = con.execute("SELECT id, name FROM books ORDER BY id").fetchall()
-    return [{"id": int(r["id"]), "name": str(r["name"])} for r in rows]
-
-
-def _chapters_for_book(con: sqlite3.Connection, book_id: int) -> List[int]:
-    row = con.execute(
-        "SELECT MAX(chapter) AS mx FROM verses WHERE book_id = ?",
-        (book_id,),
-    ).fetchone()
-    mx = row["mx"] if row else None
-    if mx is None:
-        return []
-    return list(range(1, int(mx) + 1))
-
-
-def _get_passage(
-    con: sqlite3.Connection,
-    book_id: int,
-    chapter: int,
-    verse_start: Optional[int],
-    verse_end: Optional[int],
-) -> List[Dict[str, Any]]:
-    params = [book_id, chapter]
-    sql = """
-        SELECT verse, text
-        FROM verses
-        WHERE book_id = ? AND chapter = ?
-    """
-    if verse_start is not None:
-        sql += " AND verse >= ?"
-        params.append(int(verse_start))
-    if verse_end is not None:
-        sql += " AND verse <= ?"
-        params.append(int(verse_end))
-    sql += " ORDER BY verse"
-
-    rows = con.execute(sql, tuple(params)).fetchall()
-    return [{"verse": int(r["verse"]), "text": str(r["text"])} for r in rows]
-
-
-# --- FastAPI app ---
-app = FastAPI(title=APP_TITLE)
-
-# CORS (safe default for your PWA)
+# If you’re calling from browsers / different origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # tighten later if you want
@@ -117,295 +50,239 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve PWA assets if present
-if FRONTEND_DIR.exists():
-    app.mount("/frontend", StaticFiles(directory=str(FRONTEND_DIR)), name="frontend")
+# -----------------------------
+# Helpers
+# -----------------------------
+def resolve_version(version: Optional[str]) -> str:
+    v = version or DEFAULT_BIBLE_VERSION
+    if v not in BIBLE_VERSIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown version '{v}'")
+    return v
 
-# Also serve icons/manifest/sw from /frontend at root-friendly paths
-def _static_fallback_file(name: str) -> Optional[Path]:
-    p1 = FRONTEND_DIR / name
-    if p1.exists():
-        return p1
-    p2 = BASE_DIR / name
-    if p2.exists():
-        return p2
-    return None
+def db_path_for(version: str) -> Path:
+    return Path(BIBLE_VERSIONS[version]["path"]).resolve()
 
+def ensure_db_exists(p: Path):
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"Bible DB not found at {str(p)}")
 
-@app.get("/manifest.webmanifest")
-def manifest():
-    p = _static_fallback_file("manifest.webmanifest")
-    if not p:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(str(p), media_type="application/manifest+json")
-
-
-@app.get("/service-worker.js")
-def sw():
-    p = _static_fallback_file("service-worker.js")
-    if not p:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(str(p), media_type="application/javascript")
-
-
-@app.get("/icon-192.png")
-def icon192():
-    p = _static_fallback_file("icon-192.png")
-    if not p:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(str(p), media_type="image/png")
-
-
-@app.get("/icons/icon-512.png")
-def icon512():
-    p = _static_fallback_file("icons/icon-512.png")
-    if not p:
-        raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(str(p), media_type="image/png")
-
-
-@app.get("/", response_class=HTMLResponse)
-def root():
-    # Prefer frontend/index.html if it exists; otherwise root index.html
-    candidates = [
-        FRONTEND_DIR / "index.html",
-        BASE_DIR / "index.html",
-    ]
-    for p in candidates:
-        if p.exists():
-            return FileResponse(str(p), media_type="text/html")
-    return HTMLResponse("<h1>Alyana Luz • Bible AI</h1><p>index.html not found.</p>", status_code=200)
-
-
-@app.get("/health")
-def health():
-    return {"ok": True}
-
-
-@app.get("/me")
-def me():
-    # Your frontend expects this route. Keep it simple and stable.
-    return {"account": "active"}
-
+def open_db(p: Path) -> sqlite3.Connection:
+    con = sqlite3.connect(str(p))
+    con.row_factory = sqlite3.Row
+    return con
 
 # -----------------------------
-# Bible: versions + status
+# Frontend routes (fix white screen)
+# -----------------------------
+@app.get("/", include_in_schema=False)
+def serve_index():
+    if not INDEX_HTML.exists():
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"frontend/index.html not found at {str(INDEX_HTML)}"},
+        )
+    return FileResponse(str(INDEX_HTML))
+
+@app.get("/app.js", include_in_schema=False)
+def serve_app_js():
+    if not APP_JS.exists():
+        raise HTTPException(status_code=404, detail="app.js not found")
+    return FileResponse(str(APP_JS))
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def serve_manifest():
+    if not MANIFEST.exists():
+        raise HTTPException(status_code=404, detail="manifest.webmanifest not found")
+    return FileResponse(str(MANIFEST))
+
+@app.get("/service-worker.js", include_in_schema=False)
+def serve_service_worker():
+    if not SERVICE_WORKER.exists():
+        raise HTTPException(status_code=404, detail="service-worker.js not found")
+    return FileResponse(str(SERVICE_WORKER))
+
+@app.get("/icons/{icon_name}", include_in_schema=False)
+def serve_icons(icon_name: str):
+    p = (ICONS_DIR / icon_name).resolve()
+    # Prevent path traversal
+    if ICONS_DIR.resolve() not in p.parents:
+        raise HTTPException(status_code=400, detail="Invalid icon path")
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Icon not found")
+    return FileResponse(str(p))
+
+# Fallback for SPA-like routes (optional, but helps avoid white screens on refresh)
+@app.get("/{path_name:path}", include_in_schema=False)
+def spa_fallback(path_name: str):
+    # If someone hits an API route that doesn't exist, let FastAPI handle it as 404.
+    # Here we only fallback to index for non-API paths.
+    if path_name.startswith(("chat", "bible", "devotional", "daily_prayer", "me")):
+        raise HTTPException(status_code=404, detail="Not Found")
+    if INDEX_HTML.exists():
+        return FileResponse(str(INDEX_HTML))
+    raise HTTPException(status_code=404, detail="Not Found")
+
+# -----------------------------
+# Basic API
+# -----------------------------
+@app.get("/me")
+def me():
+    # Keep it simple; you can expand later
+    return {"ok": True}
+
+# -----------------------------
+# Bible API
 # -----------------------------
 @app.get("/bible/versions")
 def bible_versions():
     versions = []
-    for key, meta in BIBLE_VERSIONS.items():
-        db_path = meta["path"]
+    for k, meta in BIBLE_VERSIONS.items():
+        p = Path(meta["path"]).resolve()
         versions.append(
             {
-                "key": key,
+                "key": k,
                 "label": meta["label"],
-                "lang": meta.get("lang", ""),
-                "path": db_path,
-                "exists": _db_exists(db_path),
+                "path": str(p),
+                "exists": p.exists(),
             }
         )
-    return {"default": DEFAULT_VERSION_KEY, "versions": versions}
-
+    return {"default": DEFAULT_BIBLE_VERSION, "versions": versions}
 
 @app.get("/bible/status")
 def bible_status(version: Optional[str] = Query(default=None)):
-    key = _resolve_version(version)
-    meta = BIBLE_VERSIONS[key]
-    db_path = meta["path"]
+    v = resolve_version(version)
+    p = db_path_for(v)
+    ensure_db_exists(p)
 
-    if not _db_exists(db_path):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "status": "missing",
-                "version": key,
-                "db_path": db_path,
-                "detail": f"Bible DB not found at {db_path}",
-            },
-        )
-
+    con = open_db(p)
     try:
-        con = _connect(db_path)
-        count = _verse_count(con)
+        verse_count = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()["c"]
+    finally:
         con.close()
-        return {
-            "status": "ok",
-            "version": key,
-            "db_path": db_path,
-            "verse_count": count,
-        }
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "status": "error",
-                "version": key,
-                "db_path": db_path,
-                "detail": str(e),
-            },
-        )
 
-
-# -----------------------------
-# Bible: books/chapters/text
-# -----------------------------
-@app.get("/bible/books")
-def bible_books(version: Optional[str] = Query(default=None)):
-    key = _resolve_version(version)
-    db_path = BIBLE_VERSIONS[key]["path"]
-
-    if not _db_exists(db_path):
-        raise HTTPException(status_code=404, detail=f"Bible DB not found at {db_path}")
-
-    con = _connect(db_path)
-    books = _list_books(con)
-    con.close()
-
-    # return both structured + simple names to avoid frontend mismatches
     return {
-        "version": key,
-        "books": books,
-        "names": [b["name"] for b in books],
+        "status": "ok",
+        "version": v,
+        "db_path": str(p),
+        "verse_count": verse_count,
     }
 
+@app.get("/bible/books")
+def bible_books(version: Optional[str] = Query(default=None)):
+    v = resolve_version(version)
+    p = db_path_for(v)
+    ensure_db_exists(p)
+
+    con = open_db(p)
+    try:
+        rows = con.execute("SELECT id, name FROM books ORDER BY id").fetchall()
+        books = [{"id": r["id"], "name": r["name"]} for r in rows]
+    finally:
+        con.close()
+
+    return {"version": v, "books": books}
 
 @app.get("/bible/chapters")
 def bible_chapters(
     book_id: int = Query(...),
     version: Optional[str] = Query(default=None),
 ):
-    key = _resolve_version(version)
-    db_path = BIBLE_VERSIONS[key]["path"]
+    v = resolve_version(version)
+    p = db_path_for(v)
+    ensure_db_exists(p)
 
-    if not _db_exists(db_path):
-        raise HTTPException(status_code=404, detail=f"Bible DB not found at {db_path}")
+    con = open_db(p)
+    try:
+        row = con.execute(
+            "SELECT MAX(chapter) AS max_ch FROM verses WHERE book_id=?",
+            (book_id,),
+        ).fetchone()
+        max_ch = row["max_ch"] or 0
+    finally:
+        con.close()
 
-    con = _connect(db_path)
-    chapters = _chapters_for_book(con, int(book_id))
-    con.close()
-
-    if not chapters:
+    if max_ch == 0:
         raise HTTPException(status_code=404, detail="Missing book")
 
-    return {"version": key, "book_id": int(book_id), "chapters": chapters}
-
+    return {"version": v, "book_id": book_id, "chapters": list(range(1, max_ch + 1))}
 
 @app.get("/bible/text")
 def bible_text(
     book_id: int = Query(...),
     chapter: int = Query(...),
-    verse_start: Optional[int] = Query(default=None),
-    verse_end: Optional[int] = Query(default=None),
+    start_verse: Optional[int] = Query(default=None),
+    end_verse: Optional[int] = Query(default=None),
     version: Optional[str] = Query(default=None),
 ):
-    key = _resolve_version(version)
-    db_path = BIBLE_VERSIONS[key]["path"]
+    v = resolve_version(version)
+    p = db_path_for(v)
+    ensure_db_exists(p)
 
-    if not _db_exists(db_path):
-        raise HTTPException(status_code=404, detail=f"Bible DB not found at {db_path}")
+    sv = start_verse if start_verse and start_verse > 0 else None
+    ev = end_verse if end_verse and end_verse > 0 else None
 
-    con = _connect(db_path)
-    # book name
-    b = con.execute("SELECT name FROM books WHERE id = ?", (int(book_id),)).fetchone()
-    if not b:
-        con.close()
-        raise HTTPException(status_code=404, detail="Missing book")
-
-    verses = _get_passage(con, int(book_id), int(chapter), verse_start, verse_end)
-    con.close()
-
-    if not verses:
-        raise HTTPException(status_code=404, detail="Missing chapter/passage")
-
-    # Provide both a structured list and a display string
-    lines = [f"{v['verse']} {v['text']}" for v in verses]
-    return {
-        "version": key,
-        "book_id": int(book_id),
-        "book": str(b["name"]),
-        "chapter": int(chapter),
-        "verse_start": verse_start,
-        "verse_end": verse_end,
-        "verses": verses,
-        "text": "\n".join(lines),
-    }
-
-
-# -----------------------------
-# AI / Devotional / Prayer
-# -----------------------------
-@app.post("/chat")
-def chat(payload: Dict[str, Any] = Body(default={})):
-    """
-    Expected frontend payload usually includes:
-      - message (string)
-      - lang (en/es)
-    """
-    message = (payload.get("message") or "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Missing message")
-
-    lang = (payload.get("lang") or "").strip().lower()
-    if lang not in ("en", "es"):
-        # best effort: infer
-        lang = "es" if any(ch in message for ch in "¿¡") else "en"
-
-    if run_bible_ai is None:
-        # Safe fallback if agent import fails
-        if lang == "es":
-            return {"reply": "El backend de IA no está disponible ahora mismo. Intenta de nuevo más tarde."}
-        return {"reply": "AI backend is not available right now. Please try again later."}
-
+    con = open_db(p)
     try:
-        # If your agent supports language, pass it; otherwise it will ignore.
-        reply = run_bible_ai(message=message, lang=lang)  # type: ignore
-    except TypeError:
-        reply = run_bible_ai(message)  # type: ignore
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Verify book name
+        book_row = con.execute(
+            "SELECT name FROM books WHERE id=?",
+            (book_id,),
+        ).fetchone()
+        if not book_row:
+            raise HTTPException(status_code=404, detail="Missing book")
 
-    return {"reply": reply, "lang": lang}
+        book_name = book_row["name"]
 
+        q = """
+        SELECT verse, text
+        FROM verses
+        WHERE book_id=? AND chapter=?
+        """
+        params: List[Any] = [book_id, chapter]
 
-@app.get("/devotional")
-def devotional(lang: str = "en"):
-    lang = (lang or "en").lower()
-    if lang == "es":
-        return {
-            "title": "Devocional del día",
-            "content": "Permanece en la Palabra hoy. Pídele a Dios sabiduría y paz, y da un paso de obediencia.",
-            "verse": "Salmo 119:105",
-        }
+        if sv is not None:
+            q += " AND verse >= ?"
+            params.append(sv)
+        if ev is not None:
+            q += " AND verse <= ?"
+            params.append(ev)
+
+        q += " ORDER BY verse"
+
+        rows = con.execute(q, tuple(params)).fetchall()
+        if not rows:
+            raise HTTPException(status_code=404, detail="No verses found")
+
+        verses = [{"verse": r["verse"], "text": r["text"]} for r in rows]
+    finally:
+        con.close()
+
     return {
-        "title": "Devotional of the Day",
-        "content": "Stay in the Word today. Ask God for wisdom and peace, and take one step of obedience.",
-        "verse": "Psalm 119:105",
+        "version": v,
+        "book_id": book_id,
+        "book_name": book_name,
+        "chapter": chapter,
+        "verses": verses,
     }
 
+# -----------------------------
+# Devotional / Prayer placeholders (keep your routes alive)
+# -----------------------------
+@app.get("/devotional")
+def devotional():
+    return {"ok": True, "devotional": "Coming soon."}
 
 @app.get("/daily_prayer")
-def daily_prayer(lang: str = "en"):
-    lang = (lang or "en").lower()
-    if lang == "es":
-        return {
-            "title": "Oración diaria",
-            "content": "Señor, guía mis pensamientos, mis palabras y mis decisiones. Ayúdame a caminar en tu luz. Amén.",
-        }
-    return {
-        "title": "Daily Prayer",
-        "content": "Lord, guide my thoughts, my words, and my decisions. Help me walk in Your light. Amen.",
-    }
+def daily_prayer():
+    return {"ok": True, "prayer": "Coming soon."}
 
+@app.post("/chat")
+async def chat(req: Request):
+    # Keep this compatible with your frontend; you can wire in agent.py logic here.
+    body = await req.json()
+    user_message = body.get("message", "")
+    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
 
-# -----------------------------
-# Render entrypoint convenience
-# -----------------------------
-if __name__ == "__main__":
-    import uvicorn
-
-    port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=True)
 
 
 
