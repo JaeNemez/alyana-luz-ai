@@ -360,7 +360,9 @@
       params.set("chapter", String(chapter));
       params.set("whole_chapter", fullChapter ? "true" : "false");
 
-      // backend expects start_verse / end_verse
+      // backend expects start_verse / end_verse (your note),
+      // but your bible_api.py currently uses verse_start/verse_end.
+      // (We will reconcile this later if you want.)
       if (!fullChapter) {
         const sv = String(startVerse || "").trim();
         const ev = String(endVerse || "").trim();
@@ -433,6 +435,7 @@
     }
   }
 
+  // ✅ UPDATED: sends lang to backend so starter matches English/Spanish
   async function loadPrayerStub() {
     state.prayer.loading = true;
     state.prayer.error = null;
@@ -440,7 +443,9 @@
     render();
 
     try {
-      const data = await apiFetch(API.dailyPrayer, { method: "GET" });
+      const lang = state.lang === "es" ? "es" : "en";
+      const data = await apiFetch(`${API.dailyPrayer}?lang=${encodeURIComponent(lang)}`, { method: "GET" });
+
       state.prayer.suggestionRaw =
         typeof data?.prayer === "string"
           ? data.prayer
@@ -1114,7 +1119,11 @@
     return `
       <div class="card">
         <h2>${state.lang === "es" ? "Oración Diaria" : "Daily Prayer"}</h2>
-        <div class="sub">${state.lang === "es" ? "Borrador + guardado (stub por ahora)." : "Draft + save (stub for now)."}</div>
+        <div class="sub">${
+          state.lang === "es"
+            ? "Alyana te da un ejemplo breve. Tú escribes y guardas tu oración real."
+            : "Alyana gives a short starter example. You write and save your real prayer."
+        }</div>
 
         <div class="row" style="justify-content:space-between;">
           <div class="hint">${state.lang === "es" ? "Cargar respuesta del servidor" : "Load server response"}</div>
@@ -1309,6 +1318,7 @@
 
   init();
 })();
+
 
 
 
