@@ -1,14 +1,11 @@
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-# ✅ IMPORTANT: Bible API lives in bible_api.py now
-# It should define: router = APIRouter(...)
+# Bible API router
 from bible_api import router as bible_router
-
 
 # -----------------------------
 # Paths
@@ -28,7 +25,7 @@ SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 # -----------------------------
 app = FastAPI()
 
-# ✅ Add the Bible routes FIRST so they are not shadowed by the catch-all below
+# ✅ Register API routers FIRST
 app.include_router(bible_router)
 
 # CORS (tighten later)
@@ -42,15 +39,7 @@ app.add_middleware(
 
 
 # -----------------------------
-# Health / basic endpoints
-# -----------------------------
-@app.get("/me")
-def me():
-    return {"ok": True}
-
-
-# -----------------------------
-# Frontend / Static serving
+# Helpers
 # -----------------------------
 def _safe_resolve_under(base: Path, target: Path) -> Path:
     """
@@ -63,6 +52,34 @@ def _safe_resolve_under(base: Path, target: Path) -> Path:
     return target
 
 
+# -----------------------------
+# API health/basic endpoints
+# -----------------------------
+@app.get("/me")
+def me():
+    return {"ok": True}
+
+
+@app.get("/devotional")
+def devotional():
+    return {"ok": True, "devotional": "Coming soon."}
+
+
+@app.get("/daily_prayer")
+def daily_prayer():
+    return {"ok": True, "prayer": "Coming soon."}
+
+
+@app.post("/chat")
+async def chat(req: Request):
+    body = await req.json()
+    user_message = body.get("message", "")
+    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
+
+
+# -----------------------------
+# Frontend / Static serving
+# -----------------------------
 @app.get("/", include_in_schema=False)
 def serve_index():
     if not INDEX_HTML.exists():
@@ -103,41 +120,36 @@ def serve_icons(icon_name: str):
 
 
 # -----------------------------
-# Catch-all fallback (prevents white screen on refresh / deep links)
+# Catch-all fallback (SPA)
 # -----------------------------
 @app.get("/{path:path}", include_in_schema=False)
 def serve_frontend_fallback(path: str):
     """
-    If a user refreshes or visits a deep URL, serve index.html instead of 404.
-    Also serves actual files from /frontend if they exist.
+    SPA fallback:
+    - If a real file exists under /frontend, serve it
+    - Otherwise serve index.html
+    BUT: do NOT fallback for API-style routes (prevents HTML being returned to API calls)
     """
-    # If the requested file exists under frontend, serve it.
+
+    # ✅ NEVER fallback for these prefixes — return real 404 JSON instead
+    blocked_prefixes = (
+        "bible",       # /bible/*
+        "me",          # /me
+        "chat",        # /chat
+        "devotional",  # /devotional
+        "daily_prayer" # /daily_prayer
+    )
+    first_segment = (path.split("/", 1)[0] or "").strip().lower()
+    if first_segment in blocked_prefixes:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    # If requested file exists under frontend, serve it
     candidate = _safe_resolve_under(FRONTEND_DIR, FRONTEND_DIR / path)
     if candidate.exists() and candidate.is_file():
         return FileResponse(str(candidate))
 
-    # Otherwise, serve the SPA entry
+    # Otherwise serve SPA entry
     if INDEX_HTML.exists():
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
-
-
-# -----------------------------
-# Optional: simple stubs (keep if your frontend calls them)
-# -----------------------------
-@app.get("/devotional")
-def devotional():
-    return {"ok": True, "devotional": "Coming soon."}
-
-
-@app.get("/daily_prayer")
-def daily_prayer():
-    return {"ok": True, "prayer": "Coming soon."}
-
-
-@app.post("/chat")
-async def chat(req: Request):
-    body = await req.json()
-    user_message = body.get("message", "")
-    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
