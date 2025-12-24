@@ -21,30 +21,27 @@ SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 ICONS_DIR = FRONTEND_DIR / "icons"
 
 # -----------------------------
-# Bible DB Versions
+# Bible DB Versions (MATCH FRONTEND KEYS)
 # -----------------------------
 BIBLE_VERSIONS: Dict[str, Dict[str, Any]] = {
-    "en_default": {
+    "kjv": {
         "label": "KJV (English, local)",
         "path": DATA_DIR / "bible.db",
     },
-    "es_rvr": {
-        "label": "RVR (Español, local)",
+    # IMPORTANT: frontend expects rvr1909 key; we map it to your Spanish DB file.
+    "rvr1909": {
+        "label": "RVR 1909 (Español, local)",
         "path": DATA_DIR / "bible_es_rvr.db",
     },
 }
 
-DEFAULT_BIBLE_VERSION = os.getenv("BIBLE_DEFAULT_VERSION", "en_default")
+DEFAULT_BIBLE_VERSION = os.getenv("BIBLE_DEFAULT_VERSION", "kjv")
 
-# -----------------------------
-# App
-# -----------------------------
 app = FastAPI()
 
-# If you’re calling from browsers / different origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later if you want
+    allow_origins=["*"],  # tighten later
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,7 +51,16 @@ app.add_middleware(
 # Helpers
 # -----------------------------
 def resolve_version(version: Optional[str]) -> str:
-    v = version or DEFAULT_BIBLE_VERSION
+    v = (version or DEFAULT_BIBLE_VERSION).strip()
+
+    # Alias support (just in case your frontend uses slightly different strings)
+    aliases = {
+        "en_default": "kjv",
+        "es_rvr": "rvr1909",
+        "rvr": "rvr1909",
+    }
+    v = aliases.get(v, v)
+
     if v not in BIBLE_VERSIONS:
         raise HTTPException(status_code=400, detail=f"Unknown version '{v}'")
     return v
@@ -72,7 +78,7 @@ def open_db(p: Path) -> sqlite3.Connection:
     return con
 
 # -----------------------------
-# Frontend routes (fix white screen)
+# Frontend routes
 # -----------------------------
 @app.get("/", include_in_schema=False)
 def serve_index():
@@ -104,35 +110,19 @@ def serve_service_worker():
 @app.get("/icons/{icon_name}", include_in_schema=False)
 def serve_icons(icon_name: str):
     p = (ICONS_DIR / icon_name).resolve()
-    # Prevent path traversal
     if ICONS_DIR.resolve() not in p.parents:
         raise HTTPException(status_code=400, detail="Invalid icon path")
     if not p.exists():
         raise HTTPException(status_code=404, detail="Icon not found")
     return FileResponse(str(p))
 
-# Fallback for SPA-like routes (optional, but helps avoid white screens on refresh)
-@app.get("/{path_name:path}", include_in_schema=False)
-def spa_fallback(path_name: str):
-    # If someone hits an API route that doesn't exist, let FastAPI handle it as 404.
-    # Here we only fallback to index for non-API paths.
-    if path_name.startswith(("chat", "bible", "devotional", "daily_prayer", "me")):
-        raise HTTPException(status_code=404, detail="Not Found")
-    if INDEX_HTML.exists():
-        return FileResponse(str(INDEX_HTML))
-    raise HTTPException(status_code=404, detail="Not Found")
-
 # -----------------------------
-# Basic API
+# API
 # -----------------------------
 @app.get("/me")
 def me():
-    # Keep it simple; you can expand later
     return {"ok": True}
 
-# -----------------------------
-# Bible API
-# -----------------------------
 @app.get("/bible/versions")
 def bible_versions():
     versions = []
@@ -223,11 +213,7 @@ def bible_text(
 
     con = open_db(p)
     try:
-        # Verify book name
-        book_row = con.execute(
-            "SELECT name FROM books WHERE id=?",
-            (book_id,),
-        ).fetchone()
+        book_row = con.execute("SELECT name FROM books WHERE id=?", (book_id,)).fetchone()
         if not book_row:
             raise HTTPException(status_code=404, detail="Missing book")
 
@@ -265,9 +251,6 @@ def bible_text(
         "verses": verses,
     }
 
-# -----------------------------
-# Devotional / Prayer placeholders (keep your routes alive)
-# -----------------------------
 @app.get("/devotional")
 def devotional():
     return {"ok": True, "devotional": "Coming soon."}
@@ -278,10 +261,10 @@ def daily_prayer():
 
 @app.post("/chat")
 async def chat(req: Request):
-    # Keep this compatible with your frontend; you can wire in agent.py logic here.
     body = await req.json()
     user_message = body.get("message", "")
     return {"ok": True, "reply": f"(stub) You said: {user_message}"}
+
 
 
 
