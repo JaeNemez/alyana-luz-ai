@@ -1,178 +1,52 @@
-<!DOCTYPE html>
+<!-- frontend/index.html
+  Alyana Luz • Bible AI
+  - Minimal shell that loads /app.js
+  - Includes a #app mount so app.js doesn't have to rewrite the whole body
+  - Adds PWA meta + manifest + theme-color
+-->
+
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-<title>Alyana Luz · Bible AI</title>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-<style>
-:root {
-  --bg-main: radial-gradient(circle at top left, #6b21a8 0%, #0a0425 55%);
-  --bg-body: #050316;
+    <title>Alyana Luz • Bible AI</title>
+    <meta name="description" content="Alyana Luz • Bible AI — pray • learn • walk in the Light" />
 
-  --card-bg: rgba(10, 6, 40, 0.72);
-  --card-border: rgba(200, 180, 255, 0.25);
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#2b0a50" />
 
-  --text-main: #f9f5ff;
-  --text-muted: #d8cfff;
+    <!-- iOS PWA-ish -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Alyana Luz" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
-  --accent-primary: #a855f7;
-  --accent-secondary: #facc15;
-  --accent-soft: #c084fc;
+    <!-- Favicon -->
+    <link rel="icon" href="/icons/icon-192.png" />
+  </head>
 
-  --btn-primary: #7c3aed;
-  --btn-danger: #be123c;
-  --btn-success: #22c55e;
-  --btn-ghost: rgba(255,255,255,0.12);
-}
+  <body>
+    <!-- App mount -->
+    <div id="app"></div>
 
-* { box-sizing: border-box; }
+    <!-- App JS -->
+    <script src="/app.js" defer></script>
 
-body {
-  margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  background: var(--bg-body);
-  color: var(--text-main);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-}
-
-.app {
-  width: 100%;
-  max-width: 1000px;
-  height: 92vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-main);
-  border-radius: 18px;
-  border: 1px solid rgba(255,255,255,0.15);
-  box-shadow: 0 20px 60px rgba(0,0,0,0.7);
-  overflow: hidden;
-}
-
-/* HEADER */
-header {
-  padding: 16px 24px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.12);
-}
-header h1 { margin: 0; font-size: 20px; }
-header small { color: var(--text-muted); font-size: 12px; }
-
-.js-pill {
-  position: absolute;
-  right: 16px;
-  top: 14px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.12);
-  border: 1px solid rgba(255,255,255,0.18);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-/* BUTTONS */
-.btn {
-  padding: 10px 16px;
-  border-radius: 999px;
-  border: none;
-  cursor: pointer;
-  font-weight: 800;
-  font-size: 13px;
-}
-
-.btn-primary { background: var(--btn-primary); color: white; }
-.btn-danger { background: var(--btn-danger); color: white; }
-.btn-green { background: var(--btn-success); color: #052e12; }
-.btn-ghost { background: var(--btn-ghost); color: var(--text-main); }
-
-.support-btn {
-  background: linear-gradient(135deg, var(--accent-secondary), #fde68a);
-  color: #3a2b00;
-  font-weight: 900;
-  border-radius: 12px;
-  padding: 10px 16px;
-  border: none;
-  cursor: pointer;
-}
-
-/* MENU */
-.menu-bar {
-  padding: 12px;
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  border-bottom: 1px solid rgba(255,255,255,0.12);
-}
-.menu-btn {
-  padding: 8px 14px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.10);
-  color: var(--text-main);
-  font-weight: 800;
-}
-.menu-btn.active {
-  background: var(--accent-primary);
-}
-
-/* CARDS */
-.card {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: 16px;
-  padding: 14px;
-  box-shadow: 0 12px 30px rgba(0,0,0,0.4);
-}
-
-.muted {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-/* CHAT */
-.bubble.user {
-  background: var(--accent-primary);
-  color: #f5f3ff;
-}
-.bubble.bot {
-  background: rgba(12, 8, 50, 0.9);
-  border: 1px solid rgba(200,180,255,0.25);
-}
-
-/* INPUTS */
-input, textarea, select {
-  background: rgba(10, 6, 40, 0.9);
-  border: 1px solid rgba(200,180,255,0.45);
-  color: var(--text-main);
-  border-radius: 12px;
-  padding: 10px;
-}
-
-input::placeholder, textarea::placeholder {
-  color: #c7bfff;
-}
-
-/* MOBILE */
-@media (max-width: 920px) {
-  body {
-    align-items: stretch;
-    min-height: 100dvh;
-  }
-  .app {
-    height: 100dvh;
-    border-radius: 0;
-  }
-}
-</style>
-</head>
-
-<body>
-  <!-- YOUR EXISTING HTML BODY CONTENT STAYS EXACTLY THE SAME -->
-  <!-- NO STRUCTURAL CHANGES WERE REQUIRED -->
-  <script src="/app.js" defer></script>
-</body>
+    <!-- Service Worker (optional but recommended for PWA) -->
+    <script>
+      (function () {
+        if (!("serviceWorker" in navigator)) return;
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("/service-worker.js").catch(function () {});
+        });
+      })();
+    </script>
+  </body>
 </html>
+
 
 
 
