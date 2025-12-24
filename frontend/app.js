@@ -1,25 +1,9 @@
 /* frontend/app.js
    Alyana Luz • Bible AI
 
-   FIXES (matches YOUR current backend):
-   - Bible endpoints now match bible_api.py router:
-       GET  /bible/status?version=...
-       GET  /bible/books?version=...
-       GET  /bible/chapters?book_id=...&version=...
-       GET  /bible/text?book_id=...&chapter=...&version=...&start_verse=...&end_verse=...&whole_chapter=true|false
-
-   - Language selector controls bible version automatically:
-       English  -> en_default
-       Español  -> rvr1909
-
-   - Chat matches server.py stub:
-       POST /chat { message: "..." } -> { ok:true, reply:"..." }
-
-   - Devotional & Daily Prayer match server.py stubs:
-       GET /devotional -> { devotional:"..." }
-       GET /daily_prayer -> { prayer:"..." }
-
-   - Prevents “[object Object]” by rendering strings safely
+   - Auto-loads Daily Prayer starter when tab opens (if empty)
+   - Updates Daily Prayer label text (EN/ES)
+   - Daily Prayer calls /daily_prayer?lang=en|es
 */
 
 (() => {
@@ -80,7 +64,6 @@
     bible: {
       status: null,
 
-      // books: [{id,name}]
       books: [],
       bookId: 1,
       bookName: "Genesis",
@@ -105,6 +88,7 @@
       streak: loadLS("alyana_devotional_streak", { count: 0, lastDate: null }),
       error: null,
       loading: false,
+      autoLoadedOnce: false,
     },
 
     prayer: {
@@ -114,6 +98,7 @@
       streak: loadLS("alyana_prayer_streak", { count: 0, lastDate: null }),
       error: null,
       loading: false,
+      autoLoadedOnce: false,
     },
   };
 
@@ -172,13 +157,33 @@
 
   function setTab(tab) {
     state.tab = tab;
+
+    // ✅ AUTO-LOAD starter when opening tabs (so it doesn't look empty like your screenshot)
+    if (tab === "prayer") {
+      autoLoadPrayerStarterIfEmpty();
+    }
+    if (tab === "devotional") {
+      autoLoadDevotionalIfEmpty();
+    }
+
     render();
   }
 
   function setLang(lang) {
     state.lang = lang === "es" ? "es" : "en";
+
     // when language changes, reload bible status + books/chapters for that version
     refreshBibleForLanguage().catch(() => {});
+
+    // also: if user flips language while on prayer tab, refresh starter (optional)
+    if (state.tab === "prayer") {
+      // clear old suggestion so new language loads cleanly
+      state.prayer.suggestionRaw = "";
+      state.prayer.error = null;
+      state.prayer.autoLoadedOnce = false;
+      autoLoadPrayerStarterIfEmpty();
+    }
+
     render();
   }
 
@@ -189,9 +194,6 @@
   }
 
   function bibleVersionForLang() {
-    // MUST match DB_MAP keys in your bible_api.py
-    // English DB: en_default -> bible.db
-    // Spanish DB: rvr1909   -> bible_es_rvr.db
     return state.lang === "es" ? "rvr1909" : "en_default";
   }
 
@@ -309,7 +311,6 @@
       state.bible.books = books;
 
       if (books.length) {
-        // Keep current selection if it still exists
         const stillThere = books.find(b => Number(b.id) === Number(state.bible.bookId));
         const pick = stillThere || books[0];
         state.bible.bookId = Number(pick.id);
@@ -334,7 +335,6 @@
       state.bible.chapters = chapters;
 
       if (chapters.length) {
-        // default to chapter 1 if available
         state.bible.chapter = chapters.includes(1) ? 1 : Number(chapters[0]);
       }
     } catch (e) {
@@ -360,9 +360,6 @@
       params.set("chapter", String(chapter));
       params.set("whole_chapter", fullChapter ? "true" : "false");
 
-      // backend expects start_verse / end_verse (your note),
-      // but your bible_api.py currently uses verse_start/verse_end.
-      // (We will reconcile this later if you want.)
       if (!fullChapter) {
         const sv = String(startVerse || "").trim();
         const ev = String(endVerse || "").trim();
@@ -372,13 +369,11 @@
 
       const data = await apiFetch(`${API.bibleText}?${params.toString()}`, { method: "GET" });
 
-      // backend returns {book_name, chapter, verses:[{verse,text}]}
       const bookName = data?.book_name || state.bible.bookName;
       const verses = Array.isArray(data?.verses) ? data.verses : [];
 
       if (!verses.length) throw new Error("No verses returned");
 
-      // Build reference
       if (fullChapter) {
         state.bible.reference = `${bookName} ${chapter}`;
       } else {
@@ -388,7 +383,6 @@
         state.bible.reference = `${bookName} ${chapter}:${minV}-${maxV}`;
       }
 
-      // Build readable text
       state.bible.text = verses.map(vv => `${vv.verse}. ${vv.text}`).join("\n");
     } catch (e) {
       state.bible.error = e.message;
@@ -399,7 +393,6 @@
   }
 
   async function refreshBibleForLanguage() {
-    // Clear current loaded passage display, reload status/books/chapters for the selected language
     state.bible.text = "";
     state.bible.reference = "";
     state.bible.error = null;
@@ -413,7 +406,7 @@
   }
 
   // -----------------------------
-  // DEVOTIONAL / PRAYER (GET stubs)
+  // DEVOTIONAL / PRAYER
   // -----------------------------
   async function loadDevotionalStub() {
     state.devotional.loading = true;
@@ -435,7 +428,6 @@
     }
   }
 
-  // ✅ UPDATED: sends lang to backend so starter matches English/Spanish
   async function loadPrayerStub() {
     state.prayer.loading = true;
     state.prayer.error = null;
@@ -456,6 +448,24 @@
       state.prayer.loading = false;
       render();
     }
+  }
+
+  function autoLoadPrayerStarterIfEmpty() {
+    if (state.prayer.autoLoadedOnce) return;
+    if (state.prayer.loading) return;
+    if ((state.prayer.suggestionRaw || "").trim()) return;
+
+    state.prayer.autoLoadedOnce = true;
+    loadPrayerStub().catch(() => {});
+  }
+
+  function autoLoadDevotionalIfEmpty() {
+    if (state.devotional.autoLoadedOnce) return;
+    if (state.devotional.loading) return;
+    if ((state.devotional.suggestionRaw || "").trim()) return;
+
+    state.devotional.autoLoadedOnce = true;
+    loadDevotionalStub().catch(() => {});
   }
 
   // -----------------------------
@@ -513,7 +523,7 @@
   }
 
   // -----------------------------
-  // CHAT (matches server.py stub)
+  // CHAT
   // -----------------------------
   async function sendChat() {
     const input = $("#chatInput");
@@ -861,7 +871,6 @@
       </div>
     `;
 
-    // global events
     document.querySelectorAll(".tab").forEach(el => {
       el.addEventListener("click", () => setTab(el.getAttribute("data-tab")));
     });
@@ -1086,15 +1095,18 @@
   }
 
   function renderDevotional() {
+    const label = state.lang === "es" ? "Obtener ejemplo breve" : "Get starter example";
+    const btn = state.lang === "es" ? "Generar" : "Generate";
+
     return `
       <div class="card">
         <h2>${state.lang === "es" ? "Devocional" : "Devotional"}</h2>
         <div class="sub">${state.lang === "es" ? "Borrador + guardado (stub por ahora)." : "Draft + save (stub for now)."}</div>
 
         <div class="row" style="justify-content:space-between;">
-          <div class="hint">${state.lang === "es" ? "Cargar respuesta del servidor" : "Load server response"}</div>
+          <div class="hint">${label}</div>
           <button id="genDevBtn" class="btn btnAccent" ${state.devotional.loading ? "disabled" : ""}>
-            ${state.devotional.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : (state.lang === "es" ? "Cargar" : "Load")}
+            ${state.devotional.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : btn}
           </button>
         </div>
 
@@ -1116,6 +1128,9 @@
   }
 
   function renderPrayer() {
+    const label = state.lang === "es" ? "Obtener ejemplo breve" : "Get starter example";
+    const btn = state.lang === "es" ? "Generar" : "Generate";
+
     return `
       <div class="card">
         <h2>${state.lang === "es" ? "Oración Diaria" : "Daily Prayer"}</h2>
@@ -1126,9 +1141,9 @@
         }</div>
 
         <div class="row" style="justify-content:space-between;">
-          <div class="hint">${state.lang === "es" ? "Cargar respuesta del servidor" : "Load server response"}</div>
+          <div class="hint">${label}</div>
           <button id="genPrayerBtn" class="btn btnAccent" ${state.prayer.loading ? "disabled" : ""}>
-            ${state.prayer.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : (state.lang === "es" ? "Cargar" : "Load")}
+            ${state.prayer.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : btn}
           </button>
         </div>
 
@@ -1314,10 +1329,15 @@
 
     await loadAccount();
     await refreshBibleForLanguage();
+
+    // If user opens app on prayer tab later, you can auto-load too
+    if (state.tab === "prayer") autoLoadPrayerStarterIfEmpty();
+    if (state.tab === "devotional") autoLoadDevotionalIfEmpty();
   }
 
   init();
 })();
+
 
 
 
