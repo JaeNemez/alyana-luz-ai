@@ -8,11 +8,6 @@
     <style>
       * { box-sizing: border-box; }
 
-      /* =========================================================
-         COLOR SCHEME (Alyana Luz logo-based purple/magenta palette)
-         - Accent range derived from logo glow:
-           #9A4B9C (primary), #A95CA9 (hover), #BA6CB8 (highlight)
-      ========================================================== */
       :root{
         --bg-0: #050316;
         --bg-1: #090424;
@@ -61,7 +56,6 @@
         display: flex;
         flex-direction: column;
 
-        /* new: logo-inspired purple glow */
         background:
           radial-gradient(circle at 28% 8%, rgba(186,108,184,0.55) 0, rgba(154,75,156,0.22) 22%, rgba(5,3,22,1) 60%),
           radial-gradient(circle at 80% 18%, rgba(169,92,169,0.22) 0, rgba(5,3,22,1) 55%);
@@ -108,7 +102,6 @@
         flex-wrap: wrap;
       }
 
-      /* Support button now matches brand palette */
       .support-btn {
         padding: 10px 16px;
         background: linear-gradient(135deg, var(--accent-2), var(--accent));
@@ -233,7 +226,6 @@
         background: rgba(255,255,255,0.08);
       }
 
-      /* Primary now matches brand */
       .btn-primary {
         background: linear-gradient(135deg, var(--accent-2), var(--accent));
         border: 1px solid rgba(255,255,255,0.14);
@@ -245,6 +237,22 @@
       .btn-green { background: rgba(34,197,94,0.92); border-color: rgba(34,197,94,0.30); color: #062a14; }
       .btn-ghost { background: rgba(255,255,255,0.07); color: white; border-color: rgba(186,108,184,0.18); }
       .btn:disabled { opacity: 0.6; cursor: default; }
+
+      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
+
+      .block {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(186,108,184,0.18);
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .block + .block { margin-top: 10px; }
+
+      .divider {
+        height: 1px;
+        background: rgba(186,108,184,0.18);
+        margin: 12px 0;
+      }
 
       /* CHAT */
       .chat-layout {
@@ -316,47 +324,8 @@
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
       .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
-      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
 
-      .block {
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(186,108,184,0.18);
-        border-radius: 14px;
-        padding: 12px;
-      }
-      .block + .block { margin-top: 10px; }
-
-      .divider {
-        height: 1px;
-        background: rgba(186,108,184,0.18);
-        margin: 12px 0;
-      }
-
-      .restore-row {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        max-width: 760px;
-      }
-      .restore-row input[type="text"] { max-width: 360px; }
-
-      .hint {
-        width: 100%;
-        text-align: center;
-        font-size: 12px;
-        opacity: 0.85;
-        display: none;
-        color: var(--text-2);
-      }
-
-      /* =========================================================
-         TWO CHANGES YOU ASKED FOR (kept exactly as you had them)
-         1) flexible app height on mobile
-         2) chat layout single column like a messaging app on mobile
-      ========================================================== */
+      /* Mobile: flexible height + messaging layout */
       @media (max-width: 920px) {
         body {
           align-items: stretch;
@@ -376,7 +345,6 @@
           min-height: 0;
         }
 
-        /* Force single-column messaging layout */
         .chat-layout {
           display: flex !important;
           flex-direction: column !important;
@@ -384,7 +352,6 @@
           gap: 10px;
         }
 
-        /* First card (chat) fills available space */
         #chatSection .card:first-child {
           flex: 1;
           min-height: 0;
@@ -393,13 +360,11 @@
           overflow: hidden;
         }
 
-        /* Chat messages area scrolls properly */
         #chat {
           flex: 1;
           min-height: 0;
         }
 
-        /* Input stays visible */
         .chat-form {
           flex-shrink: 0;
         }
@@ -436,12 +401,16 @@
           To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
         </p>
 
-        <div class="restore-row">
-          <input id="loginEmail" type="text" placeholder="Email used for Stripe…" />
-          <button class="btn btn-primary" id="loginBtn" type="button">Restore access</button>
+        <div class="row" style="max-width:760px; width:100%; justify-content:center;">
+          <div style="flex:1; min-width:240px; max-width:360px;">
+            <input id="loginEmail" type="text" placeholder="Email used for Stripe…" />
+          </div>
+          <div style="flex:0; min-width:180px;">
+            <button class="btn btn-primary" id="loginBtn" type="button" style="width:100%;">Restore access</button>
+          </div>
         </div>
 
-        <div class="hint" id="authHint"></div>
+        <div class="muted" id="authHint" style="width:100%; text-align:center; display:none;"></div>
       </div>
 
       <nav class="menu-bar">
@@ -467,8 +436,8 @@
                     <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
                     <select id="chatLangSelect">
                       <option value="auto" selected>Auto (based on what they type)</option>
-                      <option value="en">English (Karen — en-AU)</option>
-                      <option value="es">Spanish (Paulina — es-MX)</option>
+                      <option value="en">English</option>
+                      <option value="es">Spanish</option>
                     </select>
                   </label>
                   <span class="pill" id="chatVoicePill">Voice: ready</span>
@@ -543,8 +512,8 @@
                 <div>
                   <label>Reader Language</label>
                   <select id="readingVoice">
-                    <option value="en" selected>English (Karen — en-AU)</option>
-                    <option value="es">Spanish (Paulina — es-MX)</option>
+                    <option value="en" selected>English</option>
+                    <option value="es">Spanish</option>
                   </select>
                   <div class="small-note">Only two voices, locked for consistency.</div>
                 </div>
@@ -605,7 +574,7 @@
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Devotional</h3>
                   <div class="muted" id="devIntro">
-                    Alyana gives Scripture + a brief explanation. You write your own explanation, application, and prayer.
+                    Alyana gives short starter examples. You write and save your real devotional.
                   </div>
                 </div>
 
@@ -627,35 +596,53 @@
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="muted" id="devLabel1" style="margin-bottom:6px;">1) Scripture</div>
-                <div id="devotionalScripture" style="white-space:pre-wrap;">—</div>
+                <div class="muted" id="devLabelTheme" style="margin-bottom:6px;">Theme / Title (Alyana)</div>
+                <div id="devTheme" style="white-space:pre-wrap;">—</div>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabel2" style="margin-bottom:6px;">2) Alyana’s Brief Explanation</div>
-                <div id="devotionalExplain" style="white-space:pre-wrap;">—</div>
+                <div class="muted" id="devLabelScripture" style="margin-bottom:6px;">Scripture (Alyana)</div>
+                <div id="devScriptureRef" class="muted" style="margin-bottom:8px;">—</div>
+                <div id="devScriptureText" style="white-space:pre-wrap;">—</div>
               </div>
 
               <div class="divider"></div>
 
               <div class="block">
-                <div class="muted" id="devLabel3" style="margin-bottom:6px;">3) My Explanation (write what YOU think it means)</div>
-                <textarea id="devotionalMyExplanation" placeholder="What do I think this Scripture is saying?"></textarea>
+                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Alyana Starter — Context / Observation</div>
+                <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow1">Now write yours:</div>
+                <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabel4" style="margin-bottom:6px;">4) My Application (how I can apply it today)</div>
-                <textarea id="devotionalMyApplication" placeholder="How can I live this out today?"></textarea>
+                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Alyana Starter — Reflection / Insight</div>
+                <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow2">Now write yours:</div>
+                <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabel5" style="margin-bottom:6px;">5) My Prayer (pray about this Scripture)</div>
-                <textarea id="devotionalMyPrayer" placeholder="Lord, help me…"></textarea>
+                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Alyana Starter — Application (Practical)</div>
+                <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow3">Now write yours:</div>
+                <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabel6" style="margin-bottom:6px;">6) Reflection (notes / what God is teaching me)</div>
-                <textarea id="devotionalReflection" placeholder="Reflection…"></textarea>
+                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Alyana Starter — Prayer</div>
+                <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow4">Now write your real prayer:</div>
+                <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelNotes" style="margin-bottom:6px;">Notes / Reflection (optional)</div>
+                <textarea id="devMyNotes" placeholder="Notes…"></textarea>
+              </div>
+
+              <div class="small-note" id="devReqNote" style="margin-top:10px;">
+                Required to save (streak): Context + Reflection + Application + Prayer.
               </div>
             </div>
 
@@ -677,7 +664,7 @@
                 <div style="flex:2;">
                   <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
                   <div class="muted" id="prIntro">
-                    Alyana gives short starters. You write your own ACTS prayer.
+                    Alyana gives a short starter example. You write and save your real prayer.
                   </div>
                 </div>
 
@@ -747,4 +734,5 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
