@@ -1,10 +1,20 @@
 /* frontend/app.js
    Alyana Luz • Bible AI
-   - New layout + old color scheme
-   - Chat bubbles + Listen
-   - Read Bible + Listen
-   - Language toggle + full voice dropdown (auto-pick Paulina + Spanish)
-   - Devotional/Prayer guided UI + Save + Streak (localStorage)
+   UPDATED to match your FastAPI backend (server.py):
+
+   ✅ Chat: POST /chat expects { prompt, history:[{role, content}] }
+   ✅ Bible:
+      - GET /bible/health
+      - GET /bible/books  -> { books:[{id,name,key}] }
+      - GET /bible/chapters?book=Genesis -> { chapters:[...] }
+      - GET /bible/passage?book=Genesis&chapter=1&full_chapter=true OR start/end
+   ✅ Devotional: POST /devotional -> { json: "<STRICT JSON STRING>", cached: bool }
+   ✅ Daily Prayer: POST /daily_prayer -> { json: "<STRICT JSON STRING>", cached: bool }
+   ✅ Adds service worker registration (/service-worker.js) if you have it.
+
+   NOTE:
+   - This file renders its own UI into a #app container (it will create #app if missing).
+   - It does NOT use the big “backend index.html UI” structure; it runs as a self-render SPA.
 */
 
 (() => {
@@ -13,30 +23,30 @@
   // -----------------------------
   const APP_TITLE = "Alyana Luz • Bible AI";
 
-  // Backend endpoints (adjust here if your server uses different routes)
+  // Backend endpoints (match server.py)
   const API = {
     me: "/me",
     chat: "/chat",
-    bibleStatus: "/bible/status",
-    bibleBooks: "/bible/books",           // optional; if missing we fall back to a built-in list
-    bibleChapters: "/bible/chapters",     // optional; expects ?book=Genesis -> {count: 50}
-    bibleText: "/bible/text",             // optional; expects ?book=Genesis&chapter=1&start=&end=
-    devotional: "/devotional",            // optional; expects POST {lang} -> {text}
-    dailyPrayer: "/daily_prayer",         // optional; expects POST {lang} -> {text}
+    bibleHealth: "/bible/health",
+    bibleBooks: "/bible/books",
+    bibleChapters: "/bible/chapters",
+    biblePassage: "/bible/passage",
+    devotional: "/devotional",
+    dailyPrayer: "/daily_prayer",
   };
 
   // -----------------------------
   // THEME (old-style colors)
   // -----------------------------
   const THEME = {
-    bg1: "#2b0a50",               // purple
-    bg2: "#0b1a3a",               // deep blue
+    bg1: "#2b0a50",
+    bg2: "#0b1a3a",
     card: "rgba(9, 18, 43, 0.72)",
     card2: "rgba(9, 18, 43, 0.58)",
     border: "rgba(255,255,255,0.12)",
     text: "#e8eaf2",
     muted: "rgba(232,234,242,0.72)",
-    accent: "#f59e0b",            // orange highlight
+    accent: "#f59e0b",
     accent2: "#ffb020",
     danger: "#ef4444",
     ok: "#22c55e",
@@ -52,32 +62,33 @@
     lang: "en", // "en" | "es"
     voices: [],
     voiceSelected: {
-      en: null,
-      es: null,
+      en: loadLS("alyana_voice_en", null),
+      es: loadLS("alyana_voice_es", null),
     },
-    account: { status: "unknown", email: null },
+    account: { status: "unknown", email: null, active: false, logged_in: false },
 
     chat: {
-      messages: loadLS("alyana_chat_messages", []),
+      messages: loadLS("alyana_chat_messages", []), // [{role:"user"|"assistant", text, ts}]
       sending: false,
       error: null,
     },
 
     bible: {
       status: null,
-      books: null,
+      books: null,            // array of names
       book: "Genesis",
-      chapterCount: null,
+      chapters: null,         // array of ints
       chapter: 1,
       startVerse: "",
       endVerse: "",
       text: "",
+      reference: "",
       loading: false,
       error: null,
     },
 
     devotional: {
-      suggestion: "",
+      suggestion: "", // formatted text
       userText: loadLS("alyana_devotional_draft", ""),
       saved: loadLS("alyana_devotional_saved", []),
       streak: loadLS("alyana_devotional_streak", { count: 0, lastDate: null }),
@@ -86,7 +97,7 @@
     },
 
     prayer: {
-      suggestion: "",
+      suggestion: "", // formatted text
       userText: loadLS("alyana_prayer_draft", ""),
       saved: loadLS("alyana_prayer_saved", []),
       streak: loadLS("alyana_prayer_streak", { count: 0, lastDate: null }),
@@ -122,12 +133,17 @@
   }
 
   function escapeHtml(s) {
-    return String(s)
+    return String(s ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#039;");
+  }
+
+  function safeJsonParse(maybeJsonString) {
+    if (typeof maybeJsonString !== "string") return null;
+    try { return JSON.parse(maybeJsonString); } catch { return null; }
   }
 
   async function apiFetch(url, opts = {}) {
@@ -153,8 +169,19 @@
   }
 
   function setLang(lang) {
-    state.lang = lang;
+    state.lang = (lang === "es" ? "es" : "en");
     render();
+  }
+
+  // -----------------------------
+  // SERVICE WORKER (PWA)
+  // -----------------------------
+  function registerServiceWorker() {
+    try {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+      }
+    } catch {}
   }
 
   // -----------------------------
@@ -162,24 +189,28 @@
   // -----------------------------
   function refreshVoices() {
     if (!("speechSynthesis" in window)) return;
-
     const voices = window.speechSynthesis.getVoices() || [];
     state.voices = voices;
 
-    // Auto-pick English: prefer Paulina if exists
+    // Pick English voice if missing
     if (!state.voiceSelected.en) {
-      const paulina = voices.find(v => (v.name || "").toLowerCase().includes("paulina") && (v.lang || "").toLowerCase().startsWith("en"));
-      const anyEn = voices.find(v => (v.lang || "").toLowerCase().startsWith("en"));
-      state.voiceSelected.en = (paulina || anyEn || null)?.name || null;
+      const preferred = voices.find(v => (v.lang || "").toLowerCase().startsWith("en") && (v.name || "").toLowerCase().includes("karen"))
+        || voices.find(v => (v.lang || "").toLowerCase().startsWith("en"))
+        || null;
+      state.voiceSelected.en = preferred ? preferred.name : null;
+      saveLS("alyana_voice_en", state.voiceSelected.en);
     }
 
-    // Auto-pick Spanish: first es-
+    // Pick Spanish voice if missing
     if (!state.voiceSelected.es) {
-      const anyEs = voices.find(v => (v.lang || "").toLowerCase().startsWith("es"));
-      state.voiceSelected.es = (anyEs || null)?.name || null;
+      const preferred = voices.find(v => (v.lang || "").toLowerCase().startsWith("es") && (v.name || "").toLowerCase().includes("paulina"))
+        || voices.find(v => (v.lang || "").toLowerCase().startsWith("es"))
+        || null;
+      state.voiceSelected.es = preferred ? preferred.name : null;
+      saveLS("alyana_voice_es", state.voiceSelected.es);
     }
 
-    render(); // so dropdown populates
+    render();
   }
 
   function getSelectedVoiceName() {
@@ -191,10 +222,12 @@
       alert("Text-to-speech is not supported in this browser.");
       return;
     }
+    const t = String(text || "").trim();
+    if (!t) return;
 
     window.speechSynthesis.cancel();
 
-    const u = new SpeechSynthesisUtterance(String(text || ""));
+    const u = new SpeechSynthesisUtterance(t);
     u.lang = state.lang === "es" ? "es-ES" : "en-US";
 
     const voiceName = getSelectedVoiceName();
@@ -210,24 +243,27 @@
   }
 
   // -----------------------------
-  // DATA LOADERS
+  // BACKEND LOADERS
   // -----------------------------
   async function loadAccount() {
     try {
       const me = await apiFetch(API.me, { method: "GET" });
-      // supports {email, active} or {status, email}
-      const email = me?.email || me?.user?.email || null;
-      const active = typeof me?.active === "boolean" ? me.active : (me?.status === "active");
-      state.account = { status: active ? "active" : "error", email };
+      // server.py returns {logged_in, email, active, status, current_period_end}
+      state.account = {
+        status: me?.active ? "active" : (me?.logged_in ? "inactive" : "logged_out"),
+        email: me?.email || null,
+        active: !!me?.active,
+        logged_in: !!me?.logged_in,
+      };
     } catch {
-      state.account = { status: "error", email: null };
+      state.account = { status: "error", email: null, active: false, logged_in: false };
     }
     render();
   }
 
-  async function loadBibleStatus() {
+  async function loadBibleHealth() {
     try {
-      state.bible.status = await apiFetch(API.bibleStatus, { method: "GET" });
+      state.bible.status = await apiFetch(API.bibleHealth, { method: "GET" });
     } catch (e) {
       state.bible.status = { status: "error", detail: e.message };
     }
@@ -247,65 +283,172 @@
     "1 John","2 John","3 John","Jude","Revelation"
   ];
 
-  async function loadBooksIfPossible() {
+  async function loadBooks() {
     try {
       const data = await apiFetch(API.bibleBooks, { method: "GET" });
-      // supports {books:[...]} or [...]
-      state.bible.books = Array.isArray(data) ? data : (data?.books || null);
-      if (!state.bible.books || !state.bible.books.length) throw new Error("No books list");
+      // server: {books:[{id,name,key}]}
+      const books = Array.isArray(data?.books) ? data.books.map(b => b?.name).filter(Boolean) : null;
+      state.bible.books = (books && books.length) ? books : FALLBACK_BOOKS.slice();
     } catch {
       state.bible.books = FALLBACK_BOOKS.slice();
     }
     render();
   }
 
-  async function loadChapterCount(book) {
-    state.bible.chapterCount = null;
+  async function loadChapters(book) {
+    state.bible.chapters = null;
     try {
       const data = await apiFetch(`${API.bibleChapters}?book=${encodeURIComponent(book)}`, { method: "GET" });
-      const count = data?.count || data?.chapters || data?.chapter_count || null;
-      state.bible.chapterCount = Number(count) || null;
+      // server: {chapters:[1,2,...]}
+      const chapters = Array.isArray(data?.chapters) ? data.chapters.map(n => Number(n)).filter(n => Number.isFinite(n) && n > 0) : null;
+      state.bible.chapters = (chapters && chapters.length) ? chapters : null;
     } catch {
-      state.bible.chapterCount = null;
+      state.bible.chapters = null;
     }
     render();
   }
 
-  async function loadBibleText({ book, chapter, startVerse, endVerse, mode }) {
+  async function loadBiblePassage({ book, chapter, startVerse, endVerse, fullChapter }) {
     state.bible.loading = true;
     state.bible.error = null;
     state.bible.text = "";
+    state.bible.reference = "";
     render();
 
     try {
-      // Prefer structured endpoint if exists
-      const qs =
-        `book=${encodeURIComponent(book)}` +
-        `&chapter=${encodeURIComponent(chapter)}` +
-        `&start=${encodeURIComponent(startVerse || "")}` +
-        `&end=${encodeURIComponent(endVerse || "")}` +
-        `&mode=${encodeURIComponent(mode || "")}`;
+      const params = new URLSearchParams();
+      params.set("book", book);
+      params.set("chapter", String(chapter));
 
-      const data = await apiFetch(`${API.bibleText}?${qs}`, { method: "GET" });
-
-      // supports {text:"..."} or {verses:[...]} or plain string
-      if (typeof data === "string") {
-        state.bible.text = data;
-      } else if (data?.text) {
-        state.bible.text = data.text;
-      } else if (Array.isArray(data?.verses)) {
-        state.bible.text = data.verses.map(v => v.text || v).join("\n");
+      if (fullChapter) {
+        params.set("full_chapter", "true");
       } else {
-        state.bible.text = JSON.stringify(data, null, 2);
+        const s = String(startVerse || "").trim();
+        const e = String(endVerse || "").trim();
+        if (s) params.set("start", s);
+        if (e) params.set("end", e);
       }
+
+      const data = await apiFetch(`${API.biblePassage}?${params.toString()}`, { method: "GET" });
+      // server: {reference, text}
+      state.bible.reference = data?.reference || "";
+      state.bible.text = data?.text || (typeof data === "string" ? data : JSON.stringify(data, null, 2));
     } catch (e) {
-      state.bible.error =
-        `Bible request failed: ${e.message}\n\n` +
-        `If your backend uses a different route, tell me what URL works when you load a chapter, and I’ll match it.`;
+      state.bible.error = `Bible request failed: ${e.message}`;
     } finally {
       state.bible.loading = false;
       render();
     }
+  }
+
+  function buildChatHistoryForBackend() {
+    // server.py wants [{role:"user"|"assistant", content:"..."}]
+    const msgs = Array.isArray(state.chat.messages) ? state.chat.messages : [];
+    // keep it light (server trims too, but we keep reasonable)
+    const trimmed = msgs.slice(-16);
+    return trimmed
+      .filter(m => m && (m.role === "user" || m.role === "assistant") && String(m.text || "").trim())
+      .map(m => ({ role: m.role, content: String(m.text || "").trim() }));
+  }
+
+  function buildPromptWithLanguage(userText) {
+    const t = String(userText || "").trim();
+    if (!t) return "";
+    if (state.lang === "es") {
+      // Make language stable even if user mixes
+      return `Responde en español.\n\n${t}`;
+    }
+    return `Respond in English.\n\n${t}`;
+  }
+
+  async function sendChat() {
+    const input = $("#chatInput");
+    if (!input) return;
+    const text = (input.value || "").trim();
+    if (!text || state.chat.sending) return;
+
+    state.chat.error = null;
+    state.chat.sending = true;
+
+    state.chat.messages.push({ role: "user", text, ts: Date.now() });
+    saveLS("alyana_chat_messages", state.chat.messages);
+
+    input.value = "";
+    render();
+
+    try {
+      const payload = {
+        prompt: buildPromptWithLanguage(text),
+        history: buildChatHistoryForBackend(),
+      };
+
+      const data = await apiFetch(API.chat, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      // server: {status:"success", message:"..."}
+      const reply =
+        data?.message ||
+        data?.reply ||
+        data?.text ||
+        (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+
+      state.chat.messages.push({ role: "assistant", text: String(reply || "").trim(), ts: Date.now() });
+      saveLS("alyana_chat_messages", state.chat.messages);
+    } catch (e) {
+      state.chat.error = e.message;
+      state.chat.messages.push({ role: "assistant", text: `Error: ${e.message}`, ts: Date.now() });
+      saveLS("alyana_chat_messages", state.chat.messages);
+    } finally {
+      state.chat.sending = false;
+      render();
+
+      const el = $("#chatScroll");
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  function lastAssistantMessage() {
+    for (let i = state.chat.messages.length - 1; i >= 0; i--) {
+      if (state.chat.messages[i].role === "assistant") return state.chat.messages[i].text;
+    }
+    return "";
+  }
+
+  function formatDevotionalFromServer(data) {
+    // server returns {json:"<json string>"}
+    const obj = safeJsonParse(data?.json);
+    if (obj && (obj.scripture || obj.brief_explanation)) {
+      const scripture = obj.scripture ? String(obj.scripture).trim() : "";
+      const explain = obj.brief_explanation ? String(obj.brief_explanation).trim() : "";
+      return `${scripture}\n\n${explain}`.trim();
+    }
+
+    // fallback: show raw json string or object
+    if (typeof data?.json === "string") return data.json.trim();
+    if (typeof data === "string") return data.trim();
+    return JSON.stringify(data, null, 2);
+  }
+
+  function formatPrayerFromServer(data) {
+    const obj = safeJsonParse(data?.json);
+    if (obj && (obj.example_adoration || obj.example_confession || obj.example_thanksgiving || obj.example_supplication)) {
+      const a = obj.example_adoration ? String(obj.example_adoration).trim() : "";
+      const c = obj.example_confession ? String(obj.example_confession).trim() : "";
+      const t = obj.example_thanksgiving ? String(obj.example_thanksgiving).trim() : "";
+      const s = obj.example_supplication ? String(obj.example_supplication).trim() : "";
+      const lines = [];
+      if (a) lines.push(`Adoration: ${a}`);
+      if (c) lines.push(`Confession: ${c}`);
+      if (t) lines.push(`Thanksgiving: ${t}`);
+      if (s) lines.push(`Supplication: ${s}`);
+      return lines.join("\n");
+    }
+
+    if (typeof data?.json === "string") return data.json.trim();
+    if (typeof data === "string") return data.trim();
+    return JSON.stringify(data, null, 2);
   }
 
   async function generateDevotionalSuggestion() {
@@ -317,7 +460,7 @@
         method: "POST",
         body: JSON.stringify({ lang: state.lang }),
       });
-      state.devotional.suggestion = data?.text || data?.devotional || (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+      state.devotional.suggestion = formatDevotionalFromServer(data);
     } catch (e) {
       state.devotional.error = e.message;
     } finally {
@@ -335,7 +478,7 @@
         method: "POST",
         body: JSON.stringify({ lang: state.lang }),
       });
-      state.prayer.suggestion = data?.text || data?.prayer || (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+      state.prayer.suggestion = formatPrayerFromServer(data);
     } catch (e) {
       state.prayer.error = e.message;
     } finally {
@@ -351,10 +494,7 @@
     const t = todayISO();
     const st = loadLS(streakObjKey, { count: 0, lastDate: null });
 
-    if (st.lastDate === t) {
-      // already saved today; keep streak
-      return st;
-    }
+    if (st.lastDate === t) return st;
 
     if (!st.lastDate) {
       st.count = 1;
@@ -362,7 +502,6 @@
       return st;
     }
 
-    // compare lastDate to yesterday
     const last = new Date(st.lastDate + "T00:00:00");
     const now = new Date(t + "T00:00:00");
     const diffDays = Math.round((now - last) / (1000 * 60 * 60 * 24));
@@ -400,59 +539,6 @@
     saveLS("alyana_prayer_streak", state.prayer.streak);
 
     render();
-  }
-
-  // -----------------------------
-  // CHAT
-  // -----------------------------
-  async function sendChat() {
-    const input = $("#chatInput");
-    if (!input) return;
-    const text = (input.value || "").trim();
-    if (!text || state.chat.sending) return;
-
-    state.chat.error = null;
-    state.chat.sending = true;
-
-    state.chat.messages.push({ role: "user", text, ts: Date.now() });
-    saveLS("alyana_chat_messages", state.chat.messages);
-
-    input.value = "";
-    render();
-
-    try {
-      const data = await apiFetch(API.chat, {
-        method: "POST",
-        body: JSON.stringify({ message: text, lang: state.lang }),
-      });
-
-      const reply =
-        data?.reply ||
-        data?.text ||
-        data?.message ||
-        (typeof data === "string" ? data : JSON.stringify(data, null, 2));
-
-      state.chat.messages.push({ role: "assistant", text: reply, ts: Date.now() });
-      saveLS("alyana_chat_messages", state.chat.messages);
-    } catch (e) {
-      state.chat.error = e.message;
-      state.chat.messages.push({ role: "assistant", text: `Error: ${e.message}`, ts: Date.now() });
-      saveLS("alyana_chat_messages", state.chat.messages);
-    } finally {
-      state.chat.sending = false;
-      render();
-
-      // scroll to bottom
-      const el = $("#chatScroll");
-      if (el) el.scrollTop = el.scrollHeight;
-    }
-  }
-
-  function lastAssistantMessage() {
-    for (let i = state.chat.messages.length - 1; i >= 0; i--) {
-      if (state.chat.messages[i].role === "assistant") return state.chat.messages[i].text;
-    }
-    return "";
   }
 
   // -----------------------------
@@ -504,6 +590,8 @@
         padding: 16px 18px;
         border-bottom:1px solid var(--border);
         background: rgba(0,0,0,0.16);
+        gap: 12px;
+        flex-wrap: wrap;
       }
       .brand{
         display:flex; gap:12px; align-items:center;
@@ -568,6 +656,7 @@
         border:1px solid var(--border);
         border-radius: 18px;
         background: rgba(255,255,255,0.05);
+        flex-wrap: wrap;
       }
       .tab{
         padding: 10px 14px;
@@ -716,24 +805,25 @@
 
   function render() {
     document.title = APP_TITLE;
-    const root = $("#app") || document.body;
 
-    // Ensure #app exists if index.html didn’t include it
+    // Ensure #app exists
     if (!$("#app")) {
       const div = document.createElement("div");
       div.id = "app";
-      document.body.innerHTML = "";
       document.body.appendChild(div);
     }
 
-    const accountLabel =
-      state.account.status === "active"
-        ? `Account: active (${state.account.email || "signed in"})`
-        : "Account: error";
+    const accountLabel = (() => {
+      if (state.account.status === "active") return `Account: active (${state.account.email || "signed in"})`;
+      if (state.account.status === "inactive") return `Account: inactive (${state.account.email || "logged in"})`;
+      if (state.account.status === "logged_out") return "Account: logged out";
+      if (state.account.status === "error") return "Account: error";
+      return "Account: checking…";
+    })();
 
     const bibleStatusLine =
       state.bible.status?.status === "ok"
-        ? `Bible DB: OK`
+        ? `Bible DB: OK (${state.bible.status?.verse_count ?? "?"} verses)`
         : state.bible.status?.status === "error"
           ? `Bible DB: error`
           : `Bible DB: checking`;
@@ -747,8 +837,6 @@
           })
           .join("")
       : `<option value="">(No voices found yet — click here again)</option>`;
-
-    const langValue = state.lang;
 
     const contentHtml = (() => {
       if (state.tab === "chat") return renderChat();
@@ -776,8 +864,8 @@
               <div class="pill">${escapeHtml(accountLabel)}</div>
 
               <select id="langSel" class="field" style="min-width:160px; flex:0;">
-                <option value="en" ${langValue === "en" ? "selected" : ""}>English</option>
-                <option value="es" ${langValue === "es" ? "selected" : ""}>Español</option>
+                <option value="en" ${state.lang === "en" ? "selected" : ""}>English</option>
+                <option value="es" ${state.lang === "es" ? "selected" : ""}>Español</option>
               </select>
 
               <select id="voiceSel" class="field" style="min-width:280px; flex:0;">
@@ -822,8 +910,13 @@
 
     $("#voiceSel").addEventListener("change", (e) => {
       const name = e.target.value || null;
-      if (state.lang === "es") state.voiceSelected.es = name;
-      else state.voiceSelected.en = name;
+      if (state.lang === "es") {
+        state.voiceSelected.es = name;
+        saveLS("alyana_voice_es", name);
+      } else {
+        state.voiceSelected.en = name;
+        saveLS("alyana_voice_en", name);
+      }
       render();
     });
 
@@ -831,13 +924,12 @@
 
     wireContentEvents();
 
-    // Always keep drafts stored
+    // Persist drafts
     saveLS("alyana_devotional_draft", state.devotional.userText);
     saveLS("alyana_prayer_draft", state.prayer.userText);
   }
 
   function renderSavedSide() {
-    // right column: Saved Chats / Devotionals / Prayers depending on tab
     if (state.tab === "chat") {
       return `
         <div class="card">
@@ -853,9 +945,14 @@
     if (state.tab === "bible") {
       return `
         <div class="card">
-          <h2>Saved</h2>
-          <div class="sub">You can add save features here later if you want bookmarks.</div>
-          <div class="hint">Bible status: ${escapeHtml(state.bible.status?.status || "unknown")}</div>
+          <h2>Status</h2>
+          <div class="sub">Bible database connection.</div>
+          <div class="hint">Health: ${escapeHtml(state.bible.status?.status || "unknown")}</div>
+          ${
+            state.bible.status?.status === "ok"
+              ? `<div class="ok">DB OK • verses: ${escapeHtml(state.bible.status?.verse_count ?? "?")}</div>`
+              : (state.bible.status?.status === "error" ? `<div class="error">${escapeHtml(state.bible.status?.detail || "Error")}</div>` : "")
+          }
         </div>
       `;
     }
@@ -951,7 +1048,7 @@
 
         <div class="row">
           <input id="chatInput" class="field" placeholder="Ask for a prayer, verse, or 'verses about forgiveness'..." />
-          <button id="sendChatBtn" class="btn btnAccent">Send</button>
+          <button id="sendChatBtn" class="btn btnAccent">${state.chat.sending ? "Sending..." : "Send"}</button>
         </div>
       </div>
     `;
@@ -959,13 +1056,20 @@
 
   function renderBible() {
     const books = state.bible.books || FALLBACK_BOOKS;
-    const bookOptions = books.map(b => `<option value="${escapeHtml(b)}" ${b === state.bible.book ? "selected" : ""}>${escapeHtml(b)}</option>`).join("");
+    const bookOptions = books
+      .map(b => `<option value="${escapeHtml(b)}" ${b === state.bible.book ? "selected" : ""}>${escapeHtml(b)}</option>`)
+      .join("");
 
-    // If chapterCount known, build options; else 1..150 as safe max
-    const maxCh = state.bible.chapterCount || 150;
-    const chapterOptions = Array.from({ length: maxCh }, (_, i) => i + 1)
+    // If we have chapters list, use it. Else show 1..150
+    const chapterList = Array.isArray(state.bible.chapters) && state.bible.chapters.length
+      ? state.bible.chapters
+      : Array.from({ length: 150 }, (_, i) => i + 1);
+
+    const chapterOptions = chapterList
       .map(n => `<option value="${n}" ${n === Number(state.bible.chapter) ? "selected" : ""}>Chapter ${n}</option>`)
       .join("");
+
+    const refLine = state.bible.reference ? `<div class="ok">${escapeHtml(state.bible.reference)}</div>` : "";
 
     return `
       <div class="card">
@@ -994,6 +1098,7 @@
         </div>
 
         ${state.bible.error ? `<div class="error">${escapeHtml(state.bible.error)}</div>` : ""}
+        ${refLine}
 
         <div class="divider"></div>
 
@@ -1148,7 +1253,6 @@
         render();
       });
 
-      // Auto-scroll
       const el = $("#chatScroll");
       if (el) el.scrollTop = el.scrollHeight;
     }
@@ -1164,9 +1268,10 @@
         state.bible.book = e.target.value;
         state.bible.chapter = 1;
         state.bible.text = "";
+        state.bible.reference = "";
         state.bible.error = null;
         render();
-        await loadChapterCount(state.bible.book);
+        await loadChapters(state.bible.book);
       });
 
       if (chapterSel) chapterSel.addEventListener("change", (e) => {
@@ -1182,23 +1287,23 @@
 
       const loadChapterBtn = $("#loadChapterBtn");
       if (loadChapterBtn) loadChapterBtn.addEventListener("click", () => {
-        loadBibleText({
+        loadBiblePassage({
           book: state.bible.book,
           chapter: state.bible.chapter,
           startVerse: "",
           endVerse: "",
-          mode: "chapter",
+          fullChapter: true,
         });
       });
 
       const loadPassageBtn = $("#loadPassageBtn");
       if (loadPassageBtn) loadPassageBtn.addEventListener("click", () => {
-        loadBibleText({
+        loadBiblePassage({
           book: state.bible.book,
           chapter: state.bible.chapter,
           startVerse: state.bible.startVerse,
           endVerse: state.bible.endVerse,
-          mode: "passage",
+          fullChapter: false,
         });
       });
 
@@ -1260,32 +1365,36 @@
   // -----------------------------
   // INIT
   // -----------------------------
-  function init() {
-    // ensure container
+  async function init() {
+    // Ensure container
     if (!document.querySelector("#app")) {
       const div = document.createElement("div");
       div.id = "app";
       document.body.appendChild(div);
     }
 
-    // voices: some browsers require one extra tick to populate
+    // PWA
+    registerServiceWorker();
+
+    // voices
     if ("speechSynthesis" in window) {
       window.speechSynthesis.onvoiceschanged = refreshVoices;
       refreshVoices();
-      // also refresh after a short delay
       setTimeout(refreshVoices, 400);
     }
 
     render();
 
-    // backend checks (non-fatal)
+    // load backend info
     loadAccount();
-    loadBibleStatus();
-    loadBooksIfPossible().then(() => loadChapterCount(state.bible.book));
+    loadBibleHealth();
+    await loadBooks();
+    await loadChapters(state.bible.book);
   }
 
   init();
 })();
+
 
 
 
