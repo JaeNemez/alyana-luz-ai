@@ -1,18 +1,25 @@
 /* frontend/app.js
    Alyana Luz • Bible AI
-   FIXES INCLUDED:
-   1) Spanish AI responses everywhere (Chat / Devotional / Daily Prayer)
-   2) Bible endpoints now match your *server.py* routes:
-        - /bible/health
-        - /bible/books
-        - /bible/chapters?book=...
-        - /bible/passage?book=...&chapter=...&full_chapter=...&start=...&end=...
-   3) Fix “[object Object]” in Bible output (we now render reference/text correctly)
-   4) Devotional + Daily Prayer parsing fixed (server returns { json: "<stringified JSON>" })
-   5) Voices restricted to ONLY:
-        - English: Karen (en-AU)
-        - Spanish: Paulina (es-MX)
-      (with safe fallback if the browser doesn’t have those exact voices)
+
+   FIXES (matches YOUR current backend):
+   - Bible endpoints now match bible_api.py router:
+       GET  /bible/status?version=...
+       GET  /bible/books?version=...
+       GET  /bible/chapters?book_id=...&version=...
+       GET  /bible/text?book_id=...&chapter=...&version=...&start_verse=...&end_verse=...&whole_chapter=true|false
+
+   - Language selector controls bible version automatically:
+       English  -> en_default
+       Español  -> rvr1909
+
+   - Chat matches server.py stub:
+       POST /chat { message: "..." } -> { ok:true, reply:"..." }
+
+   - Devotional & Daily Prayer match server.py stubs:
+       GET /devotional -> { devotional:"..." }
+       GET /daily_prayer -> { prayer:"..." }
+
+   - Prevents “[object Object]” by rendering strings safely
 */
 
 (() => {
@@ -21,17 +28,16 @@
   // -----------------------------
   const APP_TITLE = "Alyana Luz • Bible AI";
 
-  // IMPORTANT: match your FastAPI server.py routes
   const API = {
     me: "/me",
     chat: "/chat",
     devotional: "/devotional",
     dailyPrayer: "/daily_prayer",
 
-    bibleHealth: "/bible/health",
+    bibleStatus: "/bible/status",
     bibleBooks: "/bible/books",
     bibleChapters: "/bible/chapters",
-    biblePassage: "/bible/passage",
+    bibleText: "/bible/text",
   };
 
   // -----------------------------
@@ -72,9 +78,13 @@
     },
 
     bible: {
-      health: null,
-      books: null,
-      book: "Genesis",
+      status: null,
+
+      // books: [{id,name}]
+      books: [],
+      bookId: 1,
+      bookName: "Genesis",
+
       chapters: [],
       chapter: 1,
 
@@ -89,8 +99,7 @@
     },
 
     devotional: {
-      suggestionObj: null,   // {scripture, brief_explanation}
-      suggestionRaw: "",     // fallback string
+      suggestionRaw: "",
       userText: loadLS("alyana_devotional_draft", ""),
       saved: loadLS("alyana_devotional_saved", []),
       streak: loadLS("alyana_devotional_streak", { count: 0, lastDate: null }),
@@ -99,7 +108,6 @@
     },
 
     prayer: {
-      suggestionObj: null,   // {example_adoration, example_confession, ...}
       suggestionRaw: "",
       userText: loadLS("alyana_prayer_draft", ""),
       saved: loadLS("alyana_prayer_saved", []),
@@ -147,6 +155,7 @@
   async function apiFetch(url, opts = {}) {
     const headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
     const res = await fetch(url, { ...opts, headers });
+
     const contentType = res.headers.get("content-type") || "";
     const isJson = contentType.includes("application/json");
     const data = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
@@ -168,25 +177,26 @@
 
   function setLang(lang) {
     state.lang = lang === "es" ? "es" : "en";
+    // when language changes, reload bible status + books/chapters for that version
+    refreshBibleForLanguage().catch(() => {});
     render();
   }
 
-  function tryParseJsonString(maybeString) {
-    if (typeof maybeString !== "string") return null;
-    const s = maybeString.trim();
-    if (!s) return null;
-    try { return JSON.parse(s); } catch { return null; }
-  }
-
   function languageInstruction() {
-    // Ensures Spanish output everywhere for AI endpoints (especially /chat)
     return state.lang === "es"
       ? "IMPORTANT: Reply only in Spanish."
       : "IMPORTANT: Reply only in English.";
   }
 
+  function bibleVersionForLang() {
+    // MUST match DB_MAP keys in your bible_api.py
+    // English DB: en_default -> bible.db
+    // Spanish DB: rvr1909   -> bible_es_rvr.db
+    return state.lang === "es" ? "rvr1909" : "en_default";
+  }
+
   // -----------------------------
-  // TEXT TO SPEECH (ONLY 2 VOICES)
+  // TEXT TO SPEECH
   // -----------------------------
   function refreshVoices() {
     if (!("speechSynthesis" in window)) return;
@@ -194,10 +204,6 @@
     const voices = window.speechSynthesis.getVoices() || [];
     state.voices = voices;
 
-    // We only expose:
-    // - Karen (en-AU)
-    // - Paulina (es-MX)
-    // If not found, we fall back to any en / any es.
     const findKaren = () => {
       const v = voices.find(v =>
         (v.name || "").toLowerCase().includes("karen") &&
@@ -240,7 +246,6 @@
       return [paulina || anyEs].filter(Boolean);
     }
 
-    // en
     const karen = voices.find(v =>
       (v.name || "").toLowerCase().includes("karen") &&
       (v.lang || "").toLowerCase().startsWith("en")
@@ -258,8 +263,6 @@
     window.speechSynthesis.cancel();
 
     const u = new SpeechSynthesisUtterance(String(text || ""));
-
-    // Hard-pin the language to match your requirement
     u.lang = state.lang === "es" ? "es-MX" : "en-AU";
 
     const voiceName = getSelectedVoiceName();
@@ -280,50 +283,68 @@
   async function loadAccount() {
     try {
       const me = await apiFetch(API.me, { method: "GET" });
-      const email = me?.email || null;
-      const active = typeof me?.active === "boolean" ? me.active : false;
-      state.account = { status: active ? "active" : "error", email };
+      state.account = { status: me?.ok ? "active" : "error", email: me?.email || null };
     } catch {
       state.account = { status: "error", email: null };
     }
     render();
   }
 
-  async function loadBibleHealth() {
+  async function loadBibleStatus() {
     try {
-      state.bible.health = await apiFetch(API.bibleHealth, { method: "GET" });
+      const v = bibleVersionForLang();
+      state.bible.status = await apiFetch(`${API.bibleStatus}?version=${encodeURIComponent(v)}`, { method: "GET" });
     } catch (e) {
-      state.bible.health = { status: "error", detail: e.message };
+      state.bible.status = { status: "error", detail: e.message };
     }
     render();
   }
 
   async function loadBooks() {
     try {
-      const data = await apiFetch(API.bibleBooks, { method: "GET" });
-      // server returns {books:[{id,name,key}]}
-      const books = Array.isArray(data?.books) ? data.books : null;
-      state.bible.books = books && books.length ? books : null;
-    } catch {
-      state.bible.books = null;
+      const v = bibleVersionForLang();
+      const data = await apiFetch(`${API.bibleBooks}?version=${encodeURIComponent(v)}`, { method: "GET" });
+
+      const books = Array.isArray(data?.books) ? data.books : [];
+      state.bible.books = books;
+
+      if (books.length) {
+        // Keep current selection if it still exists
+        const stillThere = books.find(b => Number(b.id) === Number(state.bible.bookId));
+        const pick = stillThere || books[0];
+        state.bible.bookId = Number(pick.id);
+        state.bible.bookName = String(pick.name);
+      }
+    } catch (e) {
+      state.bible.books = [];
+      state.bible.error = e.message;
     }
     render();
   }
 
-  async function loadChapters(book) {
+  async function loadChapters(bookId) {
     try {
-      const data = await apiFetch(`${API.bibleChapters}?book=${encodeURIComponent(book)}`, { method: "GET" });
-      // server returns {book_id, chapters:[...]}
+      const v = bibleVersionForLang();
+      const data = await apiFetch(
+        `${API.bibleChapters}?version=${encodeURIComponent(v)}&book_id=${encodeURIComponent(bookId)}`,
+        { method: "GET" }
+      );
+
       const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
       state.bible.chapters = chapters;
-      if (chapters.length) state.bible.chapter = chapters[0];
-    } catch {
+
+      if (chapters.length) {
+        // default to chapter 1 if available
+        state.bible.chapter = chapters.includes(1) ? 1 : Number(chapters[0]);
+      }
+    } catch (e) {
       state.bible.chapters = [];
+      state.bible.error = e.message;
     }
     render();
   }
 
-  async function loadBiblePassage({ book, chapter, fullChapter, start, end }) {
+  async function loadBibleText({ bookId, chapter, fullChapter, startVerse, endVerse }) {
     state.bible.loading = true;
     state.bible.error = null;
     state.bible.text = "";
@@ -331,18 +352,42 @@
     render();
 
     try {
-      const qs =
-        `book=${encodeURIComponent(book)}` +
-        `&chapter=${encodeURIComponent(chapter)}` +
-        `&full_chapter=${encodeURIComponent(fullChapter ? "true" : "false")}` +
-        `&start=${encodeURIComponent(start || "1")}` +
-        (end ? `&end=${encodeURIComponent(end)}` : "");
+      const v = bibleVersionForLang();
 
-      const data = await apiFetch(`${API.biblePassage}?${qs}`, { method: "GET" });
+      const params = new URLSearchParams();
+      params.set("version", v);
+      params.set("book_id", String(bookId));
+      params.set("chapter", String(chapter));
+      params.set("whole_chapter", fullChapter ? "true" : "false");
 
-      // server returns {reference, text}
-      state.bible.reference = typeof data?.reference === "string" ? data.reference : "";
-      state.bible.text = typeof data?.text === "string" ? data.text : (typeof data === "string" ? data : JSON.stringify(data, null, 2));
+      // backend expects start_verse / end_verse
+      if (!fullChapter) {
+        const sv = String(startVerse || "").trim();
+        const ev = String(endVerse || "").trim();
+        if (sv) params.set("start_verse", sv);
+        if (ev) params.set("end_verse", ev);
+      }
+
+      const data = await apiFetch(`${API.bibleText}?${params.toString()}`, { method: "GET" });
+
+      // backend returns {book_name, chapter, verses:[{verse,text}]}
+      const bookName = data?.book_name || state.bible.bookName;
+      const verses = Array.isArray(data?.verses) ? data.verses : [];
+
+      if (!verses.length) throw new Error("No verses returned");
+
+      // Build reference
+      if (fullChapter) {
+        state.bible.reference = `${bookName} ${chapter}`;
+      } else {
+        const vnums = verses.map(x => Number(x.verse)).filter(n => Number.isFinite(n));
+        const minV = Math.min(...vnums);
+        const maxV = Math.max(...vnums);
+        state.bible.reference = `${bookName} ${chapter}:${minV}-${maxV}`;
+      }
+
+      // Build readable text
+      state.bible.text = verses.map(vv => `${vv.verse}. ${vv.text}`).join("\n");
     } catch (e) {
       state.bible.error = e.message;
     } finally {
@@ -351,32 +396,35 @@
     }
   }
 
+  async function refreshBibleForLanguage() {
+    // Clear current loaded passage display, reload status/books/chapters for the selected language
+    state.bible.text = "";
+    state.bible.reference = "";
+    state.bible.error = null;
+
+    await loadBibleStatus();
+    await loadBooks();
+
+    if (state.bible.bookId) {
+      await loadChapters(state.bible.bookId);
+    }
+  }
+
   // -----------------------------
-  // DEVOTIONAL / PRAYER (server returns { json: "<json string>" })
+  // DEVOTIONAL / PRAYER (GET stubs)
   // -----------------------------
-  async function generateDevotionalSuggestion() {
+  async function loadDevotionalStub() {
     state.devotional.loading = true;
     state.devotional.error = null;
-    state.devotional.suggestionObj = null;
     state.devotional.suggestionRaw = "";
     render();
 
     try {
-      const data = await apiFetch(API.devotional, {
-        method: "POST",
-        body: JSON.stringify({ lang: state.lang }),
-      });
-
-      // server returns { json: "<stringified JSON>", cached: bool }
-      const parsed = tryParseJsonString(data?.json);
-      if (parsed && typeof parsed === "object") {
-        state.devotional.suggestionObj = {
-          scripture: String(parsed.scripture || ""),
-          brief_explanation: String(parsed.brief_explanation || ""),
-        };
-      } else {
-        state.devotional.suggestionRaw = typeof data === "string" ? data : (data?.json || JSON.stringify(data, null, 2));
-      }
+      const data = await apiFetch(API.devotional, { method: "GET" });
+      state.devotional.suggestionRaw =
+        typeof data?.devotional === "string"
+          ? data.devotional
+          : (typeof data === "string" ? data : JSON.stringify(data, null, 2));
     } catch (e) {
       state.devotional.error = e.message;
     } finally {
@@ -385,30 +433,18 @@
     }
   }
 
-  async function generatePrayerSuggestion() {
+  async function loadPrayerStub() {
     state.prayer.loading = true;
     state.prayer.error = null;
-    state.prayer.suggestionObj = null;
     state.prayer.suggestionRaw = "";
     render();
 
     try {
-      const data = await apiFetch(API.dailyPrayer, {
-        method: "POST",
-        body: JSON.stringify({ lang: state.lang }),
-      });
-
-      const parsed = tryParseJsonString(data?.json);
-      if (parsed && typeof parsed === "object") {
-        state.prayer.suggestionObj = {
-          example_adoration: String(parsed.example_adoration || ""),
-          example_confession: String(parsed.example_confession || ""),
-          example_thanksgiving: String(parsed.example_thanksgiving || ""),
-          example_supplication: String(parsed.example_supplication || ""),
-        };
-      } else {
-        state.prayer.suggestionRaw = typeof data === "string" ? data : (data?.json || JSON.stringify(data, null, 2));
-      }
+      const data = await apiFetch(API.dailyPrayer, { method: "GET" });
+      state.prayer.suggestionRaw =
+        typeof data?.prayer === "string"
+          ? data.prayer
+          : (typeof data === "string" ? data : JSON.stringify(data, null, 2));
     } catch (e) {
       state.prayer.error = e.message;
     } finally {
@@ -472,17 +508,8 @@
   }
 
   // -----------------------------
-  // CHAT (server expects {prompt, history})
+  // CHAT (matches server.py stub)
   // -----------------------------
-  function buildChatHistoryForServer() {
-    // server expects: [{role:"user"|"assistant", content:"..."}]
-    // Keep it lightweight, last ~16 messages.
-    const msgs = (state.chat.messages || []).slice(-16);
-    return msgs
-      .filter(m => m && (m.role === "user" || m.role === "assistant") && (m.text || "").trim())
-      .map(m => ({ role: m.role, content: String(m.text || "") }));
-  }
-
   async function sendChat() {
     const input = $("#chatInput");
     if (!input) return;
@@ -500,20 +527,16 @@
     render();
 
     try {
-      const prompt = `${languageInstruction()}\n\n${text}`;
+      const message = `${languageInstruction()}\n\n${text}`;
 
       const data = await apiFetch(API.chat, {
         method: "POST",
-        body: JSON.stringify({
-          prompt,
-          history: buildChatHistoryForServer(),
-        }),
+        body: JSON.stringify({ message }),
       });
 
       const reply =
-        data?.message ||
         data?.reply ||
-        data?.text ||
+        data?.message ||
         (typeof data === "string" ? data : JSON.stringify(data, null, 2));
 
       state.chat.messages.push({ role: "assistant", text: reply, ts: Date.now() });
@@ -561,7 +584,7 @@
       *{ box-sizing:border-box; }
       body{
         margin:0;
-        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         color:var(--text);
         background: radial-gradient(1200px 600px at 20% 0%, rgba(255,255,255,0.08), transparent 60%),
                     linear-gradient(135deg, var(--bg1), var(--bg2));
@@ -754,7 +777,7 @@
 
     const accountLabel =
       state.account.status === "active"
-        ? `Account: active (${state.account.email || "signed in"})`
+        ? `Account: active`
         : "Account: not active";
 
     const allowedVoices = getAllowedVoicesForLang();
@@ -768,12 +791,12 @@
           .join("")
       : `<option value="">(No voices found yet — click again)</option>`;
 
-    const health = state.bible.health;
+    const status = state.bible.status;
     const bibleStatusLine =
-      health?.status === "ok"
-        ? `Bible DB OK • verses: ${health.verse_count ?? "?"}`
-        : health?.detail
-          ? `Bible DB error: ${health.detail}`
+      status?.status === "ok"
+        ? `Bible DB OK • ${status.version} • verses: ${status.verse_count ?? "?"}`
+        : status?.detail
+          ? `Bible DB error: ${status.detail}`
           : `Bible DB: checking`;
 
     const contentHtml =
@@ -833,17 +856,14 @@
       </div>
     `;
 
-    // Wire global events
+    // global events
     document.querySelectorAll(".tab").forEach(el => {
       el.addEventListener("click", () => setTab(el.getAttribute("data-tab")));
     });
 
     $("#langSel").addEventListener("change", (e) => setLang(e.target.value));
 
-    $("#voiceSel").addEventListener("click", () => {
-      // some browsers populate voices after user interaction
-      refreshVoices();
-    });
+    $("#voiceSel").addEventListener("click", () => refreshVoices());
 
     $("#voiceSel").addEventListener("change", (e) => {
       const name = e.target.value || null;
@@ -874,11 +894,11 @@
     }
 
     if (state.tab === "bible") {
-      const h = state.bible.health;
-      const line = h?.status === "ok"
-        ? `Health: ok • verses: ${h.verse_count ?? "?"}`
-        : h?.detail
-          ? `Health: error • ${h.detail}`
+      const s = state.bible.status;
+      const line = s?.status === "ok"
+        ? `Health: ok • ${s.version} • verses: ${s.verse_count ?? "?"}`
+        : s?.detail
+          ? `Health: error • ${s.detail}`
           : "Health: checking…";
 
       return `
@@ -886,8 +906,8 @@
           <h2>Status</h2>
           <div class="sub">Bible database connection.</div>
           <div class="hint">${escapeHtml(line)}</div>
-          ${h?.status === "ok" ? `<div class="ok" style="margin-top:10px;">DB OK • verses: ${escapeHtml(h.verse_count ?? "?")}</div>` : ""}
-          ${h?.status === "error" ? `<div class="error" style="margin-top:10px;">${escapeHtml(h.detail || "Bible DB error")}</div>` : ""}
+          ${s?.status === "ok" ? `<div class="ok" style="margin-top:10px;">DB OK • verses: ${escapeHtml(s.verse_count ?? "?")}</div>` : ""}
+          ${s?.status === "error" ? `<div class="error" style="margin-top:10px;">${escapeHtml(s.detail || "Bible DB error")}</div>` : ""}
         </div>
       `;
     }
@@ -982,7 +1002,7 @@
         <div class="divider"></div>
 
         <div class="row">
-          <input id="chatInput" class="field" placeholder="${state.lang === "es" ? "Pide una oración, un versículo, o “versículos sobre perdón”…" : "Ask for a prayer, verse, or 'verses about forgiveness'..."}" />
+          <input id="chatInput" class="field" placeholder="${state.lang === "es" ? "Escribe tu mensaje..." : "Type your message..."}" />
           <button id="sendChatBtn" class="btn btnAccent" ${state.chat.sending ? "disabled" : ""}>
             ${state.chat.sending ? "Sending..." : "Send"}
           </button>
@@ -994,10 +1014,16 @@
   function renderBible() {
     const books = state.bible.books || [];
     const bookOptions = books.length
-      ? books.map(b => `<option value="${escapeHtml(b.name)}" ${b.name === state.bible.book ? "selected" : ""}>${escapeHtml(b.name)}</option>`).join("")
-      : `<option value="${escapeHtml(state.bible.book)}">${escapeHtml(state.bible.book)}</option>`;
+      ? books.map(b => {
+          const selected = Number(b.id) === Number(state.bible.bookId) ? "selected" : "";
+          return `<option value="${escapeHtml(String(b.id))}" ${selected}>${escapeHtml(b.name)}</option>`;
+        }).join("")
+      : `<option value="${escapeHtml(String(state.bible.bookId))}">${escapeHtml(state.bible.bookName)}</option>`;
 
-    const chapters = state.bible.chapters && state.bible.chapters.length ? state.bible.chapters : Array.from({ length: 150 }, (_, i) => i + 1);
+    const chapters = state.bible.chapters && state.bible.chapters.length
+      ? state.bible.chapters
+      : Array.from({ length: 150 }, (_, i) => i + 1);
+
     const chapterOptions = chapters
       .map(n => `<option value="${n}" ${n === Number(state.bible.chapter) ? "selected" : ""}>Chapter ${n}</option>`)
       .join("");
@@ -1047,86 +1073,32 @@
           <div style="white-space:pre-wrap; line-height:1.45; font-size:13px;">${escapeHtml(state.bible.text || "")}</div>
         </div>
 
-        ${
-          state.lang === "es"
-            ? `<div class="hint" style="margin-top:10px;">
-                 Nota: tu <strong>bible.db</strong> actual parece ser inglés (KJV). Para mostrar Biblia en español dentro de “Read Bible”, el servidor necesita una base local en español (otro .db) y que el backend permita elegir versión.
-               </div>`
-            : `<div class="hint" style="margin-top:10px;">
-                 Note: your current <strong>bible.db</strong> appears to be English (KJV). To show Spanish Bible text inside “Read Bible”, the server needs a Spanish local DB (another .db) and backend support to switch versions.
-               </div>`
-        }
+        <div class="hint" style="margin-top:10px;">
+          Version: <strong>${escapeHtml(bibleVersionForLang())}</strong>
+        </div>
       </div>
     `;
   }
 
-  function devotionalCopy() {
-    if (state.lang === "es") {
-      return {
-        title: "Devocional",
-        desc: "Un devocional breve para reflexionar y aplicar la Palabra hoy.",
-        prompt: "Escribe tu reflexión devocional aquí…",
-      };
-    }
-    return {
-      title: "Devotional",
-      desc: "A short devotional to help you reflect and apply Scripture today.",
-      prompt: "Write your devotional reflection here…",
-    };
-  }
-
-  function prayerCopy() {
-    if (state.lang === "es") {
-      return {
-        title: "Oración Diaria",
-        desc: "Guía breve para tu oración ACTS (Adoración, Confesión, Gratitud, Súplica).",
-        prompt: "Escribe tu oración aquí…",
-      };
-    }
-    return {
-      title: "Daily Prayer",
-      desc: "A short guide to write your ACTS prayer (Adoration, Confession, Thanksgiving, Supplication).",
-      prompt: "Write your prayer here…",
-    };
-  }
-
   function renderDevotional() {
-    const c = devotionalCopy();
-    const s = state.devotional.suggestionObj;
-
     return `
       <div class="card">
-        <h2>${escapeHtml(c.title)}</h2>
-        <div class="sub">${escapeHtml(c.desc)}</div>
+        <h2>${state.lang === "es" ? "Devocional" : "Devotional"}</h2>
+        <div class="sub">${state.lang === "es" ? "Borrador + guardado (stub por ahora)." : "Draft + save (stub for now)."}</div>
 
         <div class="row" style="justify-content:space-between;">
-          <div class="hint">${state.lang === "es" ? "Opcional: Genera una sugerencia (en el idioma seleccionado)." : "Optional: generate a suggestion (in the selected language)."}</div>
+          <div class="hint">${state.lang === "es" ? "Cargar respuesta del servidor" : "Load server response"}</div>
           <button id="genDevBtn" class="btn btnAccent" ${state.devotional.loading ? "disabled" : ""}>
-            ${state.devotional.loading ? (state.lang === "es" ? "Generando..." : "Generating...") : (state.lang === "es" ? "Generar" : "Generate")}
+            ${state.devotional.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : (state.lang === "es" ? "Cargar" : "Load")}
           </button>
         </div>
 
         ${state.devotional.error ? `<div class="error">${escapeHtml(state.devotional.error)}</div>` : ""}
-
-        ${
-          s
-            ? `<div class="card" style="background:var(--card2); margin-top:10px;">
-                 <div class="hint">${state.lang === "es" ? "Sugerencia de Alyana" : "Alyana suggestion"}</div>
-                 <div style="white-space:pre-wrap; font-size:13px; line-height:1.45;">
-                   <strong>${escapeHtml(s.scripture)}</strong>\n\n${escapeHtml(s.brief_explanation)}
-                 </div>
-               </div>`
-            : (state.devotional.suggestionRaw
-                ? `<div class="card" style="background:var(--card2); margin-top:10px;">
-                     <div class="hint">${state.lang === "es" ? "Sugerencia (raw)" : "Suggestion (raw)"}</div>
-                     <div style="white-space:pre-wrap; font-size:13px; line-height:1.45;">${escapeHtml(state.devotional.suggestionRaw)}</div>
-                   </div>`
-                : "")
-        }
+        ${state.devotional.suggestionRaw ? `<div class="ok">${escapeHtml(state.devotional.suggestionRaw)}</div>` : ""}
 
         <div class="divider"></div>
 
-        <textarea id="devText" class="field" placeholder="${escapeHtml(c.prompt)}">${escapeHtml(state.devotional.userText || "")}</textarea>
+        <textarea id="devText" class="field" placeholder="${escapeHtml(state.lang === "es" ? "Escribe tu devocional aquí…" : "Write your devotional here…")}">${escapeHtml(state.devotional.userText || "")}</textarea>
 
         <div class="row" style="justify-content:space-between; margin-top:10px;">
           <div class="kpi">
@@ -1139,45 +1111,24 @@
   }
 
   function renderPrayer() {
-    const c = prayerCopy();
-    const s = state.prayer.suggestionObj;
-
     return `
       <div class="card">
-        <h2>${escapeHtml(c.title)}</h2>
-        <div class="sub">${escapeHtml(c.desc)}</div>
+        <h2>${state.lang === "es" ? "Oración Diaria" : "Daily Prayer"}</h2>
+        <div class="sub">${state.lang === "es" ? "Borrador + guardado (stub por ahora)." : "Draft + save (stub for now)."}</div>
 
         <div class="row" style="justify-content:space-between;">
-          <div class="hint">${state.lang === "es" ? "Opcional: Genera starters (en el idioma seleccionado)." : "Optional: generate starters (in the selected language)."}</div>
+          <div class="hint">${state.lang === "es" ? "Cargar respuesta del servidor" : "Load server response"}</div>
           <button id="genPrayerBtn" class="btn btnAccent" ${state.prayer.loading ? "disabled" : ""}>
-            ${state.prayer.loading ? (state.lang === "es" ? "Generando..." : "Generating...") : (state.lang === "es" ? "Generar" : "Generate")}
+            ${state.prayer.loading ? (state.lang === "es" ? "Cargando..." : "Loading...") : (state.lang === "es" ? "Cargar" : "Load")}
           </button>
         </div>
 
         ${state.prayer.error ? `<div class="error">${escapeHtml(state.prayer.error)}</div>` : ""}
-
-        ${
-          s
-            ? `<div class="card" style="background:var(--card2); margin-top:10px;">
-                 <div class="hint">${state.lang === "es" ? "Starters de Alyana" : "Alyana starters"}</div>
-                 <div style="white-space:pre-wrap; font-size:13px; line-height:1.45;">
-                   <strong>${state.lang === "es" ? "Adoración" : "Adoration"}:</strong> ${escapeHtml(s.example_adoration)}\n
-                   <strong>${state.lang === "es" ? "Confesión" : "Confession"}:</strong> ${escapeHtml(s.example_confession)}\n
-                   <strong>${state.lang === "es" ? "Gratitud" : "Thanksgiving"}:</strong> ${escapeHtml(s.example_thanksgiving)}\n
-                   <strong>${state.lang === "es" ? "Súplica" : "Supplication"}:</strong> ${escapeHtml(s.example_supplication)}
-                 </div>
-               </div>`
-            : (state.prayer.suggestionRaw
-                ? `<div class="card" style="background:var(--card2); margin-top:10px;">
-                     <div class="hint">${state.lang === "es" ? "Starters (raw)" : "Starters (raw)"}</div>
-                     <div style="white-space:pre-wrap; font-size:13px; line-height:1.45;">${escapeHtml(state.prayer.suggestionRaw)}</div>
-                   </div>`
-                : "")
-        }
+        ${state.prayer.suggestionRaw ? `<div class="ok">${escapeHtml(state.prayer.suggestionRaw)}</div>` : ""}
 
         <div class="divider"></div>
 
-        <textarea id="prayText" class="field" placeholder="${escapeHtml(c.prompt)}">${escapeHtml(state.prayer.userText || "")}</textarea>
+        <textarea id="prayText" class="field" placeholder="${escapeHtml(state.lang === "es" ? "Escribe tu oración aquí…" : "Write your prayer here…")}">${escapeHtml(state.prayer.userText || "")}</textarea>
 
         <div class="row" style="justify-content:space-between; margin-top:10px;">
           <div class="kpi">
@@ -1225,13 +1176,19 @@
       const fullChk = $("#fullChapterChk");
 
       if (bookSel) bookSel.addEventListener("change", async (e) => {
-        state.bible.book = e.target.value;
+        const newId = Number(e.target.value);
+        state.bible.bookId = newId;
+
+        const bookObj = (state.bible.books || []).find(b => Number(b.id) === newId);
+        state.bible.bookName = bookObj ? String(bookObj.name) : state.bible.bookName;
+
         state.bible.chapter = 1;
         state.bible.text = "";
         state.bible.reference = "";
         state.bible.error = null;
+
         render();
-        await loadChapters(state.bible.book);
+        await loadChapters(state.bible.bookId);
       });
 
       if (chapterSel) chapterSel.addEventListener("change", (e) => {
@@ -1253,26 +1210,23 @@
 
       const loadChapterBtn = $("#loadChapterBtn");
       if (loadChapterBtn) loadChapterBtn.addEventListener("click", () => {
-        loadBiblePassage({
-          book: state.bible.book,
+        loadBibleText({
+          bookId: state.bible.bookId,
           chapter: state.bible.chapter,
           fullChapter: true,
-          start: "1",
-          end: "",
+          startVerse: "",
+          endVerse: "",
         });
       });
 
       const loadPassageBtn = $("#loadPassageBtn");
       if (loadPassageBtn) loadPassageBtn.addEventListener("click", () => {
-        const start = String(state.bible.startVerse || "1").trim();
-        const end = String(state.bible.endVerse || "").trim();
-
-        loadBiblePassage({
-          book: state.bible.book,
+        loadBibleText({
+          bookId: state.bible.bookId,
           chapter: state.bible.chapter,
           fullChapter: !!state.bible.fullChapter,
-          start,
-          end,
+          startVerse: state.bible.startVerse,
+          endVerse: state.bible.endVerse,
         });
       });
 
@@ -1291,7 +1245,7 @@
       });
 
       const genBtn = $("#genDevBtn");
-      if (genBtn) genBtn.addEventListener("click", generateDevotionalSuggestion);
+      if (genBtn) genBtn.addEventListener("click", loadDevotionalStub);
 
       const saveBtn = $("#saveDevBtn");
       if (saveBtn) saveBtn.addEventListener("click", saveDevotionalEntry);
@@ -1315,7 +1269,7 @@
       });
 
       const genBtn = $("#genPrayerBtn");
-      if (genBtn) genBtn.addEventListener("click", generatePrayerSuggestion);
+      if (genBtn) genBtn.addEventListener("click", loadPrayerStub);
 
       const saveBtn = $("#savePrayerBtn");
       if (saveBtn) saveBtn.addEventListener("click", savePrayerEntry);
@@ -1349,20 +1303,13 @@
 
     render();
 
-    // backend checks
-    loadAccount();
-    loadBibleHealth();
-    await loadBooks();
-
-    // initialize book list + chapters
-    if (state.bible.books && state.bible.books.length) {
-      state.bible.book = state.bible.books[0].name || state.bible.book;
-    }
-    await loadChapters(state.bible.book);
+    await loadAccount();
+    await refreshBibleForLanguage();
   }
 
   init();
 })();
+
 
 
 
