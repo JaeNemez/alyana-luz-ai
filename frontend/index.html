@@ -1,51 +1,78 @@
-<!-- frontend/index.html
-  Alyana Luz • Bible AI
-  - Minimal shell that loads /app.js
-  - Includes a #app mount so app.js doesn't have to rewrite the whole body
-  - Adds PWA meta + manifest + theme-color
--->
-
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+    <title>Alyana Luz · Bible AI (DIAGNOSTIC)</title>
 
-    <title>Alyana Luz • Bible AI</title>
-    <meta name="description" content="Alyana Luz • Bible AI — pray • learn • walk in the Light" />
-
-    <!-- PWA -->
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#2b0a50" />
-
-    <!-- iOS PWA-ish -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Alyana Luz" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-
-    <!-- Favicon -->
-    <link rel="icon" href="/icons/icon-192.png" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 30% 20%, #ba6cb8 0%, #2b0a50 35%, #050316 80%);
+        color: #fff;
+      }
+      .card {
+        width: min(900px, 92vw);
+        border-radius: 18px;
+        padding: 22px;
+        background: rgba(0,0,0,0.35);
+        border: 1px solid rgba(255,255,255,0.20);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+      }
+      h1 { margin: 0 0 10px 0; font-size: 22px; }
+      p { margin: 10px 0; opacity: 0.92; line-height: 1.5; }
+      code {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 8px;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.16);
+      }
+      .big {
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(34,197,94,0.18);
+        border: 1px solid rgba(34,197,94,0.35);
+      }
+      .warn {
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(225,29,72,0.16);
+        border: 1px solid rgba(225,29,72,0.35);
+      }
+    </style>
   </head>
 
   <body>
-    <!-- App mount -->
-    <div id="app"></div>
+    <div class="card">
+      <h1>DIAGNOSTIC PAGE LOADED</h1>
+      <p>If you can see this, your server is serving <code>frontend/index.html</code> correctly.</p>
 
-    <!-- App JS -->
-    <script src="/app.js" defer></script>
+      <div class="big">
+        This page intentionally does <strong>NOT</strong> load <code>/app.js</code>.
+      </div>
 
-    <!-- Service Worker (optional but recommended for PWA) -->
-    <script>
-      (function () {
-        if (!("serviceWorker" in navigator)) return;
-        window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/service-worker.js").catch(function () {});
-        });
-      })();
-    </script>
+      <div class="warn">
+        If you still see a white screen right now, then you are <strong>NOT</strong> actually loading this file
+        (wrong URL/port, old service worker cache, or different server).
+      </div>
+
+      <p>Next check these URLs directly:</p>
+      <p>
+        <code>/debug/frontend</code> and <code>/debug/appjs</code>
+      </p>
+    </div>
   </body>
 </html>
+
 
 
 
