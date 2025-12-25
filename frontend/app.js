@@ -41,7 +41,6 @@
   }
 
   function toast(message) {
-    // Minimal: reuse authHint area if present
     const hint = $("#authHint");
     if (hint) {
       showInline(hint, message, false);
@@ -78,51 +77,64 @@
   // ---------------------------
   const I18N = {
     en: {
-      restoreAccess: "Restore access",
       noSaved: "No saved items yet.",
       savedChats: "Saved chat logs are stored on this device.",
       chatPlaceholder: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
       listen: "Listen",
       stop: "Stop",
-      generate: "Generate",
-      generateStarters: "Generate Starters",
+      send: "Send",
+      new: "New",
       save: "Save",
-      didIt: "I did it today",
-      checking: "Checking…",
+      delete: "Delete",
       loading: "Loading…",
-      bibleDbChecking: "Checking…",
+      select: "Select…",
+      optional: "(optional)",
       voiceReady: "Voice: ready",
       voiceMissing:
         "Voice not found. Your browser must have 'Paulina (es-MX)' and 'Karen (en-AU)' installed.",
       bibleNotFound:
         "Bible DB not found. Confirm your Render deployment includes /data/bible.db and /data/bible_es_rvr.db.",
+      pickBookChapter: "Pick a book and chapter first.",
+      nothingToSave: "Nothing to save yet.",
+      saved: "Saved.",
+      savedDev: "Saved devotional.",
+      savedPrayer: "Saved prayer.",
+      saveDevRequired: "To save: Context + Reflection + Application + Prayer are required.",
+      savePrayerRequired: "To save: Adoration + Confession + Thanksgiving + Supplication are required.",
+      noBotToRead: "No bot message to read yet.",
     },
     es: {
-      restoreAccess: "Restaurar acceso",
       noSaved: "Todavía no hay elementos guardados.",
       savedChats: "Los chats guardados se almacenan en este dispositivo.",
       chatPlaceholder: "Pide una oración, un versículo, o ‘versículos sobre perdón’…",
       listen: "Escuchar",
       stop: "Detener",
-      generate: "Generar",
-      generateStarters: "Generar ejemplos",
+      send: "Enviar",
+      new: "Nuevo",
       save: "Guardar",
-      didIt: "Lo hice hoy",
-      checking: "Verificando…",
+      delete: "Borrar",
       loading: "Cargando…",
-      bibleDbChecking: "Verificando…",
+      select: "Elegir…",
+      optional: "(opcional)",
       voiceReady: "Voz: lista",
       voiceMissing:
         "No se encontró la voz. Tu navegador debe tener instaladas 'Paulina (es-MX)' y 'Karen (en-AU)'.",
       bibleNotFound:
         "No se encontró la base de datos bíblica. Confirma que Render incluye /data/bible.db y /data/bible_es_rvr.db.",
+      pickBookChapter: "Primero elige un libro y un capítulo.",
+      nothingToSave: "Nada para guardar todavía.",
+      saved: "Guardado.",
+      savedDev: "Devocional guardado.",
+      savedPrayer: "Oración guardada.",
+      saveDevRequired: "Para guardar: Contexto + Reflexión + Aplicación + Oración son requeridos.",
+      savePrayerRequired: "Para guardar: Adoración + Confesión + Gratitud + Petición son requeridos.",
+      noBotToRead: "Todavía no hay mensaje de Alyana para leer.",
     },
   };
 
-  function getLang(selId, fallback = "en") {
-    const el = $(selId);
-    const v = (el && el.value) ? el.value : fallback;
-    return (v === "es" ? "es" : v === "en" ? "en" : "en");
+  function lang2(v, fallback = "en") {
+    const x = (v || "").toLowerCase().trim();
+    return x === "es" ? "es" : x === "en" ? "en" : fallback;
   }
 
   // ---------------------------
@@ -146,10 +158,10 @@
   }
 
   // ---------------------------
-  // Speech (locked voices)
+  // Speech (LOCKED voices only)
   // ---------------------------
   const VOICE_LOCK = {
-    en: { wantNameIncludes: "karen", wantLangPrefix: "en" },  // Karen en-AU
+    en: { wantNameIncludes: "karen", wantLangPrefix: "en" },   // Karen en-AU
     es: { wantNameIncludes: "paulina", wantLangPrefix: "es" }, // Paulina es-MX
   };
 
@@ -158,7 +170,6 @@
       let voices = speechSynthesis.getVoices();
       if (voices && voices.length) return resolve(voices);
 
-      // Some browsers load asynchronously
       speechSynthesis.onvoiceschanged = () => {
         voices = speechSynthesis.getVoices();
         resolve(voices || []);
@@ -173,12 +184,12 @@
     const spec = VOICE_LOCK[lang];
 
     const byName = voices.find(v => (v.name || "").toLowerCase().includes(spec.wantNameIncludes));
-    if (byName && (v => (v.lang || "").toLowerCase().startsWith(spec.wantLangPrefix))(byName)) return byName;
+    if (byName && (byName.lang || "").toLowerCase().startsWith(spec.wantLangPrefix)) return byName;
 
     // fallback: name match only
     if (byName) return byName;
 
-    // fallback: language match only (but still “locked” in spirit)
+    // fallback: language match only
     const byLang = voices.find(v => (v.lang || "").toLowerCase().startsWith(spec.wantLangPrefix));
     return byLang || null;
   }
@@ -206,7 +217,118 @@
   }
 
   // ---------------------------
-  // Chat
+  // Global UI Translation (fix: your Spanish selector wasn’t wired)
+  // ---------------------------
+  function applyChatUiLang(lang) {
+    const t = I18N[lang] || I18N.en;
+
+    const input = $("#chatInput");
+    if (input) input.placeholder = t.chatPlaceholder;
+
+    const listenBtn = $("#chatListenBtn");
+    const stopBtn = $("#chatStopBtn");
+    const sendBtn = $("#chatSendBtn");
+    const newBtn = $("#chatNewBtn");
+    const saveBtn = $("#chatSaveBtn");
+
+    if (listenBtn) listenBtn.textContent = t.listen;
+    if (stopBtn) stopBtn.textContent = t.stop;
+    if (sendBtn) sendBtn.textContent = t.send;
+    if (newBtn) newBtn.textContent = t.new;
+    if (saveBtn) saveBtn.textContent = t.save;
+
+    const savedHint = document.querySelector("#chatSection .muted");
+    if (savedHint) savedHint.textContent = t.savedChats;
+
+    // Saved list empty-state
+    const box = $("#chatSavedList");
+    if (box && !box.querySelector("button")) {
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
+    }
+  }
+
+  function applyDevUiLang(lang) {
+    // This updates the visible labels you already have IDs for (devLabelTheme, etc.)
+    // If you want more labels translated later, we can extend this.
+    const t = I18N[lang] || I18N.en;
+
+    const genBtn = $("#devotionalBtn");
+    const saveBtn = $("#devSaveBtn");
+    const streakBtn = $("#devStreakBtn");
+    if (genBtn) genBtn.textContent = lang === "es" ? "Generar" : "Generate";
+    if (saveBtn) saveBtn.textContent = t.save;
+    if (streakBtn) streakBtn.textContent = lang === "es" ? "Lo hice hoy" : "I did it today";
+
+    const savedTitle = document.querySelector("#devotionalSection h4");
+    if (savedTitle) savedTitle.textContent = lang === "es" ? "Devocionales guardados" : "Saved Devotionals";
+
+    const box = $("#devSavedList");
+    if (box && !box.querySelector("button")) {
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
+    }
+  }
+
+  function applyPrayerUiLang(lang) {
+    const t = I18N[lang] || I18N.en;
+
+    const genBtn = $("#prayerBtn");
+    const saveBtn = $("#prSaveBtn");
+    const streakBtn = $("#prStreakBtn");
+    if (genBtn) genBtn.textContent = lang === "es" ? "Generar ejemplos" : "Generate Starters";
+    if (saveBtn) saveBtn.textContent = t.save;
+    if (streakBtn) streakBtn.textContent = lang === "es" ? "Lo hice hoy" : "I did it today";
+
+    const savedTitle = document.querySelector("#prayerSection h4");
+    if (savedTitle) savedTitle.textContent = lang === "es" ? "Oraciones guardadas" : "Saved Prayers";
+
+    const box = $("#prSavedList");
+    if (box && !box.querySelector("button")) {
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
+    }
+  }
+
+  function initLanguageWiring() {
+    // Chat language selector controls BOTH: (1) reply language preference (later) AND (2) UI language
+    const chatSel = $("#chatLangSelect");
+    const devSel = $("#devUiLang");
+    const prSel = $("#prUiLang");
+
+    // Restore previous
+    if (chatSel) chatSel.value = localStorage.getItem(LS.chatLang) || chatSel.value;
+    if (devSel) devSel.value = localStorage.getItem(LS.devLang) || devSel.value;
+    if (prSel) prSel.value = localStorage.getItem(LS.prLang) || prSel.value;
+
+    // Apply on load
+    applyChatUiLang(lang2(chatSel ? chatSel.value : "en", "en"));
+    applyDevUiLang(lang2(devSel ? devSel.value : "en", "en"));
+    applyPrayerUiLang(lang2(prSel ? prSel.value : "en", "en"));
+
+    if (chatSel) {
+      chatSel.addEventListener("change", () => {
+        localStorage.setItem(LS.chatLang, chatSel.value || "auto");
+        // For UI: if auto, default to English UI (you can change if you prefer)
+        const uiLang = (chatSel.value === "es") ? "es" : "en";
+        applyChatUiLang(uiLang);
+      });
+    }
+
+    if (devSel) {
+      devSel.addEventListener("change", () => {
+        localStorage.setItem(LS.devLang, devSel.value || "en");
+        applyDevUiLang(lang2(devSel.value, "en"));
+      });
+    }
+
+    if (prSel) {
+      prSel.addEventListener("change", () => {
+        localStorage.setItem(LS.prLang, prSel.value || "en");
+        applyPrayerUiLang(lang2(prSel.value, "en"));
+      });
+    }
+  }
+
+  // ---------------------------
+  // Chat (with Listen + Stop wired)
   // ---------------------------
   function chatStorageLoad() {
     return safeJSON(localStorage.getItem(LS.savedChats) || "[]", []);
@@ -239,50 +361,6 @@
     return (bots[bots.length - 1].textContent || "").trim();
   }
 
-  function renderSavedChats() {
-    const box = $("#chatSavedList");
-    if (!box) return;
-
-    const list = chatStorageLoad();
-    box.innerHTML = "";
-
-    if (!list.length) {
-      const small = document.createElement("small");
-      small.style.opacity = "0.75";
-      small.textContent = I18N.en.noSaved;
-      box.appendChild(small);
-      return;
-    }
-
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${item.title || "Chat"} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        const chat = $("#chat");
-        if (!chat) return;
-        chat.innerHTML = "";
-        (item.messages || []).forEach(m => addBubble(m.kind, m.text));
-      });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = "Delete";
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = chatStorageLoad().filter((_, i) => i !== idx);
-        chatStorageSave(next);
-        renderSavedChats();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
-  }
-
   function getChatMessagesFromDOM() {
     const chat = $("#chat");
     if (!chat) return [];
@@ -297,27 +375,61 @@
     return msgs;
   }
 
+  function renderSavedChats(uiLangForLabels = "en") {
+    const box = $("#chatSavedList");
+    if (!box) return;
+
+    const t = I18N[uiLangForLabels] || I18N.en;
+    const list = chatStorageLoad();
+    box.innerHTML = "";
+
+    if (!list.length) {
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
+      return;
+    }
+
+    list.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = list.length - 1 - idxFromEnd;
+
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${item.title || "Chat"} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+      btn.addEventListener("click", () => {
+        const chat = $("#chat");
+        if (!chat) return;
+        chat.innerHTML = "";
+        (item.messages || []).forEach(m => addBubble(m.kind, m.text));
+      });
+
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = t.delete;
+      del.style.marginTop = "8px";
+      del.addEventListener("click", () => {
+        const next = chatStorageLoad().filter((_, i) => i !== idx);
+        chatStorageSave(next);
+        renderSavedChats(uiLangForLabels);
+      });
+
+      box.appendChild(btn);
+      box.appendChild(del);
+    });
+  }
+
   function initChat() {
     const form = $("#chatForm");
     const input = $("#chatInput");
     const newBtn = $("#chatNewBtn");
     const saveBtn = $("#chatSaveBtn");
     const sendBtn = $("#chatSendBtn");
-
-    // Add "Listen" button (you requested)
-    let listenBtn = $("#chatListenBtn");
-    if (!listenBtn && form) {
-      listenBtn = document.createElement("button");
-      listenBtn.id = "chatListenBtn";
-      listenBtn.type = "button";
-      listenBtn.className = "btn btn-ghost";
-      listenBtn.textContent = "Listen";
-      form.appendChild(listenBtn);
-    }
+    const listenBtn = $("#chatListenBtn"); // already in your HTML
+    const stopBtn = $("#chatStopBtn");     // already in your HTML
+    const langSel = $("#chatLangSelect");
 
     // Restore draft
     if (input) input.value = localStorage.getItem(LS.chatDraft) || "";
-
     if (input) {
       input.addEventListener("input", () => {
         localStorage.setItem(LS.chatDraft, input.value || "");
@@ -334,32 +446,49 @@
       });
     }
 
+    if (stopBtn) {
+      stopBtn.addEventListener("click", () => stopSpeak());
+    }
+
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
+        const uiLang = (langSel && langSel.value === "es") ? "es" : "en";
+        const t = I18N[uiLang] || I18N.en;
+
         const msgs = getChatMessagesFromDOM();
-        if (!msgs.length) return toast("Nothing to save yet.");
+        if (!msgs.length) return toast(t.nothingToSave);
+
         const title = (msgs.find(m => m.kind === "user")?.text || "Chat").slice(0, 36);
         const list = chatStorageLoad();
         list.push({ ts: nowISO(), title, messages: msgs });
         chatStorageSave(list);
-        renderSavedChats();
-        toast("Saved.");
+        renderSavedChats(uiLang);
+        toast(t.saved);
       });
     }
 
     if (listenBtn) {
       listenBtn.addEventListener("click", async () => {
         const last = getLastBotText() || "";
-        if (!last) return toast("No bot message to read yet.");
+        const uiLang = (langSel && langSel.value === "es") ? "es" : "en";
+        const t = I18N[uiLang] || I18N.en;
 
-        const langSel = $("#chatLangSelect");
+        if (!last) return toast(t.noBotToRead);
+
+        // Choose voice language:
+        // - If user selected Spanish, use Spanish voice.
+        // - If English, use English voice.
+        // - If Auto, use a small heuristic.
         const chosen = (langSel && langSel.value) ? langSel.value : "auto";
-        const lang = (chosen === "es") ? "es" : (chosen === "en") ? "en" : (/[áéíóúñ¿¡]/i.test(last) ? "es" : "en");
+        const speakLang =
+          (chosen === "es") ? "es" :
+          (chosen === "en") ? "en" :
+          (/[áéíóúñ¿¡]/i.test(last) ? "es" : "en");
 
         try {
-          await speakText(last, lang);
-        } catch (e) {
-          toast(I18N[lang].voiceMissing);
+          await speakText(last, speakLang);
+        } catch {
+          toast((I18N[speakLang] || I18N.en).voiceMissing);
         }
       });
     }
@@ -376,25 +505,27 @@
         input.value = "";
         localStorage.removeItem(LS.chatDraft);
 
-        sendBtn && (sendBtn.disabled = true);
+        if (sendBtn) sendBtn.disabled = true;
 
         try {
+          // NOTE: backend /chat is still stub in your server.py
           const resp = await apiPost("/chat", { message: msg });
           const reply = (resp && resp.reply) ? String(resp.reply) : "(No reply)";
           addBubble("bot", reply);
         } catch (err) {
           addBubble("system", `Error: ${String(err.message || err)}`);
         } finally {
-          sendBtn && (sendBtn.disabled = false);
+          if (sendBtn) sendBtn.disabled = false;
         }
       });
     }
 
-    renderSavedChats();
+    const uiLang = (langSel && langSel.value === "es") ? "es" : "en";
+    renderSavedChats(uiLang);
   }
 
   // ---------------------------
-  // Devotionals
+  // Devotionals (fix: your saved content exists in localStorage; render must match UI language)
   // ---------------------------
   function loadSavedDevs() {
     return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []);
@@ -403,18 +534,16 @@
     localStorage.setItem(LS.savedDevs, JSON.stringify(list || []));
   }
 
-  function renderSavedDevs() {
+  function renderSavedDevs(uiLangForLabels = "en") {
     const box = $("#devSavedList");
     if (!box) return;
 
+    const t = I18N[uiLangForLabels] || I18N.en;
     const list = loadSavedDevs();
     box.innerHTML = "";
 
     if (!list.length) {
-      const small = document.createElement("small");
-      small.style.opacity = "0.75";
-      small.textContent = I18N.en.noSaved;
-      box.appendChild(small);
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
       return;
     }
 
@@ -424,7 +553,7 @@
       const btn = document.createElement("button");
       btn.className = "btn btn-ghost";
       btn.type = "button";
-      btn.textContent = `${(item.theme || "Devotional").slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+      btn.textContent = `${(item.theme || (uiLangForLabels === "es" ? "Devocional" : "Devotional")).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
       btn.addEventListener("click", () => {
         $("#devTheme").textContent = item.theme || "—";
         $("#devScriptureRef").textContent = item.scripture_ref || "—";
@@ -444,12 +573,12 @@
       const del = document.createElement("button");
       del.className = "btn btn-danger";
       del.type = "button";
-      del.textContent = "Delete";
+      del.textContent = t.delete;
       del.style.marginTop = "8px";
       del.addEventListener("click", () => {
         const next = loadSavedDevs().filter((_, i) => i !== idx);
         saveSavedDevs(next);
-        renderSavedDevs();
+        renderSavedDevs(uiLangForLabels);
       });
 
       box.appendChild(btn);
@@ -460,6 +589,7 @@
   function initDevotional() {
     const generateBtn = $("#devotionalBtn");
     const saveBtn = $("#devSaveBtn");
+    const devLangSel = $("#devUiLang");
 
     // restore drafts
     const draft = safeJSON(localStorage.getItem(LS.devDraft) || "{}", {});
@@ -489,8 +619,8 @@
       generateBtn.addEventListener("click", async () => {
         generateBtn.disabled = true;
         try {
-          // For now: backend is stub. We show placeholders so UI works.
-          // Later you can implement /devotional generation server-side.
+          // Still local placeholder generation (backend endpoint is stub).
+          // You can later connect this to /devotional in server.py.
           $("#devTheme").textContent = "Walking in Peace";
           $("#devScriptureRef").textContent = "Philippians 4:6–7";
           $("#devScriptureText").textContent =
@@ -515,13 +645,16 @@
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
+        const uiLang = lang2(devLangSel ? devLangSel.value : "en", "en");
+        const t = I18N[uiLang] || I18N.en;
+
         const my_context = ($("#devMyContext")?.value || "").trim();
         const my_reflection = ($("#devMyReflection")?.value || "").trim();
         const my_application = ($("#devMyApplication")?.value || "").trim();
         const my_prayer = ($("#devMyPrayer")?.value || "").trim();
 
         if (!my_context || !my_reflection || !my_application || !my_prayer) {
-          return toast("To save: Context + Reflection + Application + Prayer are required.");
+          return toast(t.saveDevRequired);
         }
 
         const item = {
@@ -543,12 +676,13 @@
         const list = loadSavedDevs();
         list.push(item);
         saveSavedDevs(list);
-        renderSavedDevs();
-        toast("Saved devotional.");
+        renderSavedDevs(uiLang);
+        toast(t.savedDev);
       });
     }
 
-    renderSavedDevs();
+    const uiLang = lang2(devLangSel ? devLangSel.value : "en", "en");
+    renderSavedDevs(uiLang);
   }
 
   // ---------------------------
@@ -561,18 +695,16 @@
     localStorage.setItem(LS.savedPrayers, JSON.stringify(list || []));
   }
 
-  function renderSavedPrayers() {
+  function renderSavedPrayers(uiLangForLabels = "en") {
     const box = $("#prSavedList");
     if (!box) return;
 
+    const t = I18N[uiLangForLabels] || I18N.en;
     const list = loadSavedPrayers();
     box.innerHTML = "";
 
     if (!list.length) {
-      const small = document.createElement("small");
-      small.style.opacity = "0.75";
-      small.textContent = I18N.en.noSaved;
-      box.appendChild(small);
+      box.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
       return;
     }
 
@@ -582,7 +714,7 @@
       const btn = document.createElement("button");
       btn.className = "btn btn-ghost";
       btn.type = "button";
-      btn.textContent = `${(item.title || "Prayer").slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+      btn.textContent = `${(item.title || (uiLangForLabels === "es" ? "Oración" : "Prayer")).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
       btn.addEventListener("click", () => {
         $("#pA").textContent = item.starterA || "—";
         $("#pC").textContent = item.starterC || "—";
@@ -598,12 +730,12 @@
       const del = document.createElement("button");
       del.className = "btn btn-danger";
       del.type = "button";
-      del.textContent = "Delete";
+      del.textContent = t.delete;
       del.style.marginTop = "8px";
       del.addEventListener("click", () => {
         const next = loadSavedPrayers().filter((_, i) => i !== idx);
         saveSavedPrayers(next);
-        renderSavedPrayers();
+        renderSavedPrayers(uiLangForLabels);
       });
 
       box.appendChild(btn);
@@ -614,6 +746,7 @@
   function initPrayer() {
     const genBtn = $("#prayerBtn");
     const saveBtn = $("#prSaveBtn");
+    const prLangSel = $("#prUiLang");
 
     // restore draft
     const draft = safeJSON(localStorage.getItem(LS.prDraft) || "{}", {});
@@ -649,13 +782,16 @@
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
+        const uiLang = lang2(prLangSel ? prLangSel.value : "en", "en");
+        const t = I18N[uiLang] || I18N.en;
+
         const myA = ($("#myAdoration")?.value || "").trim();
         const myC = ($("#myConfession")?.value || "").trim();
         const myT = ($("#myThanksgiving")?.value || "").trim();
         const myS = ($("#mySupplication")?.value || "").trim();
 
         if (!myA || !myC || !myT || !myS) {
-          return toast("To save: Adoration + Confession + Thanksgiving + Supplication are required.");
+          return toast(t.savePrayerRequired);
         }
 
         const item = {
@@ -672,21 +808,25 @@
         const list = loadSavedPrayers();
         list.push(item);
         saveSavedPrayers(list);
-        renderSavedPrayers();
-        toast("Saved prayer.");
+        renderSavedPrayers(uiLang);
+        toast(t.savedPrayer);
       });
     }
 
-    renderSavedPrayers();
+    const uiLang = lang2(prLangSel ? prLangSel.value : "en", "en");
+    renderSavedPrayers(uiLang);
   }
 
   // ---------------------------
-  // Bible Reader (EN/ES DB + locked voices)
+  // Bible Reader (EN/ES DB)
   // ---------------------------
   function bibleVersionForReadingLang(readLang /* en|es */) {
-    // Your requirement:
-    // English -> bible.db => version=en_default
-    // Spanish -> bible_es_rvr.db => version=es
+    // Your DB names:
+    // English: bible.db
+    // Spanish: bible_es_rvr.db
+    // Your bible_api maps:
+    // en_default -> bible.db
+    // es -> bible_es_rvr.db
     return (readLang === "es") ? "es" : "en_default";
   }
 
@@ -694,7 +834,8 @@
     const el = $("#bibleDbStatus");
     if (!el) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readVoice = $("#readingVoice");
+    const readLang = lang2(readVoice ? readVoice.value : "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
@@ -709,15 +850,19 @@
     const bookSel = $("#bookSelect");
     if (!bookSel) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readVoice = $("#readingVoice");
+    const readLang = lang2(readVoice ? readVoice.value : "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
-    bookSel.innerHTML = `<option value="">${I18N.en.loading}</option>`;
+    const uiLang = (readLang === "es") ? "es" : "en";
+    const t = I18N[uiLang] || I18N.en;
+
+    bookSel.innerHTML = `<option value="">${t.loading}</option>`;
 
     try {
       const j = await apiGet(`/bible/books?version=${encodeURIComponent(version)}`);
       const books = j.books || [];
-      bookSel.innerHTML = `<option value="">Select…</option>`;
+      bookSel.innerHTML = `<option value="">${t.select}</option>`;
       books.forEach((b) => {
         const opt = document.createElement("option");
         opt.value = String(b.id);
@@ -726,7 +871,8 @@
       });
     } catch (e) {
       bookSel.innerHTML = `<option value="">(Error loading books)</option>`;
-      $("#bibleDbStatus").textContent = I18N.en.bibleNotFound;
+      const status = $("#bibleDbStatus");
+      if (status) status.textContent = t.bibleNotFound;
     }
   }
 
@@ -744,7 +890,8 @@
     const bid = parseInt(bookSel.value || "0", 10);
     if (!bid) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readVoice = $("#readingVoice");
+    const readLang = lang2(readVoice ? readVoice.value : "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
@@ -776,7 +923,8 @@
     const ch = parseInt(chapSel.value || "0", 10);
     if (!bid || !ch) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readVoice = $("#readingVoice");
+    const readLang = lang2(readVoice ? readVoice.value : "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
@@ -815,9 +963,10 @@
 
     const bid = parseInt(bookSel.value || "0", 10);
     const ch = parseInt(chapSel.value || "0", 10);
-    if (!bid || !ch) return toast("Pick a book and chapter first.");
+    if (!bid || !ch) return toast(I18N.en.pickBookChapter);
 
-    const readLang = getLang("#readingVoice", "en");
+    const readVoice = $("#readingVoice");
+    const readLang = lang2(readVoice ? readVoice.value : "en", "en");
     const version = bibleVersionForReadingLang(readLang);
     const whole = !!(fullCh && fullCh.checked);
 
@@ -842,7 +991,6 @@
       const toSpeak = (j.text || "").trim();
       if (!toSpeak) return;
 
-      // Speak ONLY the verse text (no extra labels)
       await speakText(toSpeak, readLang, 1.0);
     } catch (e) {
       toast(String(e.message || e));
@@ -860,7 +1008,11 @@
     if (stopBtn) stopBtn.addEventListener("click", stopSpeak);
 
     if (readVoice) {
+      // restore
+      readVoice.value = localStorage.getItem(LS.readingLang) || readVoice.value;
+
       readVoice.addEventListener("change", async () => {
+        localStorage.setItem(LS.readingLang, readVoice.value || "en");
         stopSpeak();
         await refreshBibleStatus();
         await loadBooks();
@@ -875,7 +1027,6 @@
       await loadVersesForChapter();
     });
 
-    // Initial
     refreshBibleStatus().catch(() => {});
     loadBooks().catch(() => {});
   }
@@ -887,6 +1038,7 @@
     showTopStatus("JS: starting…");
 
     initTabs();
+    initLanguageWiring();
     initChat();
     initDevotional();
     initPrayer();
@@ -912,7 +1064,6 @@
     showTopStatus("JS: ready");
   }
 
-  // Run
   window.addEventListener("error", (e) => {
     console.error("Global error:", e.error || e.message);
     showTopStatus("JS: error");
@@ -931,6 +1082,7 @@
   });
 
 })();
+
 
 
 
