@@ -393,6 +393,15 @@
           <button class="btn btn-danger" id="logoutBtn" type="button" style="display:none;">
             Logout
           </button>
+
+          <!-- ✅ Global UI language switch (ONE place for whole app) -->
+          <label style="min-width:170px;">
+            <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+            <select id="uiLangSelect">
+              <option value="en" selected>English</option>
+              <option value="es">Español</option>
+            </select>
+          </label>
         </div>
 
         <p class="support-note">
@@ -581,14 +590,7 @@
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
-                  <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
-                    <select id="devUiLang">
-                      <option value="en" selected>English</option>
-                      <option value="es">Español</option>
-                    </select>
-                  </label>
-
+                  <!-- ✅ removed per-section UI language selector (global toggle handles it) -->
                   <span class="pill" id="devStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="devStreakBtn" type="button">I did it today</button>
 
@@ -671,14 +673,7 @@
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
-                  <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
-                    <select id="prUiLang">
-                      <option value="en" selected>English</option>
-                      <option value="es">Español</option>
-                    </select>
-                  </label>
-
+                  <!-- ✅ removed per-section UI language selector (global toggle handles it) -->
                   <span class="pill" id="prStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="prStreakBtn" type="button">I did it today</button>
 
@@ -736,6 +731,7 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
