@@ -1,8 +1,9 @@
-
-<!-- frontend/index.html
+<!--
+  frontend/index.html
   Alyana Luz • Bible AI
+
   - Minimal shell that loads /app.js
-  - Includes a #app mount so app.js can render the full UI
+  - Includes a #app mount so app.js doesn't have to rewrite the whole body
   - Adds PWA meta + manifest + theme-color
 -->
 
@@ -13,13 +14,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
 
     <title>Alyana Luz • Bible AI</title>
-    <meta name="description" content="Alyana Luz • Bible AI — pray • learn • walk in the Light" />
+    <meta
+      name="description"
+      content="Alyana Luz • Bible AI — pray • learn • walk in the Light"
+    />
 
     <!-- PWA -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#2b0a50" />
 
-    <!-- iOS PWA-ish -->
+    <!-- iOS PWA -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Alyana Luz" />
@@ -30,10 +34,10 @@
   </head>
 
   <body>
-    <!-- App mount (REQUIRED for app.js) -->
+    <!-- App mount (REQUIRED by app.js) -->
     <div id="app"></div>
 
-    <!-- App JS -->
+    <!-- Main App Script -->
     <script src="/app.js" defer></script>
 
     <!-- Service Worker -->
@@ -41,15 +45,14 @@
       (function () {
         if (!("serviceWorker" in navigator)) return;
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/service-worker.js").catch(function () {});
+          navigator.serviceWorker
+            .register("/service-worker.js")
+            .catch(function () {});
         });
       })();
     </script>
   </body>
 </html>
-
-
-
 
 
 
