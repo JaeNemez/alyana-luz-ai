@@ -3,22 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-
     <title>Alyana Luz · Bible AI</title>
-    <meta name="description" content="Alyana Luz · Bible AI — pray • learn • walk in the Light" />
 
-    <!-- PWA -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#2b0a50" />
-
-    <!-- iOS PWA-ish -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Alyana Luz" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-
-    <!-- Favicon -->
     <link rel="icon" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
     <style>
       * { box-sizing: border-box; }
@@ -746,20 +736,10 @@
       </div>
     </div>
 
-    <!-- App JS -->
     <script src="/app.js" defer></script>
-
-    <!-- Service Worker -->
-    <script>
-      (function () {
-        if (!("serviceWorker" in navigator)) return;
-        window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/service-worker.js").catch(function () {});
-        });
-      })();
-    </script>
   </body>
 </html>
+
 
 
 
