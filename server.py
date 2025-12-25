@@ -42,14 +42,20 @@ app.add_middleware(
 # -----------------------------
 # Helpers
 # -----------------------------
-def _safe_resolve_under(base: Path, target: Path) -> Path:
+def _safe_path_under(base: Path, requested_path: str) -> Path:
     """
-    Prevent path traversal: ensure target is inside base.
+    Prevent path traversal: ensure requested_path stays inside base.
+    Handles leading slashes safely.
     """
     base = base.resolve()
-    target = target.resolve()
+
+    # IMPORTANT: strip any leading "/" or "\" so it cannot become absolute
+    clean = requested_path.lstrip("/\\")
+    target = (base / clean).resolve()
+
     if base not in target.parents and target != base:
         raise HTTPException(status_code=400, detail="Invalid path")
+
     return target
 
 
@@ -94,27 +100,27 @@ def serve_index():
 @app.get("/app.js", include_in_schema=False)
 def serve_app_js():
     if not APP_JS.exists():
-        raise HTTPException(status_code=404, detail="app.js not found")
+        raise HTTPException(status_code=404, detail=f"app.js not found at {str(APP_JS)}")
     return FileResponse(str(APP_JS))
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def serve_manifest():
     if not MANIFEST.exists():
-        raise HTTPException(status_code=404, detail="manifest.webmanifest not found")
+        raise HTTPException(status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}")
     return FileResponse(str(MANIFEST))
 
 
 @app.get("/service-worker.js", include_in_schema=False)
 def serve_service_worker():
     if not SERVICE_WORKER.exists():
-        raise HTTPException(status_code=404, detail="service-worker.js not found")
+        raise HTTPException(status_code=404, detail=f"service-worker.js not found at {str(SERVICE_WORKER)}")
     return FileResponse(str(SERVICE_WORKER))
 
 
 @app.get("/icons/{icon_name}", include_in_schema=False)
 def serve_icons(icon_name: str):
-    p = _safe_resolve_under(ICONS_DIR, ICONS_DIR / icon_name)
+    p = _safe_path_under(ICONS_DIR, icon_name)
     if not p.exists():
         raise HTTPException(status_code=404, detail="Icon not found")
     return FileResponse(str(p))
@@ -139,16 +145,20 @@ def serve_frontend_fallback(path: str):
         "devotional",
         "daily_prayer",
     )
+
     first_segment = (path.split("/", 1)[0] or "").strip().lower()
     if first_segment in blocked_prefixes:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    candidate = _safe_resolve_under(FRONTEND_DIR, FRONTEND_DIR / path)
+    # Try to serve an actual static file under frontend/
+    candidate = _safe_path_under(FRONTEND_DIR, path)
     if candidate.exists() and candidate.is_file():
         return FileResponse(str(candidate))
 
+    # Otherwise SPA fallback to index.html
     if INDEX_HTML.exists():
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
