@@ -325,7 +325,7 @@
 
       .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
 
-      /* Mobile: flexible height + messaging layout */
+      /* Mobile */
       @media (max-width: 920px) {
         body {
           align-items: stretch;
@@ -449,6 +449,8 @@
               <form id="chatForm" class="chat-form">
                 <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
                 <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
+                <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
+                <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
                 <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
                 <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
               </form>
@@ -734,5 +736,6 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
