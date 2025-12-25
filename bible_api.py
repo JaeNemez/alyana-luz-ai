@@ -1,4 +1,3 @@
-# bible_api.py
 from __future__ import annotations
 
 import sqlite3
@@ -9,29 +8,42 @@ from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/bible", tags=["bible"])
 
-# Map "version" -> sqlite filename inside ./data
+# Map "version" -> sqlite filename.
 DB_MAP = {
-    # English DB
     "en_default": "bible.db",
-    "en": "bible.db",
-    "english": "bible.db",
-
-    # Spanish DB (RVR)
     "rvr1909": "bible_es_rvr.db",
+    # aliases
     "es_rvr": "bible_es_rvr.db",
     "es": "bible_es_rvr.db",
-    "spanish": "bible_es_rvr.db",
+    "en": "bible.db",
 }
 
-def _data_dir() -> Path:
+def _candidate_data_dirs() -> List[Path]:
+    """
+    Be robust on Render/local:
+    - ./data next to this file
+    - project root ./data
+    - current working dir ./data
+    """
     here = Path(__file__).resolve().parent
-    return here / "data"
+    root = here.parent
+    cwd = Path.cwd().resolve()
+    return [
+        here / "data",
+        root / "data",
+        cwd / "data",
+    ]
+
+def _data_dir() -> Path:
+    # Choose the first existing data dir; otherwise default to "here/data"
+    for d in _candidate_data_dirs():
+        if d.exists() and d.is_dir():
+            return d
+    return Path(__file__).resolve().parent / "data"
 
 def resolve_version(version: Optional[str]) -> str:
-    v = (version or "en_default").strip().lower()
-    if not v:
-        v = "en_default"
-    return v
+    v = (version or "en_default").strip()
+    return v or "en_default"
 
 def resolve_db_path(version: Optional[str]) -> Path:
     v = resolve_version(version)
@@ -41,11 +53,16 @@ def resolve_db_path(version: Optional[str]) -> Path:
             status_code=400,
             detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}",
         )
-    return _data_dir() / filename
+
+    p = _data_dir() / filename
+    return p
 
 def open_db(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
-        raise HTTPException(status_code=404, detail=f"Bible DB not found at {db_path}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Bible DB not found at {db_path}. Make sure your data folder is deployed.",
+        )
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
     return con
@@ -62,22 +79,36 @@ def get_book_id_by_name(con: sqlite3.Connection, book_name: str) -> Optional[int
     name = (book_name or "").strip()
     if not name:
         return None
+
     row = con.execute(
         "SELECT id FROM books WHERE LOWER(name)=LOWER(?) LIMIT 1",
         (name,),
     ).fetchone()
     if row:
         return int(row["id"])
+
     row = con.execute(
         "SELECT id FROM books WHERE LOWER(name) LIKE LOWER(?) LIMIT 1",
         (f"%{name}%",),
     ).fetchone()
     if row:
         return int(row["id"])
+
     return None
 
 def get_max_chapter(con: sqlite3.Connection, book_id: int) -> int:
-    row = con.execute("SELECT MAX(chapter) AS m FROM verses WHERE book_id=?", (book_id,)).fetchone()
+    row = con.execute(
+        "SELECT MAX(chapter) AS m FROM verses WHERE book_id=?",
+        (book_id,),
+    ).fetchone()
+    m = row["m"] if row else None
+    return int(m) if m is not None else 0
+
+def get_max_verse(con: sqlite3.Connection, book_id: int, chapter: int) -> int:
+    row = con.execute(
+        "SELECT MAX(verse) AS m FROM verses WHERE book_id=? AND chapter=?",
+        (book_id, chapter),
+    ).fetchone()
     m = row["m"] if row else None
     return int(m) if m is not None else 0
 
@@ -130,6 +161,22 @@ def bible_chapters(
             "book_id": int(bid),
             "chapters": list(range(1, max_ch + 1)),
         }
+    finally:
+        con.close()
+
+@router.get("/verses_max")
+def bible_verses_max(
+    version: Optional[str] = Query(default="en_default"),
+    book_id: int = Query(..., ge=1),
+    chapter: int = Query(..., ge=1),
+) -> Dict[str, Any]:
+    db_path = resolve_db_path(version)
+    con = open_db(db_path)
+    try:
+        m = get_max_verse(con, int(book_id), int(chapter))
+        if m <= 0:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return {"version": resolve_version(version), "book_id": int(book_id), "chapter": int(chapter), "max_verse": m}
     finally:
         con.close()
 
@@ -199,4 +246,5 @@ def bible_text(
         }
     finally:
         con.close()
+
 
