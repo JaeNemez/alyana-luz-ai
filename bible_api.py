@@ -1,32 +1,34 @@
 # bible_api.py
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 
 from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter(prefix="/bible", tags=["bible"])
 
 # Map "version" -> sqlite filename inside ./data
-# Keep these names EXACTLY as your repo files.
 DB_MAP = {
+    # English DB
     "en_default": "bible.db",
+    "en": "bible.db",
+    "english": "bible.db",
+
+    # Spanish DB (RVR)
     "rvr1909": "bible_es_rvr.db",
-    # aliases (optional)
     "es_rvr": "bible_es_rvr.db",
     "es": "bible_es_rvr.db",
+    "spanish": "bible_es_rvr.db",
 }
 
 def _data_dir() -> Path:
-    # Always resolve relative to this file so it works on Render and locally
     here = Path(__file__).resolve().parent
     return here / "data"
 
 def resolve_version(version: Optional[str]) -> str:
-    v = (version or "en_default").strip()
+    v = (version or "en_default").strip().lower()
     if not v:
         v = "en_default"
     return v
@@ -35,10 +37,11 @@ def resolve_db_path(version: Optional[str]) -> Path:
     v = resolve_version(version)
     filename = DB_MAP.get(v)
     if not filename:
-        # If they pass unknown version, be explicit
-        raise HTTPException(status_code=400, detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}")
-    p = _data_dir() / filename
-    return p
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}",
+        )
+    return _data_dir() / filename
 
 def open_db(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
@@ -56,26 +59,25 @@ def get_books(con: sqlite3.Connection) -> List[Dict[str, Any]]:
     return [{"id": int(r["id"]), "name": str(r["name"])} for r in rows]
 
 def get_book_id_by_name(con: sqlite3.Connection, book_name: str) -> Optional[int]:
-    # case-insensitive exact match first
-    row = con.execute("SELECT id FROM books WHERE LOWER(name)=LOWER(?) LIMIT 1", (book_name.strip(),)).fetchone()
+    name = (book_name or "").strip()
+    if not name:
+        return None
+    row = con.execute(
+        "SELECT id FROM books WHERE LOWER(name)=LOWER(?) LIMIT 1",
+        (name,),
+    ).fetchone()
     if row:
         return int(row["id"])
-    # fallback: contains match
-    row = con.execute("SELECT id FROM books WHERE LOWER(name) LIKE LOWER(?) LIMIT 1", (f"%{book_name.strip()}%",)).fetchone()
+    row = con.execute(
+        "SELECT id FROM books WHERE LOWER(name) LIKE LOWER(?) LIMIT 1",
+        (f"%{name}%",),
+    ).fetchone()
     if row:
         return int(row["id"])
     return None
 
 def get_max_chapter(con: sqlite3.Connection, book_id: int) -> int:
     row = con.execute("SELECT MAX(chapter) AS m FROM verses WHERE book_id=?", (book_id,)).fetchone()
-    m = row["m"] if row else None
-    return int(m) if m is not None else 0
-
-def get_max_verse(con: sqlite3.Connection, book_id: int, chapter: int) -> int:
-    row = con.execute(
-        "SELECT MAX(verse) AS m FROM verses WHERE book_id=? AND chapter=?",
-        (book_id, chapter),
-    ).fetchone()
     m = row["m"] if row else None
     return int(m) if m is not None else 0
 
@@ -152,7 +154,6 @@ def bible_text(
 
         bid = int(bid)
 
-        # If whole chapter requested, ignore verse_start/end
         if whole_chapter or (verse_start is None and verse_end is None):
             rows = con.execute(
                 """
@@ -182,7 +183,6 @@ def bible_text(
         if not rows:
             raise HTTPException(status_code=404, detail="Not Found")
 
-        # book name for display
         b = con.execute("SELECT name FROM books WHERE id=? LIMIT 1", (bid,)).fetchone()
         book_name = str(b["name"]) if b else str(bid)
 
@@ -199,3 +199,4 @@ def bible_text(
         }
     finally:
         con.close()
+
