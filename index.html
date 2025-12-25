@@ -238,6 +238,27 @@
       .btn-ghost { background: rgba(255,255,255,0.07); color: white; border-color: rgba(186,108,184,0.18); }
       .btn:disabled { opacity: 0.6; cursor: default; }
 
+      /* ✅ Small action buttons used next to primary */
+      .btn-small {
+        padding: 9px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 900;
+        min-width: 92px;
+      }
+
+      /* ✅ Bible actions layout: big READ + small Listen/Stop */
+      .bible-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .bible-actions .btn-read {
+        flex: 1;
+        min-width: 220px;
+      }
+
       .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
 
       .block {
@@ -394,7 +415,6 @@
             Logout
           </button>
 
-          <!-- ✅ Global UI language switch (ONE place for whole app) -->
           <label style="min-width:170px;">
             <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
             <select id="uiLangSelect">
@@ -554,9 +574,16 @@
                 </div>
               </div>
 
+              <!-- ✅ UPDATED ACTION BUTTONS -->
               <div class="row" style="margin-top:12px;">
-                <button class="btn btn-primary" id="listenBible" type="button">Listen</button>
-                <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
+                <div class="bible-actions" style="width:100%;">
+                  <!-- Big primary READ button -->
+                  <button class="btn btn-primary btn-read" id="readBibleBtn" type="button">Read</button>
+
+                  <!-- Small Listen / Stop buttons (keep old IDs so app.js doesn't break) -->
+                  <button class="btn btn-ghost btn-small" id="listenBible" type="button">Listen</button>
+                  <button class="btn btn-danger btn-small" id="stopBible" type="button">Stop</button>
+                </div>
               </div>
 
               <div class="small-note">
@@ -590,7 +617,6 @@
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
-                  <!-- ✅ removed per-section UI language selector (global toggle handles it) -->
                   <span class="pill" id="devStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="devStreakBtn" type="button">I did it today</button>
 
@@ -673,7 +699,6 @@
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
-                  <!-- ✅ removed per-section UI language selector (global toggle handles it) -->
                   <span class="pill" id="prStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="prStreakBtn" type="button">I did it today</button>
 
@@ -731,6 +756,7 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
