@@ -18,6 +18,7 @@
 
         --border-0: rgba(255,255,255,0.12);
         --border-1: rgba(186,108,184,0.22);
+        --border-2: rgba(186,108,184,0.30);
 
         --text-0: #f9f5ff;
         --text-1: rgba(249,245,255,0.88);
@@ -27,12 +28,19 @@
         --accent-2: #A95CA9;
         --accent-3: #BA6CB8;
 
+        --accent-dark: #2a1030;
+        --accent-soft: rgba(154,75,156,0.22);
+
+        --good: #22c55e;
+        --danger: #e11d48;
+        --ghost: rgba(255,255,255,0.10);
+
         --focus: rgba(186,108,184,0.55);
       }
 
       body {
         margin: 0;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
         background: var(--bg-0);
         color: var(--text-0);
         display: flex;
@@ -47,36 +55,125 @@
         height: 92vh;
         display: flex;
         flex-direction: column;
+
+        background:
+          radial-gradient(circle at 28% 8%, rgba(186,108,184,0.55) 0, rgba(154,75,156,0.22) 22%, rgba(5,3,22,1) 60%),
+          radial-gradient(circle at 80% 18%, rgba(169,92,169,0.22) 0, rgba(5,3,22,1) 55%);
+
         border-radius: 18px;
         border: 1px solid var(--border-0);
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6);
         overflow: hidden;
       }
 
       header {
         padding: 16px 24px 10px;
         border-bottom: 1px solid rgba(255,255,255,0.08);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        position: relative;
+      }
+      header h1 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 8px; }
+      header h1 span.emoji { font-size: 22px; }
+      header small { color: rgba(249,245,255,0.72); font-size: 12px; }
+
+      .js-pill {
+        position: absolute;
+        right: 16px;
+        top: 14px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(186,108,184,0.22);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+        color: var(--text-1);
       }
 
-      .menu-bar {
-        padding: 12px;
+      .top-cta {
+        padding: 10px 24px 14px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
         display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .support-btn {
+        padding: 10px 16px;
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border: 1px solid rgba(255,255,255,0.14);
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 800;
+        cursor: pointer;
+        color: #ffffff;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      }
+      .support-btn:active { transform: translateY(1px); }
+
+      .support-note {
+        font-size: 11px;
+        opacity: 0.85;
+        max-width: 760px;
+        text-align: center;
+        margin: 0;
+        color: var(--text-2);
+      }
+
+      .account-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255,255,255,0.08);
+        border: 1px solid rgba(186,108,184,0.22);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+        color: var(--text-1);
+      }
+
+      .pill.ok { border-color: rgba(34,197,94,0.55); }
+      .pill.warn { border-color: rgba(186,108,184,0.45); }
+      .pill.bad { border-color: rgba(225,29,72,0.65); }
+
+      .menu-bar {
+        padding: 12px 18px;
+        display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         justify-content: center;
         border-bottom: 1px solid rgba(255,255,255,0.08);
       }
 
       .menu-btn {
-        padding: 8px 14px;
+        padding: 8px 12px;
         border-radius: 999px;
-        border: 1px solid rgba(186,108,184,0.18);
-        background: rgba(255,255,255,0.08);
-        color: white;
+        border: 1px solid rgba(186,108,184,0.16);
+        font-size: 13px;
         font-weight: 800;
         cursor: pointer;
+        background: rgba(255,255,255,0.07);
+        color: var(--text-0);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.25);
       }
-
       .menu-btn.active {
         background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border: 1px solid rgba(255,255,255,0.14);
+        color: #ffffff;
       }
 
       .main {
@@ -87,102 +184,266 @@
         min-height: 0;
       }
 
-      .app-section {
-        display: none;
-        flex: 1;
-        min-height: 0;
+      .app-section { display: none; height: 100%; overflow: hidden; min-height: 0; }
+      .app-section.active { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+      .section-body { flex: 1; overflow-y: auto; padding: 18px; min-height: 0; }
+
+      .card {
+        background: var(--surface-1);
+        border: 1px solid var(--border-1);
+        border-radius: 16px;
+        padding: 14px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+      }
+      .card + .card { margin-top: 12px; }
+      .card h3, .card h4 { margin: 0 0 10px 0; color: rgba(255,255,255,0.92); }
+
+      .muted { opacity: 0.85; font-size: 13px; color: var(--text-2); }
+
+      .row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .row > * { flex: 1; min-width: 220px; }
+
+      label { font-size: 12px; opacity: 0.9; color: var(--text-2); }
+
+      input[type="text"], select, textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(186,108,184,0.35);
+        background: rgba(10, 8, 28, 0.72);
+        color: var(--text-0);
+        outline: none;
+        font-size: 14px;
+      }
+      input[type="text"]:focus, select:focus, textarea:focus{
+        border-color: var(--focus);
+        box-shadow: 0 0 0 3px rgba(186,108,184,0.16);
       }
 
-      .app-section.active {
+      textarea { min-height: 110px; resize: vertical; }
+
+      .btn {
+        padding: 10px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(186,108,184,0.18);
+        cursor: pointer;
+        font-weight: 900;
+        font-size: 13px;
+        color: #ffffff;
+        background: rgba(255,255,255,0.08);
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border: 1px solid rgba(255,255,255,0.14);
+        color: #ffffff;
+      }
+      .btn-primary:hover { filter: brightness(1.03); }
+
+      .btn-danger { background: rgba(225,29,72,0.92); border-color: rgba(225,29,72,0.35); color: white; }
+      .btn-green { background: rgba(34,197,94,0.92); border-color: rgba(34,197,94,0.30); color: #062a14; }
+      .btn-ghost { background: rgba(255,255,255,0.07); color: white; border-color: rgba(186,108,184,0.18); }
+      .btn:disabled { opacity: 0.6; cursor: default; }
+
+      .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
+
+      .block {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(186,108,184,0.18);
+        border-radius: 14px;
+        padding: 12px;
+      }
+      .block + .block { margin-top: 10px; }
+
+      .divider {
+        height: 1px;
+        background: rgba(186,108,184,0.18);
+        margin: 12px 0;
+      }
+
+      .bible-subrow{
         display: flex;
-        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
       }
 
-      /* CHAT */
+      .mini-btn{
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(186,108,184,0.18);
+        cursor: pointer;
+        font-weight: 900;
+        font-size: 12px;
+        color: #ffffff;
+        background: rgba(255,255,255,0.08);
+        white-space: nowrap;
+      }
+
+      .mini-btn.primary{
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border: 1px solid rgba(255,255,255,0.14);
+        padding: 10px 18px;
+        font-size: 14px;
+        min-width: 120px;
+      }
+
+      .passage-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .passage-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      /* CHAT layout (desktop) */
       .chat-layout {
         flex: 1;
+        overflow: hidden;
         display: grid;
         grid-template-columns: 1fr 300px;
         gap: 12px;
         padding: 12px;
         min-height: 0;
       }
-
       @media (max-width: 920px) {
-        .chat-layout {
-          display: flex;
-          flex-direction: column;
-        }
-      }
-
-      .card {
-        background: rgba(14,12,36,0.74);
-        border: 1px solid var(--border-1);
-        border-radius: 16px;
-        padding: 14px;
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
+        .chat-layout { grid-template-columns: 1fr; }
       }
 
       #chat {
-        flex: 1;
+        height: 100%;
         overflow-y: auto;
         padding: 12px;
-        border-radius: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border-radius: 16px;
         border: 1px solid rgba(186,108,184,0.22);
-        background: rgba(10,8,28,0.45);
-        min-height: 420px;
+        background: rgba(10, 8, 28, 0.45);
+        padding-bottom: 28px;
+      }
+
+      .bubble-row { display: flex; width: 100%; }
+      .bubble-row.user { justify-content: flex-end; }
+      .bubble-row.bot { justify-content: flex-start; }
+      .bubble-row.system { justify-content: center; }
+
+      .bubble {
+        max-width: 84%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        font-size: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+      .bubble.user {
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        color: #ffffff;
+        border-bottom-right-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.14);
+      }
+      .bubble.bot {
+        background: rgba(10, 8, 28, 0.84);
+        color: var(--text-1);
+        border: 1px solid rgba(186,108,184,0.26);
+        border-bottom-left-radius: 6px;
+      }
+      .bubble.system {
+        background: transparent;
+        border: none;
+        color: rgba(249,245,255,0.55);
+        font-size: 12px;
+        text-align: center;
       }
 
       .chat-form {
-        margin-top: 10px;
+        padding: 12px 14px;
+        border-top: 1px solid rgba(255,255,255,0.08);
         display: flex;
-        gap: 8px;
+        gap: 10px;
+        background: rgba(10, 8, 28, 0.88);
         flex-wrap: wrap;
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       }
 
-      .chat-form input {
+      .chat-form input[type="text"] {
+        border-radius: 999px;
         flex: 1;
+        min-width: 240px;
         min-height: 46px;
-        border-radius: 999px;
-        padding: 10px 14px;
-        border: 1px solid rgba(186,108,184,0.35);
-        background: rgba(10,8,28,0.72);
-        color: white;
       }
 
-      .btn {
-        padding: 10px 16px;
-        border-radius: 999px;
-        border: none;
-        font-weight: 800;
-        cursor: pointer;
-      }
+      .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
-      .btn-primary {
-        background: linear-gradient(135deg, var(--accent-2), var(--accent));
-        color: white;
-      }
+      .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
 
-      .btn-danger { background: #e11d48; color: white; }
-      .btn-green { background: #22c55e; color: #052e16; }
-
-      /* MOBILE FIX — ALLOW SCROLL */
+      /* =========================
+         MOBILE FIX (IMPORTANT)
+         - Let the whole page scroll
+         - Keep chat big, without hiding top UI
+         ========================= */
       @media (max-width: 920px) {
         body {
           align-items: stretch;
           justify-content: flex-start;
+          min-height: 100dvh;
         }
 
+        /* KEY CHANGE: app becomes "auto height" and page scrolls */
         .app {
-          height: 100dvh;
+          height: auto;
+          min-height: 100dvh;
+          max-height: none;
+          max-width: 100%;
           border-radius: 0;
+          overflow: visible;
         }
 
+        header { padding: 14px 14px 10px; }
+        .top-cta { padding: 10px 14px 12px; gap: 10px; }
+        .menu-bar { padding: 10px 12px; }
+
+        /* main + sections should scroll naturally */
+        .main { overflow: visible; min-height: 0; }
+        .app-section { height: auto; overflow: visible; }
+        .app-section.active { height: auto; overflow: visible; }
+        .section-body { overflow: visible; padding: 12px; }
+
+        /* readability */
+        input[type="text"], select, textarea { font-size: 16px; }
+        textarea { min-height: 140px; }
+        .row > * { min-width: 160px; }
+
+        /* chat layout: stack */
+        .chat-layout {
+          display: flex !important;
+          flex-direction: column !important;
+          height: auto;
+          gap: 10px;
+          padding: 12px;
+          overflow: visible;
+        }
+
+        /* chat window stays large, but page can still scroll */
         #chat {
           min-height: 50vh;
+          height: auto;
         }
+
+        /* keep form usable */
+        .chat-form input[type="text"] { width: 100%; min-width: 0; }
+        .mini-btn, .btn { min-height: 44px; }
+        .bible-subrow { align-items: flex-start; }
       }
     </style>
   </head>
@@ -190,36 +451,365 @@
   <body>
     <div class="app">
       <header>
-        <h1>📖 Alyana Luz · Bible AI</h1>
+        <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
         <small>pray • learn • walk in the Light</small>
+        <span class="js-pill" id="jsStatus">JS: loading…</span>
       </header>
 
+      <div class="top-cta">
+        <button class="support-btn" id="supportBtn" type="button" title="Support Alyana Luz">
+          ❤️ Support Alyana Luz
+        </button>
+
+        <div class="account-row" aria-label="Account and billing">
+          <span class="pill warn" id="authPill">Account: checking…</span>
+          <button class="btn btn-ghost" id="manageBillingBtn" type="button" disabled>
+            Manage billing
+          </button>
+          <button class="btn btn-danger" id="logoutBtn" type="button" style="display:none;">
+            Logout
+          </button>
+        </div>
+
+        <p class="support-note" id="supportNote">
+          Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
+          <br />
+          To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
+        </p>
+
+        <div class="row" style="max-width:760px; width:100%; justify-content:center;">
+          <div style="flex:1; min-width:240px; max-width:360px;">
+            <input id="loginEmail" type="text" placeholder="Email used for Stripe…" />
+          </div>
+          <div style="flex:0; min-width:180px;">
+            <button class="btn btn-primary" id="loginBtn" type="button" style="width:100%;">Restore access</button>
+          </div>
+        </div>
+
+        <div class="muted" id="authHint" style="width:100%; text-align:center; display:none;"></div>
+      </div>
+
       <nav class="menu-bar">
-        <button class="menu-btn active">Chat</button>
-        <button class="menu-btn">Read Bible</button>
-        <button class="menu-btn">Devotional</button>
-        <button class="menu-btn">Daily Prayer</button>
+        <button class="menu-btn active" data-target="chatSection" type="button" id="tabChat">Chat</button>
+        <button class="menu-btn" data-target="bibleSection" type="button" id="tabBible">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button" id="tabDev">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button" id="tabPrayer">Daily Prayer</button>
       </nav>
 
       <div class="main">
-        <section class="app-section active">
+        <!-- CHAT -->
+        <section id="chatSection" class="app-section active">
           <div class="chat-layout">
-            <div class="card">
+            <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
+              <div class="row" style="align-items:center; margin-bottom:10px;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
+                  <div class="muted" id="chatSavedHint">Saved chat logs are stored on this device.</div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="chatLangLabel">Chat Language</span>
+                    <select id="chatLangSelect">
+                      <option value="auto" selected>Auto (based on what they type)</option>
+                      <option value="en">English</option>
+                      <option value="es">Spanish</option>
+                    </select>
+                  </label>
+                  <span class="pill" id="chatVoicePill">Voice: ready</span>
+                </div>
+              </div>
+
               <div id="chat"></div>
 
-              <form class="chat-form">
-                <input placeholder="Ask for a prayer, verse, or guidance…" />
-                <button class="btn btn-primary">Send</button>
-                <button class="btn">Listen</button>
-                <button class="btn btn-danger">Stop</button>
-                <button class="btn">New</button>
-                <button class="btn btn-green">Save</button>
+              <form id="chatForm" class="chat-form">
+                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
+                <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
+                <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
+                <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
+                <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
+                <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
               </form>
             </div>
 
+            <div class="card" style="overflow:auto;">
+              <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
+              <div class="muted" id="savedChatsHint">Load or delete any saved chat.</div>
+              <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved chats yet.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- BIBLE READER -->
+        <section id="bibleSection" class="app-section">
+          <div class="section-body">
             <div class="card">
-              <h4>Saved Chats</h4>
-              <small>No saved chats yet.</small>
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2; min-width:260px;">
+                  <h3 style="margin-bottom:6px;" id="bibleTitle">Bible Reader</h3>
+
+                  <div class="muted bible-subrow">
+                    <span id="bibleHint">Pick a book/chapter and verse range, or Full Chapter.</span>
+                    <button class="mini-btn primary" id="readBibleBtn" type="button">Read</button>
+                  </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end;">
+                  <span class="pill" id="ttsStatus">Voice: ready</span>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px;">
+                <div style="flex:2;">
+                  <label id="lblBook">Book</label>
+                  <select id="bookSelect">
+                    <option value="">Loading…</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label id="lblChapter">Chapter</label>
+                  <select id="chapterSelect">
+                    <option value="">—</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label id="lblVerseStart">Verse (start)</label>
+                  <select id="verseStartSelect">
+                    <option value="">—</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label id="lblVerseEnd">Verse (end)</label>
+                  <select id="verseEndSelect">
+                    <option value="">(optional)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="row" style="margin-top:12px; align-items:flex-end;">
+                <div>
+                  <label id="lblReaderLang">Reader Language</label>
+                  <select id="readingVoice">
+                    <option value="en" selected>English</option>
+                    <option value="es">Spanish</option>
+                  </select>
+                  <div class="small-note" id="readerLangNote">Only two voices, locked for consistency.</div>
+                </div>
+
+                <div style="min-width:220px;">
+                  <label style="display:flex; gap:10px; align-items:center;">
+                    <input type="checkbox" id="fullChapter" />
+                    <span id="lblFullChapter">Full Chapter</span>
+                  </label>
+                  <div class="small-note" id="fullChapterNote">If Full Chapter is on, verses are ignored.</div>
+                </div>
+
+                <div>
+                  <label id="lblVersion">Version label (English only)</label>
+                  <select id="versionSelect">
+                    <option value="KJV" selected>KJV</option>
+                    <option value="NKJV">NKJV</option>
+                    <option value="NIV">NIV</option>
+                    <option value="NLT">NLT</option>
+                    <option value="ESV">ESV</option>
+                    <option value="NASB">NASB</option>
+                    <option value="CSB">CSB</option>
+                    <option value="AMP">AMP</option>
+                    <option value="MSG">MSG</option>
+                  </select>
+                  <div class="small-note" id="versionNote">For Spanish voice, we do not speak the version label.</div>
+                </div>
+              </div>
+
+              <div class="small-note" id="spanishReadNote">
+                Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
+              </div>
+            </div>
+
+            <div class="card">
+              <h4 id="dbStatusTitle">Bible DB Status</h4>
+              <div class="muted" id="bibleDbStatus">Checking…</div>
+            </div>
+
+            <div class="card">
+              <div class="passage-header">
+                <h4 id="passageTitle">Passage</h4>
+                <div class="passage-actions">
+                  <button class="mini-btn" id="passageListenBtn" type="button">Listen</button>
+                  <button class="mini-btn" id="passageStopBtn" type="button">Stop</button>
+                </div>
+              </div>
+
+              <div class="muted" id="passageRef">—</div>
+              <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DEVOTIONAL -->
+        <section id="devotionalSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;" id="devTitle">Devotional</h3>
+                  <div class="muted" id="devIntro">
+                    Alyana gives short starter examples. You write and save your real devotional.
+                  </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="devLangLabel">Language</span>
+                    <select id="devUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
+                    </select>
+                  </label>
+
+                  <span class="pill" id="devStreakPill">Streak: 0</span>
+                  <button class="btn btn-ghost" id="devStreakBtn" type="button">I did it today</button>
+
+                  <button class="btn btn-primary" id="devotionalBtn" type="button">Generate</button>
+                  <button class="btn btn-green" id="devSaveBtn" type="button">Save</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" id="devLabelTheme" style="margin-bottom:6px;">Theme / Title (Alyana)</div>
+                <div id="devTheme" style="white-space:pre-wrap;">—</div>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelScripture" style="margin-bottom:6px;">Scripture (Alyana)</div>
+                <div id="devScriptureRef" class="muted" style="margin-bottom:8px;">—</div>
+                <div id="devScriptureText" style="white-space:pre-wrap;">—</div>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="block">
+                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Context / Observation</div>
+                <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow1">Now write yours:</div>
+                <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Reflection / Insight</div>
+                <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow2">Now write yours:</div>
+                <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Application (Practical)</div>
+                <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow3">Now write yours:</div>
+                <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Prayer</div>
+                <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="devNow4">Now write your real prayer:</div>
+                <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="devLabelNotes" style="margin-bottom:6px;">Notes / Reflection (optional)</div>
+                <textarea id="devMyNotes" placeholder="Notes…"></textarea>
+              </div>
+
+              <div class="small-note" id="devReqNote" style="margin-top:10px;">
+                Required to save (streak): Context + Reflection + Application + Prayer.
+              </div>
+            </div>
+
+            <div class="card">
+              <h4 id="devSavedTitle">Saved Devotionals</h4>
+              <div class="muted" id="devSavedHint">Load or delete past devotionals saved on this device.</div>
+              <div class="saved-list" id="devSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved devotionals yet.</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- DAILY PRAYER -->
+        <section id="prayerSection" class="app-section">
+          <div class="section-body">
+            <div class="card">
+              <div class="row" style="align-items:flex-end;">
+                <div style="flex:2;">
+                  <h3 style="margin:0 0 6px 0;" id="prTitle">Daily Prayer</h3>
+                  <div class="muted" id="prIntro">
+                    Alyana gives a short starter example. You write and save your real prayer.
+                  </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="prLangLabel">Language</span>
+                    <select id="prUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
+                    </select>
+                  </label>
+
+                  <span class="pill" id="prStreakPill">Streak: 0</span>
+                  <button class="btn btn-ghost" id="prStreakBtn" type="button">I did it today</button>
+
+                  <button class="btn btn-primary" id="prayerBtn" type="button">Generate Starters</button>
+                  <button class="btn btn-green" id="prSaveBtn" type="button">Save</button>
+                </div>
+              </div>
+
+              <div class="block" style="margin-top:12px;">
+                <div class="muted" id="prLabelA" style="margin-bottom:6px;">Adoration</div>
+                <div id="pA" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="prNow1">Now write your own:</div>
+                <textarea id="myAdoration" placeholder="Adoration (praise God for who He is)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="prLabelC" style="margin-bottom:6px;">Confession</div>
+                <div id="pC" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="prNow2">Now write your own:</div>
+                <textarea id="myConfession" placeholder="Confession (what I need to confess)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="prLabelT" style="margin-bottom:6px;">Thanksgiving</div>
+                <div id="pT" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="prNow3">Now write your own:</div>
+                <textarea id="myThanksgiving" placeholder="Thanksgiving (what I’m grateful for)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="prLabelS" style="margin-bottom:6px;">Supplication</div>
+                <div id="pS" style="white-space:pre-wrap;">—</div>
+                <div class="small-note" id="prNow4">Now write your own:</div>
+                <textarea id="mySupplication" placeholder="Supplication (requests for myself/others)…"></textarea>
+              </div>
+
+              <div class="block">
+                <div class="muted" id="prLabelN" style="margin-bottom:6px;">Notes</div>
+                <textarea id="prayerNotes" placeholder="Notes…"></textarea>
+              </div>
+            </div>
+
+            <div class="card">
+              <h4 id="prSavedTitle">Saved Prayers</h4>
+              <div class="muted" id="prSavedHint">Load or delete past prayers saved on this device.</div>
+              <div class="saved-list" id="prSavedList" style="margin-top:10px;">
+                <small style="opacity:0.75;">No saved prayers yet.</small>
+              </div>
             </div>
           </div>
         </section>
@@ -229,5 +819,6 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
