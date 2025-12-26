@@ -17,6 +17,7 @@
     // “account” (Stripe restore)
     authEmail: "alyana.auth.email",
     authStatus: "alyana.auth.status", // "unknown" | "active" | "inactive"
+    authToken: "alyana.auth.token",   // Bearer token from /stripe/restore
 
     // saved content
     savedChats: "alyana.saved.chats",
@@ -63,8 +64,19 @@
     }
   }
 
-  async function apiGet(path) {
-    const res = await fetch(path, { headers: { Accept: "application/json" } });
+  function getToken() {
+    return (localStorage.getItem(LS.authToken) || "").trim();
+  }
+
+  function authHeaders(extra = {}) {
+    const tok = getToken();
+    return tok ? { ...extra, Authorization: `Bearer ${tok}` } : { ...extra };
+  }
+
+  async function apiGet(path, opts = {}) {
+    const res = await fetch(path, {
+      headers: { Accept: "application/json", ...(opts.headers || {}) },
+    });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
       throw new Error(`GET ${path} -> ${res.status} ${t}`.trim());
@@ -72,10 +84,14 @@
     return res.json();
   }
 
-  async function apiPost(path, body) {
+  async function apiPost(path, body, opts = {}) {
     const res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(opts.headers || {}),
+      },
       body: JSON.stringify(body || {}),
     });
 
@@ -90,24 +106,6 @@
     }
 
     return res.json();
-  }
-
-  async function apiPostOrGet(path, body) {
-    try {
-      return await apiPost(path, body);
-    } catch (e) {
-      // If backend implemented GET instead of POST, fallback.
-      try {
-        const qs = new URLSearchParams();
-        Object.entries(body || {}).forEach(([k, v]) => {
-          if (v !== undefined && v !== null && String(v).trim() !== "") qs.set(k, String(v));
-        });
-        const full = qs.toString() ? `${path}?${qs.toString()}` : path;
-        return await apiGet(full);
-      } catch {
-        throw e;
-      }
-    }
   }
 
   // ---------------------------
@@ -251,6 +249,8 @@
       needEmail: "Please enter the email you used for Stripe, then press Restore access.",
       stripeNotWired:
         "Stripe endpoints are not available on the server yet. Add /stripe/checkout, /stripe/restore, and /stripe/portal to server.py.",
+      authMissing:
+        "Please click Restore access first (so we can authenticate) then try Manage billing.",
     },
 
     es: {
@@ -377,6 +377,8 @@
       needEmail: "Escribe el correo que usaste en Stripe y presiona Restaurar acceso.",
       stripeNotWired:
         "Los endpoints de Stripe no están disponibles en el servidor todavía. Agrega /stripe/checkout, /stripe/restore y /stripe/portal en server.py.",
+      authMissing:
+        "Primero presiona Restaurar acceso (para autenticar) y luego intenta Administrar pagos.",
     },
   };
 
@@ -534,7 +536,7 @@
     } else if (state === "inactive") {
       label = t.accountInactive;
       cls = "pill bad";
-      canManage = true; // allow portal for billing even if inactive (common case)
+      canManage = true; // allow portal for billing even if inactive
     } else if (state === "ready") {
       label = t.accountReady;
       cls = "pill warn";
@@ -566,6 +568,12 @@
     localStorage.setItem(LS.authEmail, e);
   }
 
+  function rememberToken(token) {
+    const t = (token || "").trim();
+    if (!t) return;
+    localStorage.setItem(LS.authToken, t);
+  }
+
   async function stripeRestoreAccess() {
     const uiLang = getUILang();
     const t = I18N[uiLang];
@@ -576,22 +584,24 @@
     rememberEmail(email);
     setAuthUI("unknown", email);
 
-    // Expected server response (recommended):
-    // { ok: true, status: "active"|"inactive", customer_email?: "...", portal_url?: "..." }
     try {
-      const j = await apiPostOrGet("/stripe/restore", { email });
-      const status = (j && j.status ? String(j.status) : "unknown").toLowerCase();
+      const j = await apiPost("/stripe/restore", { email });
+
+      // server returns: token, subscribed, status, customer_email
+      if (j && j.token) rememberToken(String(j.token));
+      if (j && j.customer_email) rememberEmail(String(j.customer_email));
+
+      const status =
+        (j && typeof j.status === "string" && j.status) ?
+          String(j.status).toLowerCase() :
+          (j && typeof j.subscribed === "boolean" ? (j.subscribed ? "active" : "inactive") : "unknown");
+
       localStorage.setItem(LS.authStatus, status);
 
-      if (j && j.customer_email) rememberEmail(String(j.customer_email));
       setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || email);
-
-      // Optional: if backend returns portal_url after restore, you can auto-open it.
-      // if (j && j.portal_url) window.location.href = String(j.portal_url);
 
       toast(uiLang === "es" ? "Acceso restaurado." : "Access restored.");
     } catch (e) {
-      // If endpoint doesn't exist yet, show a helpful message.
       const msg = String(e && e.message ? e.message : e);
       if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
       else toast(msg, true);
@@ -609,10 +619,8 @@
 
     rememberEmail(email);
 
-    // Expected server response:
-    // { ok: true, url: "https://checkout.stripe.com/..." }
     try {
-      const j = await apiPostOrGet("/stripe/checkout", { email });
+      const j = await apiPost("/stripe/checkout", { email });
       const url = j && (j.url || j.checkout_url) ? String(j.url || j.checkout_url) : "";
       if (!url) throw new Error("Checkout URL missing from server response.");
       window.location.href = url;
@@ -627,19 +635,17 @@
     const uiLang = getUILang();
     const t = I18N[uiLang];
 
-    const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
-    if (!email) return toast(t.needEmail, true);
+    const tok = getToken();
+    if (!tok) return toast(t.authMissing, true);
 
-    // Expected server response:
-    // { ok: true, url: "https://billing.stripe.com/..." }
     try {
-      const j = await apiPostOrGet("/stripe/portal", { email });
+      const j = await apiPost("/stripe/portal", {}, { headers: authHeaders() });
       const url = j && (j.url || j.portal_url) ? String(j.url || j.portal_url) : "";
       if (!url) throw new Error("Portal URL missing from server response.");
       window.location.href = url;
     } catch (e) {
       const msg = String(e && e.message ? e.message : e);
-      if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
+      if (/401\b/.test(msg) || /Not authenticated/i.test(msg)) toast(t.authMissing, true);
       else toast(msg, true);
     }
   }
@@ -647,6 +653,7 @@
   function logoutLocal() {
     localStorage.removeItem(LS.authEmail);
     localStorage.removeItem(LS.authStatus);
+    localStorage.removeItem(LS.authToken);
     setEmailInput("");
     setAuthUI("unknown", "");
     toast(getUILang() === "es" ? "Sesión cerrada." : "Logged out.");
@@ -663,7 +670,6 @@
     if (manageBtn) manageBtn.addEventListener("click", stripePortal);
     if (logoutBtn) logoutBtn.addEventListener("click", logoutLocal);
 
-    // restore remembered email
     const savedEmail = (localStorage.getItem(LS.authEmail) || "").trim();
     if (savedEmail) setEmailInput(savedEmail);
 
@@ -674,15 +680,17 @@
   // ---------------------------
   // Apply UI language (single dropdown: #uiLangSelect)
   // ---------------------------
+  function applyTabLabelsOnly(uiLang) {
+    applyTabLabels(uiLang);
+  }
+
   function applyUILang() {
     const uiLang = getUILang();
     localStorage.setItem(LS.uiLang, uiLang);
     const t = I18N[uiLang];
 
-    // Tabs (menu buttons)
-    applyTabLabels(uiLang);
+    applyTabLabelsOnly(uiLang);
 
-    // Top
     const supportBtn = $("#supportBtn");
     if (supportBtn) supportBtn.textContent = t.support;
 
@@ -697,33 +705,22 @@
     const loginBtn = $("#loginBtn");
     if (loginBtn) loginBtn.textContent = t.restoreAccess;
 
-    // Support note in HTML has class, not id. We update the paragraph by class.
     const note = document.querySelector(".support-note");
     if (note) note.textContent = t.supportNote;
 
-    // Account pill (preserve state)
     const savedStatus = (localStorage.getItem(LS.authStatus) || "unknown").toLowerCase();
     const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
     setAuthUI(savedStatus === "active" ? "active" : savedStatus === "inactive" ? "inactive" : "unknown", email);
 
-    // Chat
-    setText("ttsStatus", t.voiceReady); // will be corrected during voice check
+    setText("ttsStatus", t.voiceReady);
     setText("chatVoicePill", t.voiceReady);
 
-    // Title blocks
-    // (These IDs exist in your backend index.html)
-    // Chat
-    // h3 text itself doesn’t have id, so update the nearest known nodes:
     const chatCardTitle = document.querySelector("#chatSection h3");
     if (chatCardTitle) chatCardTitle.textContent = t.chatTitle;
 
     const chatHint = document.querySelector("#chatSection .muted");
     if (chatHint) chatHint.textContent = t.savedChatsHint;
 
-    const chatLangLabel = document.querySelector('label[for=""] #chatLangLabel'); // not used
-    // We have an element with id chatLangLabel in your earlier HTML version,
-    // but in the backend HTML it’s a <span class="muted"> inside the label.
-    // So we set it via the select’s parent label:
     const chatLangWrap = $("#chatLangSelect")?.closest("label");
     if (chatLangWrap) {
       const span = chatLangWrap.querySelector(".muted");
@@ -753,7 +750,6 @@
     const savedChatsHint2 = document.querySelector("#chatSection .card:nth-child(2) .muted");
     if (savedChatsHint2) savedChatsHint2.textContent = t.savedChatsHint2;
 
-    // Bible section labels (IDs exist)
     const bibleH3 = document.querySelector("#bibleSection h3");
     if (bibleH3) bibleH3.textContent = t.bibleTitle;
 
@@ -763,12 +759,9 @@
     const readBibleBtn = $("#readBibleBtn");
     if (readBibleBtn) readBibleBtn.textContent = t.read;
 
-    // In your HTML, labels are plain text nodes, not IDs.
-    // But you DO have IDs for status blocks + notes; we update those:
     const spanishNote = document.querySelector("#bibleSection .small-note");
     if (spanishNote) spanishNote.textContent = t.spanishReadNote;
 
-    // Devotional section
     const devH3 = document.querySelector("#devotionalSection h3");
     if (devH3) devH3.textContent = t.devTitle;
 
@@ -807,13 +800,12 @@
     setPlaceholder("devMyNotes", t.devNotesPH);
     setText("devReqNote", t.devReqNote);
 
-    const devSavedTitle = document.querySelector('#devotionalSection h4');
+    const devSavedTitle = document.querySelector("#devotionalSection h4");
     if (devSavedTitle) devSavedTitle.textContent = t.devSavedTitle;
 
-    const devSavedHint = document.querySelector('#devotionalSection .card:nth-child(2) .muted');
+    const devSavedHint = document.querySelector("#devotionalSection .card:nth-child(2) .muted");
     if (devSavedHint) devSavedHint.textContent = t.devSavedHint;
 
-    // Prayer section
     const prH3 = document.querySelector("#prayerSection h3");
     if (prH3) prH3.textContent = t.prTitle;
 
@@ -849,13 +841,12 @@
     setPlaceholder("mySupplication", t.mySuppPH);
     setPlaceholder("prayerNotes", t.prNotesPH);
 
-    const prSavedTitle = document.querySelector('#prayerSection h4');
+    const prSavedTitle = document.querySelector("#prayerSection h4");
     if (prSavedTitle) prSavedTitle.textContent = t.prSavedTitle;
 
-    const prSavedHint = document.querySelector('#prayerSection .card:nth-child(2) .muted');
+    const prSavedHint = document.querySelector("#prayerSection .card:nth-child(2) .muted");
     if (prSavedHint) prSavedHint.textContent = t.prSavedHint;
 
-    // Re-render lists so “No saved…” + Delete label update
     renderSavedChats();
     renderSavedDevs();
     renderSavedPrayers();
@@ -972,7 +963,6 @@
     const sendBtn = $("#chatSendBtn");
     const stopBtn = $("#chatStopBtn");
 
-    // Restore draft
     if (input) input.value = localStorage.getItem(LS.chatDraft) || "";
 
     if (input) {
@@ -1077,7 +1067,7 @@
   }
 
   // ---------------------------
-  // Devotionals
+  // Devotionals (unchanged)
   // ---------------------------
   function loadSavedDevs() {
     return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []);
@@ -1171,7 +1161,7 @@
       ref: "Philippians 4:6–7",
       text:
         "6. Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.\n" +
-          "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
+        "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
       ctx:
         "Paul is encouraging believers to bring every worry to God in prayer instead of carrying anxiety alone.",
       refl:
@@ -1215,7 +1205,7 @@
       generateBtn.addEventListener("click", async () => {
         generateBtn.disabled = true;
         try {
-          const lang = getUILang(); // devotional starters follow UI language
+          const lang = getUILang();
           const s = devotionalStarters(lang);
 
           $("#devTheme").textContent = s.theme;
@@ -1277,7 +1267,7 @@
   }
 
   // ---------------------------
-  // Daily Prayer
+  // Daily Prayer (unchanged)
   // ---------------------------
   function loadSavedPrayers() {
     return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []);
@@ -1394,7 +1384,7 @@
 
     if (genBtn) {
       genBtn.addEventListener("click", () => {
-        const lang = getUILang(); // starters follow UI language
+        const lang = getUILang();
         const s = prayerStarters(lang);
         $("#pA").textContent = s.A;
         $("#pC").textContent = s.C;
@@ -1444,7 +1434,7 @@
   }
 
   // ---------------------------
-  // Bible Reader
+  // Bible Reader (unchanged)
   // ---------------------------
   function bibleVersionForReadingLang(readLang) {
     return readLang === "es" ? "es" : "en_default";
@@ -1569,7 +1559,6 @@
     const version = bibleVersionForReadingLang(readLang);
 
     try {
-      // verses_max needs book_id, so only works when select value is numeric id.
       if (pick.kind !== "id") return;
 
       const j = await apiGet(
@@ -1711,7 +1700,6 @@
     initPrayer();
     initBible();
 
-    // restore UI language dropdown
     const storedUILang = normLang(localStorage.getItem(LS.uiLang) || "en", "en");
     setSelectValue("#uiLangSelect", storedUILang);
 
@@ -1743,10 +1731,18 @@
       if (chatVoicePill) chatVoicePill.textContent = I18N[uiLang].voiceMissing;
     }
 
-    // Quick health ping (optional)
+    // Health/auth ping (updates account pill if token exists)
     try {
-      await apiGet("/me");
-      // leave auth pill alone; /me doesn't currently return billing status
+      const tok = getToken();
+      if (tok) {
+        const me = await apiGet("/me", { headers: authHeaders() });
+        if (me && me.ok && me.authed) {
+          const status = (me.status || (me.subscribed ? "active" : "inactive") || "unknown").toLowerCase();
+          localStorage.setItem(LS.authStatus, status);
+          if (me.email) localStorage.setItem(LS.authEmail, String(me.email));
+          setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || "");
+        }
+      }
     } catch {}
 
     showTopStatus("JS: ready");
@@ -1769,5 +1765,3 @@
     });
   });
 })();
-
-
