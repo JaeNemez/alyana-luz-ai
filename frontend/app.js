@@ -1,1174 +1,1355 @@
-/* frontend/app.js */
+/* frontend/app.js
+   Alyana Luz • Bible AI
+   - Global UI language switch (English/Español) via #uiLangSelect
+   - Fix mobile chat experience (no color changes; CSS handles sizing)
+   - Bible Reader: adds a Read button (#readBibleBtn) + small Listen/Stop buttons
+   - Spanish Bible uses your Spanish DB via version=es_rvr (or es_rvr alias)
+   - TTS: picks stable voices when possible (Karen en-AU / Paulina es-MX), falls back safely
+*/
 
 (() => {
   "use strict";
 
-  // ---------------------------
+  // -----------------------------
   // Helpers
-  // ---------------------------
-  const $ = (sel) => document.querySelector(sel);
+  // -----------------------------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
   const LS = {
-    uiLang: "alyana.ui.lang",
-
-    chatLang: "alyana.chat.lang",
-    devLang: "alyana.dev.lang",
-    prLang: "alyana.pr.lang",
-    readingLang: "alyana.read.lang",
-    bibleVersion: "alyana.bible.version",
-    savedChats: "alyana.saved.chats",
-    savedDevs: "alyana.saved.devs",
-    savedPrayers: "alyana.saved.prayers",
-    chatDraft: "alyana.chat.draft",
-    devDraft: "alyana.dev.draft",
-    prDraft: "alyana.pr.draft",
+    uiLang: "alyana_ui_lang",
+    chats: "alyana_saved_chats_v1",
+    chatDraft: "alyana_chat_draft_v1",
+    devotionals: "alyana_saved_devotionals_v1",
+    prayers: "alyana_saved_prayers_v1",
+    devStreak: "alyana_dev_streak_v1",
+    prStreak: "alyana_pr_streak_v1",
+    lastDevDone: "alyana_dev_done_date_v1",
+    lastPrDone: "alyana_pr_done_date_v1",
   };
 
-  const safeJSON = (s, fallback) => {
-    try { return JSON.parse(s); } catch { return fallback; }
+  const todayKey = () => new Date().toISOString().slice(0, 10);
+
+  const safeJSONParse = (s, fallback) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+      return fallback;
+    }
   };
 
-  const nowISO = () => new Date().toISOString();
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
 
-  function showTopStatus(text) {
-    const pill = $("#jsStatus");
-    if (pill) pill.textContent = text;
-  }
+  const setHTML = (id, html) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  };
 
-  function showInline(el, text, isError = false) {
-    if (!el) return;
-    el.style.display = "block";
-    el.textContent = text;
-    el.style.color = isError ? "rgba(255,140,140,0.95)" : "";
-  }
+  const show = (el) => { if (el) el.style.display = ""; };
+  const hide = (el) => { if (el) el.style.display = "none"; };
 
-  function toast(message) {
-    // Minimal: reuse authHint area if present
-    const hint = $("#authHint");
-    if (hint) {
-      showInline(hint, message, false);
-      setTimeout(() => { hint.style.display = "none"; }, 3500);
-    } else {
-      alert(message);
-    }
-  }
+  const debounce = (fn, ms = 150) => {
+    let t = null;
+    return (...args) => {
+      clearTimeout(t);
+      t = setTimeout(() => fn(...args), ms);
+    };
+  };
 
-  async function apiGet(path) {
-    const res = await fetch(path, { headers: { "Accept": "application/json" } });
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`GET ${path} -> ${res.status} ${t}`);
-    }
-    return res.json();
-  }
-
-  async function apiPost(path, body) {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(body || {}),
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`POST ${path} -> ${res.status} ${t}`);
-    }
-    return res.json();
-  }
-
-  // ---------------------------
-  // UI language strings
-  // ---------------------------
+  // -----------------------------
+  // i18n (UI language)
+  // -----------------------------
   const I18N = {
     en: {
+      jsReady: "JS: ready",
+      jsLoading: "JS: loading…",
+      accountChecking: "Account: checking…",
+      manageBilling: "Manage billing",
       restoreAccess: "Restore access",
-      noSaved: "No saved items yet.",
-      savedChats: "Saved chat logs are stored on this device.",
-      savedDevs: "Load or delete past devotionals saved on this device.",
-      savedPrayers: "Load or delete past prayers saved on this device.",
-
-      chatPlaceholder: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
+      emailStripePH: "Email used for Stripe…",
+      support: "❤️ Support Alyana Luz",
+      supportNote:
+        "Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.\nTo access premium features, subscribe with Support, or restore access using the email you used on Stripe.",
+      chat: "Chat",
+      readBible: "Read Bible",
+      devotional: "Devotional",
+      dailyPrayer: "Daily Prayer",
+      savedChats: "Saved Chats",
+      savedChatsHint: "Load or delete any saved chat.",
+      noSavedChats: "No saved chats yet.",
+      chatHint: "Saved chat logs are stored on this device.",
+      chatLang: "Chat Language",
+      voiceReady: "Voice: ready",
+      voiceMissing: "Voice: missing",
+      chatPH: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
+      send: "Send",
       listen: "Listen",
       stop: "Stop",
+      new: "New",
+      save: "Save",
+      bibleReaderTitle: "Bible Reader (Listen)",
+      bibleReaderHint: "Pick a book/chapter and verse range, or Full Chapter.",
+      book: "Book",
+      chapter: "Chapter",
+      verseStart: "Verse (start)",
+      verseEnd: "Verse (end)",
+      readerLanguage: "Reader Language",
+      onlyTwoVoices: "Only two voices, locked for consistency.",
+      fullChapter: "Full Chapter",
+      fullChapterHint: "If Full Chapter is on, verses are ignored.",
+      versionLabel: "Version label (English only)",
+      versionLabelHint: "For Spanish voice, we do not speak the version label.",
+      read: "Read",
+      bibleDbStatus: "Bible DB Status",
+      checking: "Checking…",
+      passage: "Passage",
+      dash: "—",
+      spanishVoiceNote:
+        "Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.",
+      devIntro:
+        "Alyana gives short starter examples. You write and save your real devotional.",
+      prIntro:
+        "Alyana gives a short starter example. You write and save your real prayer.",
+      streak: "Streak",
+      didItToday: "I did it today",
       generate: "Generate",
       generateStarters: "Generate Starters",
-      save: "Save",
-      newChat: "New",
-      send: "Send",
-      delete: "Delete",
-
-      didIt: "I did it today",
-      checking: "Checking…",
-      loading: "Loading…",
-      bibleDbChecking: "Checking…",
-      voiceReady: "Voice: ready",
-      voiceMissing:
-        "Voice not found. Your browser must have 'Paulina (es-MX)' and 'Karen (en-AU)' installed.",
-      bibleNotFound:
-        "Bible DB not found. Confirm your Render deployment includes /data/bible.db and /data/bible_es_rvr.db.",
-
-      // Devotional placeholders
-      devMyContextPH: "Context / Observation (What’s happening? Who is speaking? Why does it matter?)",
-      devMyReflectionPH: "Reflection / Insight (What does this reveal about God? About me?)",
-      devMyApplicationPH: "Application (What will I do today because of this?)",
-      devMyPrayerPH: "Prayer (write your real prayer here)",
-      devMyNotesPH: "Notes…",
-
-      // Prayer placeholders
-      prMyAdorationPH: "Adoration (praise God for who He is)…",
-      prMyConfessionPH: "Confession (what I need to confess)…",
-      prMyThanksgivingPH: "Thanksgiving (what I’m grateful for)…",
-      prMySupplicationPH: "Supplication (requests for myself/others)…",
-      prNotesPH: "Notes…",
-
-      // Bible
-      pickBookChapterFirst: "Pick a book and chapter first.",
-      select: "Select…",
-      optional: "(optional)",
-      errorLoadingBooks: "(Error loading books)",
+      themeTitle: "Theme / Title (Alyana)",
+      scriptureA: "Scripture (Alyana)",
+      starterCtx: "Alyana Starter — Context / Observation",
+      starterRef: "Alyana Starter — Reflection / Insight",
+      starterApp: "Alyana Starter — Application (Practical)",
+      starterPr: "Alyana Starter — Prayer",
+      nowWriteYours: "Now write yours:",
+      nowWritePrayer: "Now write your real prayer:",
+      notes: "Notes",
+      notesOptional: "Notes / Reflection (optional)",
+      requiredToSave:
+        "Required to save (streak): Context + Reflection + Application + Prayer.",
+      savedDevotionals: "Saved Devotionals",
+      savedDevHint: "Load or delete past devotionals saved on this device.",
+      noSavedDev: "No saved devotionals yet.",
+      savedPrayers: "Saved Prayers",
+      savedPrHint: "Load or delete past prayers saved on this device.",
+      noSavedPr: "No saved prayers yet.",
+      ttsNeedVoices:
+        "For best results, install voices ‘Paulina (es-MX)’ and ‘Karen (en-AU)’.",
     },
     es: {
+      jsReady: "JS: listo",
+      jsLoading: "JS: cargando…",
+      accountChecking: "Cuenta: verificando…",
+      manageBilling: "Administrar pagos",
       restoreAccess: "Restaurar acceso",
-      noSaved: "Todavía no hay elementos guardados.",
-      savedChats: "Los chats guardados se almacenan en este dispositivo.",
-      savedDevs: "Carga o elimina devocionales guardados en este dispositivo.",
-      savedPrayers: "Carga o elimina oraciones guardadas en este dispositivo.",
-
-      chatPlaceholder: "Pide una oración, un versículo, o ‘versículos sobre perdón’…",
+      emailStripePH: "Correo usado en Stripe…",
+      support: "❤️ Apoyar Alyana Luz",
+      supportNote:
+        "Tu apoyo ayuda a mantener y hacer crecer Alyana Luz — mejorando el desarrollo y expandiendo este ministerio.\nPara acceder a funciones premium, suscríbete con Apoyar, o restaura el acceso usando el correo que usaste en Stripe.",
+      chat: "Chat",
+      readBible: "Leer Biblia",
+      devotional: "Devocional",
+      dailyPrayer: "Oración Diaria",
+      savedChats: "Chats guardados",
+      savedChatsHint: "Cargar o eliminar cualquier chat guardado.",
+      noSavedChats: "Todavía no hay chats guardados.",
+      chatHint: "Los chats guardados se almacenan en este dispositivo.",
+      chatLang: "Idioma del chat",
+      voiceReady: "Voz: lista",
+      voiceMissing: "Voz: no disponible",
+      chatPH: "Pide una oración, un versículo o ‘versículos sobre perdón’…",
+      send: "Enviar",
       listen: "Escuchar",
       stop: "Detener",
+      new: "Nuevo",
+      save: "Guardar",
+      bibleReaderTitle: "Lectura Bíblica (Escuchar)",
+      bibleReaderHint: "Elige libro/capítulo y rango de versículos, o Capítulo completo.",
+      book: "Libro",
+      chapter: "Capítulo",
+      verseStart: "Versículo (inicio)",
+      verseEnd: "Versículo (fin)",
+      readerLanguage: "Idioma del lector",
+      onlyTwoVoices: "Solo dos voces, bloqueadas por consistencia.",
+      fullChapter: "Capítulo completo",
+      fullChapterHint: "Si está activado, los versículos se ignoran.",
+      versionLabel: "Etiqueta de versión (solo inglés)",
+      versionLabelHint: "Con voz en español, no se pronuncia la etiqueta de versión.",
+      read: "Leer",
+      bibleDbStatus: "Estado de la Biblia (DB)",
+      checking: "Verificando…",
+      passage: "Pasaje",
+      dash: "—",
+      spanishVoiceNote:
+        "La voz en español lee SOLO el texto del versículo (sin etiquetas en inglés).",
+      devIntro:
+        "Alyana da ejemplos cortos. Tú escribes y guardas tu devocional real.",
+      prIntro:
+        "Alyana da un ejemplo corto. Tú escribes y guardas tu oración real.",
+      streak: "Racha",
+      didItToday: "Lo hice hoy",
       generate: "Generar",
       generateStarters: "Generar ejemplos",
-      save: "Guardar",
-      newChat: "Nuevo",
-      send: "Enviar",
-      delete: "Eliminar",
-
-      didIt: "Lo hice hoy",
-      checking: "Verificando…",
-      loading: "Cargando…",
-      bibleDbChecking: "Verificando…",
-      voiceReady: "Voz: lista",
-      voiceMissing:
-        "No se encontró la voz. Tu navegador debe tener instaladas 'Paulina (es-MX)' y 'Karen (en-AU)'.",
-      bibleNotFound:
-        "No se encontró la base de datos bíblica. Confirma que Render incluye /data/bible.db y /data/bible_es_rvr.db.",
-
-      // Devotional placeholders
-      devMyContextPH: "Contexto / Observación (¿Qué está pasando? ¿Quién habla? ¿Por qué importa?)",
-      devMyReflectionPH: "Reflexión / Enseñanza (¿Qué revela sobre Dios? ¿Sobre mí?)",
-      devMyApplicationPH: "Aplicación (¿Qué haré hoy por esto?)",
-      devMyPrayerPH: "Oración (escribe tu oración real aquí)",
-      devMyNotesPH: "Notas…",
-
-      // Prayer placeholders
-      prMyAdorationPH: "Adoración (alaba a Dios por quién es)…",
-      prMyConfessionPH: "Confesión (lo que necesito confesar)…",
-      prMyThanksgivingPH: "Acción de gracias (por qué estoy agradecido/a)…",
-      prMySupplicationPH: "Súplica (peticiones por mí/otros)…",
-      prNotesPH: "Notas…",
-
-      // Bible
-      pickBookChapterFirst: "Primero elige un libro y un capítulo.",
-      select: "Seleccionar…",
-      optional: "(opcional)",
-      errorLoadingBooks: "(Error cargando libros)",
+      themeTitle: "Tema / Título (Alyana)",
+      scriptureA: "Escritura (Alyana)",
+      starterCtx: "Ejemplo — Contexto / Observación",
+      starterRef: "Ejemplo — Reflexión / Insight",
+      starterApp: "Ejemplo — Aplicación (Práctica)",
+      starterPr: "Ejemplo — Oración",
+      nowWriteYours: "Ahora escribe el tuyo:",
+      nowWritePrayer: "Ahora escribe tu oración real:",
+      notes: "Notas",
+      notesOptional: "Notas / Reflexión (opcional)",
+      requiredToSave:
+        "Requerido para guardar (racha): Contexto + Reflexión + Aplicación + Oración.",
+      savedDevotionals: "Devocionales guardados",
+      savedDevHint: "Cargar o eliminar devocionales guardados en este dispositivo.",
+      noSavedDev: "Todavía no hay devocionales guardados.",
+      savedPrayers: "Oraciones guardadas",
+      savedPrHint: "Cargar o eliminar oraciones guardadas en este dispositivo.",
+      noSavedPr: "Todavía no hay oraciones guardadas.",
+      ttsNeedVoices:
+        "Para mejores resultados, instala ‘Paulina (es-MX)’ y ‘Karen (en-AU)’.",
     },
   };
 
-  function normalizeUiLang(lang) {
-    return (lang === "es") ? "es" : "en";
-  }
-
   function getUiLang() {
-    const fromLS = localStorage.getItem(LS.uiLang);
-    if (fromLS === "es" || fromLS === "en") return fromLS;
-    // default English
-    return "en";
+    const v = (localStorage.getItem(LS.uiLang) || "en").toLowerCase();
+    return v === "es" ? "es" : "en";
   }
 
   function setUiLang(lang) {
-    const v = normalizeUiLang(lang);
+    const v = (lang || "en").toLowerCase() === "es" ? "es" : "en";
     localStorage.setItem(LS.uiLang, v);
-
-    // Sync any existing UI language selectors (optional)
-    const devSel = $("#devUiLang");
-    const prSel = $("#prUiLang");
-    const globalSel = $("#uiLangSelect"); // (optional if you add later)
-
-    if (devSel && devSel.value !== v) devSel.value = v;
-    if (prSel && prSel.value !== v) prSel.value = v;
-    if (globalSel && globalSel.value !== v) globalSel.value = v;
-
-    applyUiText();
+    applyUiLang(v);
   }
 
-  function applyUiText() {
-    const lang = getUiLang();
-    const t = I18N[lang];
+  function applyUiLang(lang) {
+    const t = I18N[lang] || I18N.en;
 
-    // Top restore access
-    const loginBtn = $("#loginBtn");
+    // JS status pill
+    setText("jsStatus", t.jsReady);
+
+    // Top CTA
+    const supportBtn = document.getElementById("supportBtn");
+    if (supportBtn) supportBtn.textContent = t.support;
+
+    const manageBillingBtn = document.getElementById("manageBillingBtn");
+    if (manageBillingBtn) manageBillingBtn.textContent = t.manageBilling;
+
+    const loginBtn = document.getElementById("loginBtn");
     if (loginBtn) loginBtn.textContent = t.restoreAccess;
 
-    // Chat controls
-    const chatInput = $("#chatInput");
-    if (chatInput) chatInput.setAttribute("placeholder", t.chatPlaceholder);
+    const loginEmail = document.getElementById("loginEmail");
+    if (loginEmail) loginEmail.placeholder = t.emailStripePH;
 
-    const chatSendBtn = $("#chatSendBtn");
+    const supportNote = document.querySelector(".support-note");
+    if (supportNote) supportNote.textContent = t.supportNote;
+
+    // Menu buttons (by text content is fragile; use data-target)
+    const menuBtns = $$(".menu-btn");
+    for (const b of menuBtns) {
+      const target = b.getAttribute("data-target");
+      if (target === "chatSection") b.textContent = t.chat;
+      if (target === "bibleSection") b.textContent = t.readBible;
+      if (target === "devotionalSection") b.textContent = t.devotional;
+      if (target === "prayerSection") b.textContent = t.dailyPrayer;
+    }
+
+    // Chat section labels/placeholder/buttons
+    setText("chatVoicePill", t.voiceReady);
+    const chatInput = document.getElementById("chatInput");
+    if (chatInput) chatInput.placeholder = t.chatPH;
+
+    const chatSendBtn = document.getElementById("chatSendBtn");
     if (chatSendBtn) chatSendBtn.textContent = t.send;
 
-    const chatListenBtn = $("#chatListenBtn");
+    const chatListenBtn = document.getElementById("chatListenBtn");
     if (chatListenBtn) chatListenBtn.textContent = t.listen;
 
-    const chatStopBtn = $("#chatStopBtn");
+    const chatStopBtn = document.getElementById("chatStopBtn");
     if (chatStopBtn) chatStopBtn.textContent = t.stop;
 
-    const chatNewBtn = $("#chatNewBtn");
-    if (chatNewBtn) chatNewBtn.textContent = t.newChat;
+    const chatNewBtn = document.getElementById("chatNewBtn");
+    if (chatNewBtn) chatNewBtn.textContent = t.new;
 
-    const chatSaveBtn = $("#chatSaveBtn");
+    const chatSaveBtn = document.getElementById("chatSaveBtn");
     if (chatSaveBtn) chatSaveBtn.textContent = t.save;
 
-    // Saved list placeholders (if empty)
-    const chatSavedList = $("#chatSavedList");
-    if (chatSavedList && !chatSavedList.querySelector("button")) {
-      chatSavedList.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
-    }
+    // Saved chats panel
+    const savedChatsTitle = document.querySelector("#chatSection .card:last-child h4");
+    if (savedChatsTitle) savedChatsTitle.textContent = t.savedChats;
+    const savedChatsMuted = document.querySelector("#chatSection .card:last-child .muted");
+    if (savedChatsMuted) savedChatsMuted.textContent = t.savedChatsHint;
 
-    const devSavedList = $("#devSavedList");
-    if (devSavedList && !devSavedList.querySelector("button")) {
-      devSavedList.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
-    }
+    // Bible section buttons
+    const readBibleBtn = document.getElementById("readBibleBtn");
+    if (readBibleBtn) readBibleBtn.textContent = t.read;
 
-    const prSavedList = $("#prSavedList");
-    if (prSavedList && !prSavedList.querySelector("button")) {
-      prSavedList.innerHTML = `<small style="opacity:0.75;">${t.noSaved}</small>`;
-    }
+    const listenBibleBtn = document.getElementById("listenBible");
+    if (listenBibleBtn) listenBibleBtn.textContent = t.listen;
 
-    // Devotional buttons
-    const devotionalBtn = $("#devotionalBtn");
+    const stopBibleBtn = document.getElementById("stopBible");
+    if (stopBibleBtn) stopBibleBtn.textContent = t.stop;
+
+    // Bible status headings
+    const dbStatusH4 = document.querySelector("#bibleSection h4");
+    if (dbStatusH4) dbStatusH4.textContent = t.bibleDbStatus;
+
+    const passageCardH4 = document.querySelectorAll("#bibleSection h4")[1];
+    if (passageCardH4) passageCardH4.textContent = t.passage;
+
+    // Devotional section headings
+    const devIntro = document.getElementById("devIntro");
+    if (devIntro) devIntro.textContent = t.devIntro;
+
+    const devStreakBtn = document.getElementById("devStreakBtn");
+    if (devStreakBtn) devStreakBtn.textContent = t.didItToday;
+
+    const devotionalBtn = document.getElementById("devotionalBtn");
     if (devotionalBtn) devotionalBtn.textContent = t.generate;
 
-    const devSaveBtn = $("#devSaveBtn");
+    const devSaveBtn = document.getElementById("devSaveBtn");
     if (devSaveBtn) devSaveBtn.textContent = t.save;
 
-    const devStreakBtn = $("#devStreakBtn");
-    if (devStreakBtn) devStreakBtn.textContent = t.didIt;
+    setText("devReqNote", t.requiredToSave);
 
-    // Devotional placeholders
-    const devMyContext = $("#devMyContext");
-    if (devMyContext) devMyContext.setAttribute("placeholder", t.devMyContextPH);
+    // Prayer section headings
+    const prIntro = document.getElementById("prIntro");
+    if (prIntro) prIntro.textContent = t.prIntro;
 
-    const devMyReflection = $("#devMyReflection");
-    if (devMyReflection) devMyReflection.setAttribute("placeholder", t.devMyReflectionPH);
+    const prStreakBtn = document.getElementById("prStreakBtn");
+    if (prStreakBtn) prStreakBtn.textContent = t.didItToday;
 
-    const devMyApplication = $("#devMyApplication");
-    if (devMyApplication) devMyApplication.setAttribute("placeholder", t.devMyApplicationPH);
-
-    const devMyPrayer = $("#devMyPrayer");
-    if (devMyPrayer) devMyPrayer.setAttribute("placeholder", t.devMyPrayerPH);
-
-    const devMyNotes = $("#devMyNotes");
-    if (devMyNotes) devMyNotes.setAttribute("placeholder", t.devMyNotesPH);
-
-    // Prayer buttons
-    const prayerBtn = $("#prayerBtn");
+    const prayerBtn = document.getElementById("prayerBtn");
     if (prayerBtn) prayerBtn.textContent = t.generateStarters;
 
-    const prSaveBtn = $("#prSaveBtn");
+    const prSaveBtn = document.getElementById("prSaveBtn");
     if (prSaveBtn) prSaveBtn.textContent = t.save;
 
-    const prStreakBtn = $("#prStreakBtn");
-    if (prStreakBtn) prStreakBtn.textContent = t.didIt;
+    // Pills (streak)
+    updateStreakPills();
 
-    // Prayer placeholders
-    const myAdoration = $("#myAdoration");
-    if (myAdoration) myAdoration.setAttribute("placeholder", t.prMyAdorationPH);
-
-    const myConfession = $("#myConfession");
-    if (myConfession) myConfession.setAttribute("placeholder", t.prMyConfessionPH);
-
-    const myThanksgiving = $("#myThanksgiving");
-    if (myThanksgiving) myThanksgiving.setAttribute("placeholder", t.prMyThanksgivingPH);
-
-    const mySupplication = $("#mySupplication");
-    if (mySupplication) mySupplication.setAttribute("placeholder", t.prMySupplicationPH);
-
-    const prayerNotes = $("#prayerNotes");
-    if (prayerNotes) prayerNotes.setAttribute("placeholder", t.prNotesPH);
+    // Saved lists empty text refresh
+    renderSavedChats();
+    renderSavedDevotionals();
+    renderSavedPrayers();
   }
 
-  // ---------------------------
-  // Tabs
-  // ---------------------------
-  function initTabs() {
-    const buttons = document.querySelectorAll(".menu-btn");
-    const sections = document.querySelectorAll(".app-section");
-
-    buttons.forEach((btn) => {
+  // -----------------------------
+  // Navigation (sections)
+  // -----------------------------
+  function initMenu() {
+    const buttons = $$(".menu-btn");
+    for (const btn of buttons) {
       btn.addEventListener("click", () => {
-        buttons.forEach((b) => b.classList.remove("active"));
-        sections.forEach((s) => s.classList.remove("active"));
-
+        for (const b of buttons) b.classList.remove("active");
         btn.classList.add("active");
+
         const target = btn.getAttribute("data-target");
+        $$(".app-section").forEach((sec) => sec.classList.remove("active"));
         const sec = document.getElementById(target);
         if (sec) sec.classList.add("active");
       });
-    });
+    }
   }
 
-  // ---------------------------
-  // Speech (locked voices)
-  // ---------------------------
-  const VOICE_LOCK = {
-    en: { wantNameIncludes: "karen", wantLangPrefix: "en" },     // Karen en-AU
-    es: { wantNameIncludes: "paulina", wantLangPrefix: "es" },  // Paulina es-MX
-  };
+  // -----------------------------
+  // TTS (two-voice locked)
+  // -----------------------------
+  let voices = [];
+  let voicesReady = false;
 
-  function getAllVoices() {
-    return new Promise((resolve) => {
-      let voices = speechSynthesis.getVoices();
-      if (voices && voices.length) return resolve(voices);
-
-      speechSynthesis.onvoiceschanged = () => {
-        voices = speechSynthesis.getVoices();
-        resolve(voices || []);
-      };
-
-      setTimeout(() => resolve(speechSynthesis.getVoices() || []), 800);
-    });
+  function loadVoices() {
+    voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    voicesReady = Array.isArray(voices) && voices.length > 0;
+    updateVoicePills();
   }
 
-  async function pickLockedVoice(lang /* 'en'|'es' */) {
-    const voices = await getAllVoices();
-    const spec = VOICE_LOCK[lang];
+  function bestVoiceFor(lang) {
+    if (!voicesReady) return null;
+    const want = (lang || "en").toLowerCase();
 
-    const byName = voices.find(v => (v.name || "").toLowerCase().includes(spec.wantNameIncludes));
-    if (byName && (byName.lang || "").toLowerCase().startsWith(spec.wantLangPrefix)) return byName;
+    // Prefer exact names if available
+    if (want === "es") {
+      const v1 = voices.find((v) => (v.name || "").toLowerCase().includes("paulina"));
+      if (v1) return v1;
+      const v2 = voices.find((v) => (v.lang || "").toLowerCase().startsWith("es"));
+      if (v2) return v2;
+      return voices[0] || null;
+    }
 
-    if (byName) return byName;
-
-    const byLang = voices.find(v => (v.lang || "").toLowerCase().startsWith(spec.wantLangPrefix));
-    return byLang || null;
+    // English: prefer "Karen"
+    const e1 = voices.find((v) => (v.name || "").toLowerCase().includes("karen"));
+    if (e1) return e1;
+    const e2 = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en"));
+    if (e2) return e2;
+    return voices[0] || null;
   }
 
-  function stopSpeak() {
-    try { speechSynthesis.cancel(); } catch {}
+  function speakText(text, lang = "en") {
+    if (!window.speechSynthesis) return false;
+    if (!text || !text.trim()) return false;
+
+    speechSynthesis.cancel();
+
+    const u = new SpeechSynthesisUtterance(text);
+    const v = bestVoiceFor(lang);
+
+    if (v) {
+      u.voice = v;
+      u.lang = v.lang || (lang === "es" ? "es-MX" : "en-US");
+    } else {
+      u.lang = lang === "es" ? "es-MX" : "en-US";
+    }
+
+    // Slightly slower for clarity
+    u.rate = 1.0;
+    u.pitch = 1.0;
+
+    speechSynthesis.speak(u);
+    return true;
   }
 
-  async function speakText(text, lang /* 'en'|'es' */, rate = 1.0) {
-    stopSpeak();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = rate;
-    utter.pitch = 1;
-
-    const v = await pickLockedVoice(lang);
-    if (!v) throw new Error("VOICE_NOT_FOUND");
-    utter.voice = v;
-    utter.lang = v.lang || (lang === "es" ? "es-MX" : "en-AU");
-
-    return new Promise((resolve, reject) => {
-      utter.onend = resolve;
-      utter.onerror = reject;
-      speechSynthesis.speak(utter);
-    });
+  function stopSpeaking() {
+    if (!window.speechSynthesis) return;
+    speechSynthesis.cancel();
   }
 
-  // ---------------------------
+  function updateVoicePills() {
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const ok = voicesReady && !!bestVoiceFor("en") && !!bestVoiceFor("es");
+    const pillText = voicesReady ? t.voiceReady : t.voiceMissing;
+
+    setText("ttsStatus", pillText);
+    setText("chatVoicePill", pillText);
+
+    // Optional hint: show missing voice guidance as a system message once
+    if (!ok) {
+      // We do not force spam; only show if chat exists and is empty
+      const chatEl = document.getElementById("chat");
+      if (chatEl && chatEl.children.length === 0) {
+        addSystemMessage(t.ttsNeedVoices);
+      }
+    }
+  }
+
+  // Keep voices updated across browsers
+  if (window.speechSynthesis) {
+    speechSynthesis.onvoiceschanged = () => loadVoices();
+  }
+
+  // -----------------------------
   // Chat
-  // ---------------------------
-  function chatStorageLoad() {
-    return safeJSON(localStorage.getItem(LS.savedChats) || "[]", []);
-  }
-  function chatStorageSave(list) {
-    localStorage.setItem(LS.savedChats, JSON.stringify(list || []));
-  }
-
-  function addBubble(kind, text) {
-    const chat = $("#chat");
+  // -----------------------------
+  function addBubble(text, who = "bot") {
+    const chat = document.getElementById("chat");
     if (!chat) return;
 
     const row = document.createElement("div");
-    row.className = `bubble-row ${kind}`;
+    row.className = `bubble-row ${who}`;
 
     const bubble = document.createElement("div");
-    bubble.className = `bubble ${kind}`;
+    bubble.className = `bubble ${who}`;
     bubble.textContent = text;
 
     row.appendChild(bubble);
     chat.appendChild(row);
+
+    // Scroll to bottom
     chat.scrollTop = chat.scrollHeight;
   }
 
-  function getLastBotText() {
-    const chat = $("#chat");
-    if (!chat) return "";
-    const bots = chat.querySelectorAll(".bubble.bot");
-    if (!bots.length) return "";
-    return (bots[bots.length - 1].textContent || "").trim();
+  function addSystemMessage(text) {
+    addBubble(text, "system");
+  }
+
+  function getSavedChats() {
+    return safeJSONParse(localStorage.getItem(LS.chats) || "[]", []);
+  }
+
+  function setSavedChats(list) {
+    localStorage.setItem(LS.chats, JSON.stringify(list || []));
   }
 
   function renderSavedChats() {
-    const box = $("#chatSavedList");
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const box = document.getElementById("chatSavedList");
     if (!box) return;
 
-    const lang = getUiLang();
-    const t = I18N[lang];
-
-    const list = chatStorageLoad();
+    const chats = getSavedChats();
     box.innerHTML = "";
 
-    if (!list.length) {
+    if (!chats.length) {
       const small = document.createElement("small");
       small.style.opacity = "0.75";
-      small.textContent = t.noSaved;
+      small.textContent = t.noSavedChats;
       box.appendChild(small);
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${item.title || "Chat"} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        const chat = $("#chat");
-        if (!chat) return;
-        chat.innerHTML = "";
-        (item.messages || []).forEach(m => addBubble(m.kind, m.text));
-      });
+    chats
+      .slice()
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .forEach((c) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        const when = new Date(c.ts || Date.now()).toLocaleString();
+        btn.textContent = `${c.title || "Chat"} • ${when}`;
+        btn.addEventListener("click", () => loadChat(c));
+        box.appendChild(btn);
 
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = chatStorageLoad().filter((_, i) => i !== idx);
-        chatStorageSave(next);
-        renderSavedChats();
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.textContent = uiLang === "es" ? "Eliminar" : "Delete";
+        del.addEventListener("click", () => {
+          const next = getSavedChats().filter((x) => x.id !== c.id);
+          setSavedChats(next);
+          renderSavedChats();
+        });
+        box.appendChild(del);
       });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
   }
 
-  function getChatMessagesFromDOM() {
-    const chat = $("#chat");
+  function serializeChat() {
+    const chat = document.getElementById("chat");
     if (!chat) return [];
-    const rows = chat.querySelectorAll(".bubble-row");
-    const msgs = [];
-    rows.forEach(r => {
-      const kind = r.classList.contains("user") ? "user" : r.classList.contains("bot") ? "bot" : "system";
-      const b = r.querySelector(".bubble");
-      const text = (b && b.textContent) ? b.textContent : "";
-      msgs.push({ kind, text });
+
+    const items = [];
+    for (const row of chat.children) {
+      const bubble = row.querySelector(".bubble");
+      if (!bubble) continue;
+      const who =
+        row.classList.contains("user") ? "user" :
+        row.classList.contains("bot") ? "bot" : "system";
+      items.push({ who, text: bubble.textContent || "" });
+    }
+    return items;
+  }
+
+  function clearChat() {
+    const chat = document.getElementById("chat");
+    if (chat) chat.innerHTML = "";
+  }
+
+  function loadChat(chatObj) {
+    clearChat();
+    (chatObj.items || []).forEach((it) => addBubble(it.text, it.who));
+  }
+
+  async function sendChatToBackend(message) {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
     });
-    return msgs;
+    if (!res.ok) throw new Error("Chat request failed");
+    return res.json();
   }
 
   function initChat() {
-    const form = $("#chatForm");
-    const input = $("#chatInput");
-    const newBtn = $("#chatNewBtn");
-    const saveBtn = $("#chatSaveBtn");
-    const sendBtn = $("#chatSendBtn");
-    const stopBtn = $("#chatStopBtn");
-    const listenBtn = $("#chatListenBtn");
+    const form = document.getElementById("chatForm");
+    const input = document.getElementById("chatInput");
+    const listenBtn = document.getElementById("chatListenBtn");
+    const stopBtn = document.getElementById("chatStopBtn");
+    const newBtn = document.getElementById("chatNewBtn");
+    const saveBtn = document.getElementById("chatSaveBtn");
+
+    if (!form || !input) return;
 
     // Restore draft
-    if (input) input.value = localStorage.getItem(LS.chatDraft) || "";
+    const draft = localStorage.getItem(LS.chatDraft) || "";
+    if (draft) input.value = draft;
 
-    if (input) {
-      input.addEventListener("input", () => {
-        localStorage.setItem(LS.chatDraft, input.value || "");
+    input.addEventListener("input", debounce(() => {
+      localStorage.setItem(LS.chatDraft, input.value || "");
+    }, 200));
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = (input.value || "").trim();
+      if (!msg) return;
+
+      addBubble(msg, "user");
+      input.value = "";
+      localStorage.setItem(LS.chatDraft, "");
+
+      try {
+        const data = await sendChatToBackend(msg);
+        const reply = (data && data.reply) ? String(data.reply) : "(no reply)";
+        addBubble(reply, "bot");
+      } catch (err) {
+        addSystemMessage(getUiLang() === "es" ? "Error enviando mensaje." : "Error sending message.");
+      }
+    });
+
+    if (listenBtn) {
+      listenBtn.addEventListener("click", () => {
+        // Listen to the last bot message
+        const chat = document.getElementById("chat");
+        if (!chat) return;
+        const bubbles = Array.from(chat.querySelectorAll(".bubble.bot"));
+        const last = bubbles[bubbles.length - 1];
+        if (!last) return;
+
+        const sel = document.getElementById("chatLangSelect");
+        const mode = sel ? (sel.value || "auto") : "auto";
+        let lang = "en";
+        if (mode === "es") lang = "es";
+        else if (mode === "en") lang = "en";
+        else {
+          // auto: detect basic Spanish chars/words
+          const txt = (last.textContent || "").toLowerCase();
+          lang = /[áéíóúñ¡¿]|(\b(el|la|de|que|para|con|por|dios)\b)/.test(txt) ? "es" : "en";
+        }
+
+        speakText(last.textContent || "", lang);
       });
     }
 
-    if (stopBtn) stopBtn.addEventListener("click", stopSpeak);
+    if (stopBtn) stopBtn.addEventListener("click", () => stopSpeaking());
 
     if (newBtn) {
       newBtn.addEventListener("click", () => {
-        const chat = $("#chat");
-        if (chat) chat.innerHTML = "";
-        if (input) input.value = "";
-        localStorage.removeItem(LS.chatDraft);
-        stopSpeak();
+        clearChat();
+        addSystemMessage(getUiLang() === "es" ? "Nuevo chat." : "New chat.");
       });
     }
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        const msgs = getChatMessagesFromDOM();
-        if (!msgs.length) return toast(getUiLang() === "es" ? "Nada para guardar todavía." : "Nothing to save yet.");
-        const title = (msgs.find(m => m.kind === "user")?.text || "Chat").slice(0, 36);
-        const list = chatStorageLoad();
-        list.push({ ts: nowISO(), title, messages: msgs });
-        chatStorageSave(list);
+        const items = serializeChat();
+        if (!items.length) return;
+
+        const id = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+        const title = items.find((x) => x.who === "user")?.text?.slice(0, 40) || "Chat";
+        const obj = { id, ts: Date.now(), title, items };
+
+        const chats = getSavedChats();
+        chats.push(obj);
+        setSavedChats(chats);
         renderSavedChats();
-        toast(getUiLang() === "es" ? "Guardado." : "Saved.");
-      });
-    }
-
-    if (listenBtn) {
-      listenBtn.addEventListener("click", async () => {
-        const last = getLastBotText() || "";
-        if (!last) return toast(getUiLang() === "es" ? "No hay mensaje para leer todavía." : "No bot message to read yet.");
-
-        const langSel = $("#chatLangSelect");
-        const chosen = (langSel && langSel.value) ? langSel.value : "auto";
-        const lang = (chosen === "es") ? "es" : (chosen === "en") ? "en" : (/[áéíóúñ¿¡]/i.test(last) ? "es" : "en");
-
-        try {
-          await speakText(last, lang);
-        } catch (e) {
-          toast(I18N[getUiLang()].voiceMissing);
-        }
-      });
-    }
-
-    if (form) {
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        if (!input) return;
-
-        const msg = (input.value || "").trim();
-        if (!msg) return;
-
-        addBubble("user", msg);
-        input.value = "";
-        localStorage.removeItem(LS.chatDraft);
-
-        sendBtn && (sendBtn.disabled = true);
-
-        try {
-          const resp = await apiPost("/chat", { message: msg });
-          const reply = (resp && resp.reply) ? String(resp.reply) : "(No reply)";
-          addBubble("bot", reply);
-        } catch (err) {
-          addBubble("system", `Error: ${String(err.message || err)}`);
-        } finally {
-          sendBtn && (sendBtn.disabled = false);
-        }
+        addSystemMessage(getUiLang() === "es" ? "Chat guardado." : "Chat saved.");
       });
     }
 
     renderSavedChats();
   }
 
-  // ---------------------------
-  // Devotionals
-  // ---------------------------
-  function loadSavedDevs() {
-    return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []);
-  }
-  function saveSavedDevs(list) {
-    localStorage.setItem(LS.savedDevs, JSON.stringify(list || []));
+  // -----------------------------
+  // Bible API
+  // -----------------------------
+  async function apiGetJSON(url) {
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${txt}`);
+    }
+    return res.json();
   }
 
-  function renderSavedDevs() {
-    const box = $("#devSavedList");
+  function bibleVersionForReadingVoice(readingVoiceValue) {
+    // readingVoice is either "en" or "es"
+    if ((readingVoiceValue || "en").toLowerCase() === "es") return "es_rvr";
+    return "en_default";
+  }
+
+  function setBibleDbStatus(text) {
+    const el = document.getElementById("bibleDbStatus");
+    if (el) el.textContent = text;
+  }
+
+  function setPassage(ref, text) {
+    setText("passageRef", ref || I18N[getUiLang()].dash);
+    const pt = document.getElementById("passageText");
+    if (pt) pt.textContent = text || I18N[getUiLang()].dash;
+  }
+
+  async function loadBooks() {
+    const readingVoice = document.getElementById("readingVoice");
+    const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
+
+    const data = await apiGetJSON(`/bible/books?version=${encodeURIComponent(version)}`);
+    return data.books || [];
+  }
+
+  async function loadChapters(bookId) {
+    const readingVoice = document.getElementById("readingVoice");
+    const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
+
+    const data = await apiGetJSON(`/bible/chapters?version=${encodeURIComponent(version)}&book_id=${encodeURIComponent(bookId)}`);
+    return data.chapters || [];
+  }
+
+  async function loadMaxVerses(bookId, chapter) {
+    const readingVoice = document.getElementById("readingVoice");
+    const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
+
+    const data = await apiGetJSON(`/bible/verses_max?version=${encodeURIComponent(version)}&book_id=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`);
+    return data.max_verse || 0;
+  }
+
+  async function loadText({ bookId, chapter, verseStart, verseEnd, wholeChapter }) {
+    const readingVoice = document.getElementById("readingVoice");
+    const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
+
+    const params = new URLSearchParams();
+    params.set("version", version);
+    params.set("book_id", String(bookId));
+    params.set("chapter", String(chapter));
+
+    if (wholeChapter) {
+      params.set("whole_chapter", "true");
+    } else {
+      if (verseStart) params.set("verse_start", String(verseStart));
+      if (verseEnd) params.set("verse_end", String(verseEnd));
+    }
+
+    return apiGetJSON(`/bible/text?${params.toString()}`);
+  }
+
+  function fillSelect(selectEl, options, placeholder = "—") {
+    if (!selectEl) return;
+    selectEl.innerHTML = "";
+    if (placeholder) {
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = placeholder;
+      selectEl.appendChild(opt0);
+    }
+    for (const o of options) {
+      const opt = document.createElement("option");
+      opt.value = String(o.value);
+      opt.textContent = String(o.label);
+      selectEl.appendChild(opt);
+    }
+  }
+
+  async function refreshBibleDbStatus() {
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    try {
+      const readingVoice = document.getElementById("readingVoice");
+      const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
+      const st = await apiGetJSON(`/bible/status?version=${encodeURIComponent(version)}`);
+      const label = version === "es_rvr" ? "es_rvr" : "en_default";
+      setBibleDbStatus(`${uiLang === "es" ? "OK" : "OK"} • ${label} • ${uiLang === "es" ? "versículos" : "verses"}: ${st.verse_count}`);
+    } catch {
+      setBibleDbStatus(uiLang === "es" ? "Error al verificar la Biblia." : "Error checking Bible DB.");
+    }
+  }
+
+  function initBible() {
+    const bookSelect = document.getElementById("bookSelect");
+    const chapterSelect = document.getElementById("chapterSelect");
+    const verseStartSelect = document.getElementById("verseStartSelect");
+    const verseEndSelect = document.getElementById("verseEndSelect");
+    const fullChapter = document.getElementById("fullChapter");
+    const readingVoice = document.getElementById("readingVoice");
+
+    const readBtn = document.getElementById("readBibleBtn");
+    const listenBtn = document.getElementById("listenBible");
+    const stopBtn = document.getElementById("stopBible");
+
+    if (!bookSelect || !chapterSelect) return;
+
+    let lastPassage = { ref: "", textForReading: "", lang: "en" };
+
+    const resetVerses = () => {
+      fillSelect(verseStartSelect, [], "—");
+      fillSelect(verseEndSelect, [], "(optional)");
+    };
+
+    const onBookChange = async () => {
+      const bid = parseInt(bookSelect.value, 10);
+      if (!bid) {
+        fillSelect(chapterSelect, [], "—");
+        resetVerses();
+        return;
+      }
+
+      fillSelect(chapterSelect, [], "…");
+      resetVerses();
+
+      try {
+        const chapters = await loadChapters(bid);
+        fillSelect(
+          chapterSelect,
+          chapters.map((c) => ({ value: c, label: c })),
+          "Select…"
+        );
+      } catch {
+        fillSelect(chapterSelect, [], "—");
+      }
+    };
+
+    const onChapterChange = async () => {
+      const bid = parseInt(bookSelect.value, 10);
+      const ch = parseInt(chapterSelect.value, 10);
+      if (!bid || !ch) {
+        resetVerses();
+        return;
+      }
+
+      try {
+        const maxV = await loadMaxVerses(bid, ch);
+        const verses = Array.from({ length: maxV }, (_, i) => i + 1).map((v) => ({ value: v, label: v }));
+        fillSelect(verseStartSelect, verses, "Select…");
+        fillSelect(verseEndSelect, verses, "(optional)");
+      } catch {
+        resetVerses();
+      }
+    };
+
+    const readPassage = async () => {
+      const uiLang = getUiLang();
+      const t = I18N[uiLang];
+
+      const bid = parseInt(bookSelect.value, 10);
+      const ch = parseInt(chapterSelect.value, 10);
+
+      if (!bid || !ch) {
+        setPassage(t.dash, uiLang === "es" ? "Selecciona libro y capítulo." : "Select book and chapter.");
+        return null;
+      }
+
+      const whole = !!(fullChapter && fullChapter.checked);
+
+      let vs = parseInt(verseStartSelect?.value || "", 10);
+      let ve = parseInt(verseEndSelect?.value || "", 10);
+      if (!vs) vs = null;
+      if (!ve) ve = null;
+
+      try {
+        const data = await loadText({
+          bookId: bid,
+          chapter: ch,
+          verseStart: vs,
+          verseEnd: ve,
+          wholeChapter: whole,
+        });
+
+        // Display
+        const ref = `${data.book} ${data.chapter}`;
+        setPassage(ref, data.text || "");
+
+        // Prepare TTS text
+        const rv = readingVoice ? (readingVoice.value || "en") : "en";
+        const lang = rv === "es" ? "es" : "en";
+
+        // If Spanish voice, read ONLY verse text (no English labels)
+        let ttsText = data.text || "";
+        if (lang === "es") {
+          // Keep as-is: your DB is Spanish; we just avoid adding labels
+          ttsText = (data.verses || [])
+            .map((v) => `${v.text}`)
+            .join("\n");
+        } else {
+          // English: optionally speak version label first
+          const versionSelect = document.getElementById("versionSelect");
+          const versionLabel = versionSelect ? (versionSelect.value || "KJV") : "KJV";
+          ttsText = `${versionLabel}. ${ref}.\n\n${data.text || ""}`;
+        }
+
+        lastPassage = { ref, textForReading: ttsText, lang };
+        return lastPassage;
+      } catch (e) {
+        setPassage(t.dash, uiLang === "es" ? "No se encontró el pasaje." : "Passage not found.");
+        return null;
+      }
+    };
+
+    // Read button (fetch + display only)
+    if (readBtn) readBtn.addEventListener("click", () => { readPassage(); });
+
+    // Listen button (speak last read; if none, read then speak)
+    if (listenBtn) {
+      listenBtn.addEventListener("click", async () => {
+        const p = lastPassage.textForReading ? lastPassage : await readPassage();
+        if (!p || !p.textForReading) return;
+        speakText(p.textForReading, p.lang);
+      });
+    }
+
+    if (stopBtn) stopBtn.addEventListener("click", () => stopSpeaking());
+
+    if (bookSelect) bookSelect.addEventListener("change", onBookChange);
+    if (chapterSelect) chapterSelect.addEventListener("change", onChapterChange);
+
+    if (readingVoice) {
+      readingVoice.addEventListener("change", async () => {
+        // Reload books for chosen DB/language
+        try {
+          fillSelect(bookSelect, [], "Loading…");
+          fillSelect(chapterSelect, [], "—");
+          resetVerses();
+          setPassage(I18N[getUiLang()].dash, I18N[getUiLang()].dash);
+
+          const books = await loadBooks();
+          fillSelect(
+            bookSelect,
+            books.map((b) => ({ value: b.id, label: b.name })),
+            ""
+          );
+          await refreshBibleDbStatus();
+        } catch {
+          // ignore
+        }
+      });
+    }
+
+    if (fullChapter) {
+      fullChapter.addEventListener("change", () => {
+        const whole = !!fullChapter.checked;
+        if (verseStartSelect) verseStartSelect.disabled = whole;
+        if (verseEndSelect) verseEndSelect.disabled = whole;
+      });
+    }
+
+    // Initial load
+    (async () => {
+      try {
+        fillSelect(bookSelect, [], "Loading…");
+        const books = await loadBooks();
+        fillSelect(
+          bookSelect,
+          books.map((b) => ({ value: b.id, label: b.name })),
+          ""
+        );
+        await refreshBibleDbStatus();
+        setPassage(I18N[getUiLang()].dash, I18N[getUiLang()].dash);
+      } catch {
+        // ignore
+      }
+    })();
+  }
+
+  // -----------------------------
+  // Devotional / Prayer (local save + streak)
+  // -----------------------------
+  function getSavedDevotionals() {
+    return safeJSONParse(localStorage.getItem(LS.devotionals) || "[]", []);
+  }
+  function setSavedDevotionals(list) {
+    localStorage.setItem(LS.devotionals, JSON.stringify(list || []));
+  }
+  function getSavedPrayers() {
+    return safeJSONParse(localStorage.getItem(LS.prayers) || "[]", []);
+  }
+  function setSavedPrayers(list) {
+    localStorage.setItem(LS.prayers, JSON.stringify(list || []));
+  }
+
+  function updateStreakPills() {
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const devStreak = parseInt(localStorage.getItem(LS.devStreak) || "0", 10) || 0;
+    const prStreak = parseInt(localStorage.getItem(LS.prStreak) || "0", 10) || 0;
+
+    const devPill = document.getElementById("devStreakPill");
+    if (devPill) devPill.textContent = `${t.streak}: ${devStreak}`;
+
+    const prPill = document.getElementById("prStreakPill");
+    if (prPill) prPill.textContent = `${t.streak}: ${prStreak}`;
+  }
+
+  function bumpStreak(which) {
+    const today = todayKey();
+    const uiLang = getUiLang();
+    const doneKey = which === "dev" ? LS.lastDevDone : LS.lastPrDone;
+    const streakKey = which === "dev" ? LS.devStreak : LS.prStreak;
+
+    const lastDone = localStorage.getItem(doneKey) || "";
+    if (lastDone === today) {
+      addSystemMessage(uiLang === "es" ? "Ya marcado hoy." : "Already marked today.");
+      return;
+    }
+
+    const cur = parseInt(localStorage.getItem(streakKey) || "0", 10) || 0;
+    localStorage.setItem(streakKey, String(cur + 1));
+    localStorage.setItem(doneKey, today);
+    updateStreakPills();
+  }
+
+  function renderSavedDevotionals() {
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const box = document.getElementById("devSavedList");
     if (!box) return;
 
-    const lang = getUiLang();
-    const t = I18N[lang];
-
-    const list = loadSavedDevs();
+    const items = getSavedDevotionals();
     box.innerHTML = "";
 
-    if (!list.length) {
+    if (!items.length) {
       const small = document.createElement("small");
       small.style.opacity = "0.75";
-      small.textContent = t.noSaved;
+      small.textContent = t.noSavedDev;
       box.appendChild(small);
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
+    items
+      .slice()
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .forEach((it) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        const when = new Date(it.ts || Date.now()).toLocaleString();
+        btn.textContent = `${it.title || (uiLang === "es" ? "Devocional" : "Devotional")} • ${when}`;
+        btn.addEventListener("click", () => {
+          setText("devTheme", it.theme || "—");
+          setText("devScriptureRef", it.scriptureRef || "—");
+          setText("devScriptureText", it.scriptureText || "—");
+          setText("devStarterContext", it.starterContext || "—");
+          setText("devStarterReflection", it.starterReflection || "—");
+          setText("devStarterApplication", it.starterApplication || "—");
+          setText("devStarterPrayer", it.starterPrayer || "—");
+          const ctx = document.getElementById("devMyContext");
+          const ref = document.getElementById("devMyReflection");
+          const app = document.getElementById("devMyApplication");
+          const pr = document.getElementById("devMyPrayer");
+          const notes = document.getElementById("devMyNotes");
+          if (ctx) ctx.value = it.myContext || "";
+          if (ref) ref.value = it.myReflection || "";
+          if (app) app.value = it.myApplication || "";
+          if (pr) pr.value = it.myPrayer || "";
+          if (notes) notes.value = it.myNotes || "";
+        });
+        box.appendChild(btn);
 
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${(item.theme || (lang === "es" ? "Devocional" : "Devotional")).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        $("#devTheme").textContent = item.theme || "—";
-        $("#devScriptureRef").textContent = item.scripture_ref || "—";
-        $("#devScriptureText").textContent = item.scripture_text || "—";
-        $("#devStarterContext").textContent = item.starter_context || "—";
-        $("#devStarterReflection").textContent = item.starter_reflection || "—";
-        $("#devStarterApplication").textContent = item.starter_application || "—";
-        $("#devStarterPrayer").textContent = item.starter_prayer || "—";
-
-        $("#devMyContext").value = item.my_context || "";
-        $("#devMyReflection").value = item.my_reflection || "";
-        $("#devMyApplication").value = item.my_application || "";
-        $("#devMyPrayer").value = item.my_prayer || "";
-        $("#devMyNotes").value = item.my_notes || "";
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.textContent = uiLang === "es" ? "Eliminar" : "Delete";
+        del.addEventListener("click", () => {
+          const next = getSavedDevotionals().filter((x) => x.id !== it.id);
+          setSavedDevotionals(next);
+          renderSavedDevotionals();
+        });
+        box.appendChild(del);
       });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = loadSavedDevs().filter((_, i) => i !== idx);
-        saveSavedDevs(next);
-        renderSavedDevs();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
-  }
-
-  function initDevotional() {
-    const generateBtn = $("#devotionalBtn");
-    const saveBtn = $("#devSaveBtn");
-    const langSel = $("#devUiLang");
-
-    // global lang init
-    if (langSel) {
-      langSel.addEventListener("change", () => setUiLang(langSel.value));
-    }
-
-    // restore drafts
-    const draft = safeJSON(localStorage.getItem(LS.devDraft) || "{}", {});
-    if ($("#devMyContext")) $("#devMyContext").value = draft.my_context || "";
-    if ($("#devMyReflection")) $("#devMyReflection").value = draft.my_reflection || "";
-    if ($("#devMyApplication")) $("#devMyApplication").value = draft.my_application || "";
-    if ($("#devMyPrayer")) $("#devMyPrayer").value = draft.my_prayer || "";
-    if ($("#devMyNotes")) $("#devMyNotes").value = draft.my_notes || "";
-
-    const saveDraft = () => {
-      const d = {
-        my_context: $("#devMyContext")?.value || "",
-        my_reflection: $("#devMyReflection")?.value || "",
-        my_application: $("#devMyApplication")?.value || "",
-        my_prayer: $("#devMyPrayer")?.value || "",
-        my_notes: $("#devMyNotes")?.value || "",
-      };
-      localStorage.setItem(LS.devDraft, JSON.stringify(d));
-    };
-
-    ["#devMyContext","#devMyReflection","#devMyApplication","#devMyPrayer","#devMyNotes"].forEach(id => {
-      const el = $(id);
-      if (el) el.addEventListener("input", saveDraft);
-    });
-
-    if (generateBtn) {
-      generateBtn.addEventListener("click", async () => {
-        generateBtn.disabled = true;
-        try {
-          // Starter example (UI language only)
-          const ui = getUiLang();
-          if (ui === "es") {
-            $("#devTheme").textContent = "Caminar en Paz";
-            $("#devScriptureRef").textContent = "Filipenses 4:6–7";
-            $("#devScriptureText").textContent =
-              "6. Por nada estéis afanosos, sino sean conocidas vuestras peticiones delante de Dios en toda oración y ruego, con acción de gracias.\n" +
-              "7. Y la paz de Dios, que sobrepasa todo entendimiento, guardará vuestros corazones y vuestros pensamientos en Cristo Jesús.";
-            $("#devStarterContext").textContent =
-              "Pablo anima a los creyentes a llevar cada preocupación a Dios en oración, en vez de cargarla solos.";
-            $("#devStarterReflection").textContent =
-              "La paz de Dios no depende de las circunstancias. Es un guardia sobre tu corazón cuando confías en Él.";
-            $("#devStarterApplication").textContent =
-              "Hoy, nombra específicamente lo que te preocupa y entrégaselo a Dios en oración—y practica la gratitud.";
-            $("#devStarterPrayer").textContent =
-              "Señor, enséñame a traer mis cargas a Ti. Reemplaza mi ansiedad con Tu paz. Amén.";
-          } else {
-            $("#devTheme").textContent = "Walking in Peace";
-            $("#devScriptureRef").textContent = "Philippians 4:6–7";
-            $("#devScriptureText").textContent =
-              "6. Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.\n" +
-              "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.";
-            $("#devStarterContext").textContent =
-              "Paul is encouraging believers to bring every worry to God in prayer instead of carrying anxiety alone.";
-            $("#devStarterReflection").textContent =
-              "God’s peace is not based on circumstances. It is a guard over your heart when you trust Him.";
-            $("#devStarterApplication").textContent =
-              "Today, name the specific thing you’re anxious about, and hand it to God in prayer—then practice gratitude.";
-            $("#devStarterPrayer").textContent =
-              "Lord, teach me to bring my burdens to You. Replace my anxiety with Your peace. Amen.";
-          }
-        } catch (e) {
-          toast(String(e.message || e));
-        } finally {
-          generateBtn.disabled = false;
-        }
-      });
-    }
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", () => {
-        const ui = getUiLang();
-
-        const my_context = ($("#devMyContext")?.value || "").trim();
-        const my_reflection = ($("#devMyReflection")?.value || "").trim();
-        const my_application = ($("#devMyApplication")?.value || "").trim();
-        const my_prayer = ($("#devMyPrayer")?.value || "").trim();
-
-        if (!my_context || !my_reflection || !my_application || !my_prayer) {
-          return toast(ui === "es"
-            ? "Para guardar: Contexto + Reflexión + Aplicación + Oración son obligatorios."
-            : "To save: Context + Reflection + Application + Prayer are required."
-          );
-        }
-
-        const item = {
-          ts: nowISO(),
-          theme: $("#devTheme")?.textContent || "",
-          scripture_ref: $("#devScriptureRef")?.textContent || "",
-          scripture_text: $("#devScriptureText")?.textContent || "",
-          starter_context: $("#devStarterContext")?.textContent || "",
-          starter_reflection: $("#devStarterReflection")?.textContent || "",
-          starter_application: $("#devStarterApplication")?.textContent || "",
-          starter_prayer: $("#devStarterPrayer")?.textContent || "",
-          my_context,
-          my_reflection,
-          my_application,
-          my_prayer,
-          my_notes: $("#devMyNotes")?.value || "",
-        };
-
-        const list = loadSavedDevs();
-        list.push(item);
-        saveSavedDevs(list);
-        renderSavedDevs();
-        toast(ui === "es" ? "Devocional guardado." : "Saved devotional.");
-      });
-    }
-
-    renderSavedDevs();
-  }
-
-  // ---------------------------
-  // Daily Prayer
-  // ---------------------------
-  function loadSavedPrayers() {
-    return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []);
-  }
-  function saveSavedPrayers(list) {
-    localStorage.setItem(LS.savedPrayers, JSON.stringify(list || []));
   }
 
   function renderSavedPrayers() {
-    const box = $("#prSavedList");
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const box = document.getElementById("prSavedList");
     if (!box) return;
 
-    const lang = getUiLang();
-    const t = I18N[lang];
-
-    const list = loadSavedPrayers();
+    const items = getSavedPrayers();
     box.innerHTML = "";
 
-    if (!list.length) {
+    if (!items.length) {
       const small = document.createElement("small");
       small.style.opacity = "0.75";
-      small.textContent = t.noSaved;
+      small.textContent = t.noSavedPr;
       box.appendChild(small);
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
+    items
+      .slice()
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+      .forEach((it) => {
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        const when = new Date(it.ts || Date.now()).toLocaleString();
+        btn.textContent = `${it.title || (uiLang === "es" ? "Oración" : "Prayer")} • ${when}`;
+        btn.addEventListener("click", () => {
+          setText("pA", it.starterA || "—");
+          setText("pC", it.starterC || "—");
+          setText("pT", it.starterT || "—");
+          setText("pS", it.starterS || "—");
+          const a = document.getElementById("myAdoration");
+          const c = document.getElementById("myConfession");
+          const tt = document.getElementById("myThanksgiving");
+          const s = document.getElementById("mySupplication");
+          const n = document.getElementById("prayerNotes");
+          if (a) a.value = it.myA || "";
+          if (c) c.value = it.myC || "";
+          if (tt) tt.value = it.myT || "";
+          if (s) s.value = it.myS || "";
+          if (n) n.value = it.notes || "";
+        });
+        box.appendChild(btn);
 
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${(item.title || (lang === "es" ? "Oración" : "Prayer")).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        $("#pA").textContent = item.starterA || "—";
-        $("#pC").textContent = item.starterC || "—";
-        $("#pT").textContent = item.starterT || "—";
-        $("#pS").textContent = item.starterS || "—";
-        $("#myAdoration").value = item.myA || "";
-        $("#myConfession").value = item.myC || "";
-        $("#myThanksgiving").value = item.myT || "";
-        $("#mySupplication").value = item.myS || "";
-        $("#prayerNotes").value = item.notes || "";
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.textContent = getUiLang() === "es" ? "Eliminar" : "Delete";
+        del.addEventListener("click", () => {
+          const next = getSavedPrayers().filter((x) => x.id !== it.id);
+          setSavedPrayers(next);
+          renderSavedPrayers();
+        });
+        box.appendChild(del);
       });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = loadSavedPrayers().filter((_, i) => i !== idx);
-        saveSavedPrayers(next);
-        renderSavedPrayers();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
   }
 
-  function initPrayer() {
-    const genBtn = $("#prayerBtn");
-    const saveBtn = $("#prSaveBtn");
-    const langSel = $("#prUiLang");
-
-    if (langSel) {
-      langSel.addEventListener("change", () => setUiLang(langSel.value));
+  async function generateDevotionalStarters() {
+    const lang = getUiLang();
+    // You can later wire /devotional to Gemini and return structured fields.
+    // For now: lightweight starters in the selected UI language.
+    if (lang === "es") {
+      return {
+        theme: "Caminar en paz",
+        scriptureRef: "Filipenses 4:6–7",
+        scriptureText:
+          "Por nada estéis afanosos, sino sean conocidas vuestras peticiones delante de Dios en toda oración y ruego, con acción de gracias.\nY la paz de Dios… guardará vuestros corazones y vuestros pensamientos en Cristo Jesús.",
+        starterContext:
+          "Pablo anima a los creyentes a llevar sus cargas a Dios en oración, en lugar de vivir dominados por la ansiedad.",
+        starterReflection:
+          "Dios no solo escucha; también guarda el corazón con Su paz. La oración es el camino para cambiar preocupación por confianza.",
+        starterApplication:
+          "Hoy, escribe 1 preocupación específica y entrégasela a Dios en oración. Luego agradece por 2 cosas concretas.",
+        starterPrayer:
+          "Señor, traigo mis ansiedades ante Ti. Llena mi corazón con Tu paz y enséñame a confiar en Tu cuidado. Amén.",
+      };
     }
 
-    // restore draft
-    const draft = safeJSON(localStorage.getItem(LS.prDraft) || "{}", {});
-    if ($("#myAdoration")) $("#myAdoration").value = draft.myA || "";
-    if ($("#myConfession")) $("#myConfession").value = draft.myC || "";
-    if ($("#myThanksgiving")) $("#myThanksgiving").value = draft.myT || "";
-    if ($("#mySupplication")) $("#mySupplication").value = draft.myS || "";
-    if ($("#prayerNotes")) $("#prayerNotes").value = draft.notes || "";
-
-    const saveDraft = () => {
-      localStorage.setItem(LS.prDraft, JSON.stringify({
-        myA: $("#myAdoration")?.value || "",
-        myC: $("#myConfession")?.value || "",
-        myT: $("#myThanksgiving")?.value || "",
-        myS: $("#mySupplication")?.value || "",
-        notes: $("#prayerNotes")?.value || "",
-      }));
+    return {
+      theme: "Walking in Peace",
+      scriptureRef: "Philippians 4:6–7",
+      scriptureText:
+        "Be anxious for nothing; but in everything by prayer and supplication with thanksgiving let your requests be made known unto God.\nAnd the peace of God… shall keep your hearts and minds through Christ Jesus.",
+      starterContext:
+        "Paul urges believers to bring their burdens to God in prayer rather than living ruled by anxiety.",
+      starterReflection:
+        "God doesn’t only hear—He guards the heart with His peace. Prayer is the pathway from worry to trust.",
+      starterApplication:
+        "Today, write down 1 specific worry and give it to God in prayer. Then thank Him for 2 concrete blessings.",
+      starterPrayer:
+        "Lord, I bring my anxieties to You. Fill my heart with Your peace and teach me to trust Your care. Amen.",
     };
+  }
 
-    ["#myAdoration","#myConfession","#myThanksgiving","#mySupplication","#prayerNotes"].forEach(id => {
-      const el = $(id);
-      if (el) el.addEventListener("input", saveDraft);
-    });
+  function initDevotional() {
+    const btn = document.getElementById("devotionalBtn");
+    const saveBtn = document.getElementById("devSaveBtn");
+    const streakBtn = document.getElementById("devStreakBtn");
 
-    if (genBtn) {
-      genBtn.addEventListener("click", () => {
-        const ui = getUiLang();
-        if (ui === "es") {
-          $("#pA").textContent = "Señor, Tú eres santo, fiel y cercano. Te alabo por Tu amor y misericordia.";
-          $("#pC").textContent = "Padre, perdóname por donde he fallado. Limpia mi corazón y renueva mi mente.";
-          $("#pT").textContent = "Gracias por la vida, la protección, la provisión y la gracia que me das cada día.";
-          $("#pS").textContent = "Guíame hoy, por favor. Dame sabiduría, fuerza y paz. Bendice a mi familia y a los que amo.";
-        } else {
-          $("#pA").textContent = "Lord, You are holy, faithful, and near. I praise You for Your love and mercy.";
-          $("#pC").textContent = "Father, forgive me for where I have fallen short. Cleanse my heart and renew my mind.";
-          $("#pT").textContent = "Thank You for life, protection, provision, and the grace You give me each day.";
-          $("#pS").textContent = "Please guide me today. Give me wisdom, strength, and peace. Help my family and those I love.";
-        }
+    if (streakBtn) streakBtn.addEventListener("click", () => bumpStreak("dev"));
+
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        const s = await generateDevotionalStarters();
+        setText("devTheme", s.theme);
+        setText("devScriptureRef", s.scriptureRef);
+        setText("devScriptureText", s.scriptureText);
+        setText("devStarterContext", s.starterContext);
+        setText("devStarterReflection", s.starterReflection);
+        setText("devStarterApplication", s.starterApplication);
+        setText("devStarterPrayer", s.starterPrayer);
       });
     }
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        const ui = getUiLang();
+        const uiLang = getUiLang();
+        const ctx = ($("#devMyContext")?.value || "").trim();
+        const ref = ($("#devMyReflection")?.value || "").trim();
+        const app = ($("#devMyApplication")?.value || "").trim();
+        const pr = ($("#devMyPrayer")?.value || "").trim();
+        const notes = ($("#devMyNotes")?.value || "").trim();
 
-        const myA = ($("#myAdoration")?.value || "").trim();
-        const myC = ($("#myConfession")?.value || "").trim();
-        const myT = ($("#myThanksgiving")?.value || "").trim();
-        const myS = ($("#mySupplication")?.value || "").trim();
-
-        if (!myA || !myC || !myT || !myS) {
-          return toast(ui === "es"
-            ? "Para guardar: Adoración + Confesión + Acción de gracias + Súplica son obligatorios."
-            : "To save: Adoration + Confession + Thanksgiving + Supplication are required."
-          );
+        if (!ctx || !ref || !app || !pr) {
+          addSystemMessage(uiLang === "es"
+            ? "Completa Contexto, Reflexión, Aplicación y Oración antes de guardar."
+            : "Fill Context, Reflection, Application, and Prayer before saving.");
+          return;
         }
 
-        const item = {
-          ts: nowISO(),
-          title: ui === "es" ? "Oración diaria" : "Daily Prayer",
-          starterA: $("#pA")?.textContent || "",
-          starterC: $("#pC")?.textContent || "",
-          starterT: $("#pT")?.textContent || "",
-          starterS: $("#pS")?.textContent || "",
-          myA, myC, myT, myS,
-          notes: $("#prayerNotes")?.value || "",
+        const id = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+        const title = (document.getElementById("devTheme")?.textContent || "").slice(0, 50) || "Devotional";
+
+        const obj = {
+          id,
+          ts: Date.now(),
+          title,
+          theme: document.getElementById("devTheme")?.textContent || "",
+          scriptureRef: document.getElementById("devScriptureRef")?.textContent || "",
+          scriptureText: document.getElementById("devScriptureText")?.textContent || "",
+          starterContext: document.getElementById("devStarterContext")?.textContent || "",
+          starterReflection: document.getElementById("devStarterReflection")?.textContent || "",
+          starterApplication: document.getElementById("devStarterApplication")?.textContent || "",
+          starterPrayer: document.getElementById("devStarterPrayer")?.textContent || "",
+          myContext: ctx,
+          myReflection: ref,
+          myApplication: app,
+          myPrayer: pr,
+          myNotes: notes,
         };
 
-        const list = loadSavedPrayers();
-        list.push(item);
-        saveSavedPrayers(list);
+        const items = getSavedDevotionals();
+        items.push(obj);
+        setSavedDevotionals(items);
+        renderSavedDevotionals();
+        bumpStreak("dev");
+        addSystemMessage(uiLang === "es" ? "Devocional guardado." : "Devotional saved.");
+      });
+    }
+
+    renderSavedDevotionals();
+  }
+
+  async function generatePrayerStarters() {
+    const lang = getUiLang();
+    if (lang === "es") {
+      return {
+        A: "Señor, Tú eres santo, fiel y cercano. Te alabo por Tu amor y misericordia.",
+        C: "Padre, perdóname por donde he fallado. Limpia mi corazón y renueva mi mente.",
+        T: "Gracias por Tu provisión, por mi familia, y por Tu paciencia conmigo.",
+        S: "Te pido sabiduría hoy. Ayúdame a caminar en obediencia y a amar como Cristo.",
+      };
+    }
+    return {
+      A: "Lord, You are holy, faithful, and near. I praise You for Your love and mercy.",
+      C: "Father, forgive me where I have fallen short. Cleanse my heart and renew my mind.",
+      T: "Thank You for Your provision, my family, and Your patience with me.",
+      S: "I ask for wisdom today. Help me walk in obedience and love like Christ.",
+    };
+  }
+
+  function initPrayer() {
+    const btn = document.getElementById("prayerBtn");
+    const saveBtn = document.getElementById("prSaveBtn");
+    const streakBtn = document.getElementById("prStreakBtn");
+
+    if (streakBtn) streakBtn.addEventListener("click", () => bumpStreak("pr"));
+
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        const s = await generatePrayerStarters();
+        setText("pA", s.A);
+        setText("pC", s.C);
+        setText("pT", s.T);
+        setText("pS", s.S);
+      });
+    }
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", () => {
+        const uiLang = getUiLang();
+        const a = ($("#myAdoration")?.value || "").trim();
+        const c = ($("#myConfession")?.value || "").trim();
+        const t = ($("#myThanksgiving")?.value || "").trim();
+        const s = ($("#mySupplication")?.value || "").trim();
+        const n = ($("#prayerNotes")?.value || "").trim();
+
+        if (!a || !c || !t || !s) {
+          addSystemMessage(uiLang === "es"
+            ? "Completa Adoración, Confesión, Gratitud y Súplica antes de guardar."
+            : "Fill Adoration, Confession, Thanksgiving, and Supplication before saving.");
+          return;
+        }
+
+        const id = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
+        const title = uiLang === "es" ? "Oración diaria" : "Daily prayer";
+
+        const obj = {
+          id,
+          ts: Date.now(),
+          title,
+          starterA: document.getElementById("pA")?.textContent || "",
+          starterC: document.getElementById("pC")?.textContent || "",
+          starterT: document.getElementById("pT")?.textContent || "",
+          starterS: document.getElementById("pS")?.textContent || "",
+          myA: a,
+          myC: c,
+          myT: t,
+          myS: s,
+          notes: n,
+        };
+
+        const items = getSavedPrayers();
+        items.push(obj);
+        setSavedPrayers(items);
         renderSavedPrayers();
-        toast(ui === "es" ? "Oración guardada." : "Saved prayer.");
+        bumpStreak("pr");
+        addSystemMessage(uiLang === "es" ? "Oración guardada." : "Prayer saved.");
       });
     }
 
     renderSavedPrayers();
   }
 
-  // ---------------------------
-  // Bible Reader (EN/ES DB + locked voices)
-  // ---------------------------
-  function bibleVersionForReadingLang(readLang /* en|es */) {
-    // English -> bible.db => version=en_default
-    // Spanish -> bible_es_rvr.db => version=es
-    return (readLang === "es") ? "es" : "en_default";
+  // -----------------------------
+  // Auth/Billing stubs (safe)
+  // -----------------------------
+  function initAuthStubs() {
+    const uiLang = getUiLang();
+    const t = I18N[uiLang];
+
+    const authPill = document.getElementById("authPill");
+    const manageBtn = document.getElementById("manageBillingBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    if (authPill) authPill.textContent = t.accountChecking;
+
+    // Stub: keep disabled unless you wire Stripe endpoints
+    if (manageBtn) manageBtn.disabled = true;
+    if (logoutBtn) hide(logoutBtn);
   }
 
-  async function refreshBibleStatus() {
-    const el = $("#bibleDbStatus");
-    if (!el) return;
+  // -----------------------------
+  // Global UI Language selector
+  // -----------------------------
+  function initUiLangSelect() {
+    const sel = document.getElementById("uiLangSelect");
+    if (!sel) return;
 
-    const readVoice = $("#readingVoice");
-    const readLang = (readVoice && readVoice.value === "es") ? "es" : "en";
-    const version = bibleVersionForReadingLang(readLang);
+    const current = getUiLang();
+    sel.value = current;
 
-    try {
-      const j = await apiGet(`/bible/status?version=${encodeURIComponent(version)}`);
-      el.textContent = `OK • ${j.version} • verses: ${j.verse_count}`;
-    } catch (e) {
-      el.textContent = `Error: ${(e && e.message) ? e.message : String(e)}`;
-    }
-  }
-
-  async function loadBooks() {
-    const bookSel = $("#bookSelect");
-    if (!bookSel) return;
-
-    const t = I18N[getUiLang()];
-
-    const readVoice = $("#readingVoice");
-    const readLang = (readVoice && readVoice.value === "es") ? "es" : "en";
-    const version = bibleVersionForReadingLang(readLang);
-
-    bookSel.innerHTML = `<option value="">${t.loading}</option>`;
-
-    try {
-      const j = await apiGet(`/bible/books?version=${encodeURIComponent(version)}`);
-      const books = j.books || [];
-      bookSel.innerHTML = `<option value="">${t.select}</option>`;
-      books.forEach((b) => {
-        const opt = document.createElement("option");
-        opt.value = String(b.id);
-        opt.textContent = b.name;
-        bookSel.appendChild(opt);
-      });
-    } catch (e) {
-      bookSel.innerHTML = `<option value="">${t.errorLoadingBooks}</option>`;
-      const status = $("#bibleDbStatus");
-      if (status) status.textContent = t.bibleNotFound;
-    }
-  }
-
-  async function loadChaptersForBook() {
-    const bookSel = $("#bookSelect");
-    const chapSel = $("#chapterSelect");
-    const vsStart = $("#verseStartSelect");
-    const vsEnd = $("#verseEndSelect");
-    if (!bookSel || !chapSel || !vsStart || !vsEnd) return;
-
-    const t = I18N[getUiLang()];
-
-    chapSel.innerHTML = `<option value="">—</option>`;
-    vsStart.innerHTML = `<option value="">—</option>`;
-    vsEnd.innerHTML = `<option value="">${t.optional}</option>`;
-
-    const bid = parseInt(bookSel.value || "0", 10);
-    if (!bid) return;
-
-    const readVoice = $("#readingVoice");
-    const readLang = (readVoice && readVoice.value === "es") ? "es" : "en";
-    const version = bibleVersionForReadingLang(readLang);
-
-    try {
-      const j = await apiGet(`/bible/chapters?version=${encodeURIComponent(version)}&book_id=${bid}`);
-      const chs = j.chapters || [];
-      chapSel.innerHTML = `<option value="">${t.select}</option>`;
-      chs.forEach((n) => {
-        const opt = document.createElement("option");
-        opt.value = String(n);
-        opt.textContent = String(n);
-        chapSel.appendChild(opt);
-      });
-    } catch (e) {
-      chapSel.innerHTML = `<option value="">(Error)</option>`;
-    }
-  }
-
-  async function loadVersesForChapter() {
-    const bookSel = $("#bookSelect");
-    const chapSel = $("#chapterSelect");
-    const vsStart = $("#verseStartSelect");
-    const vsEnd = $("#verseEndSelect");
-    if (!bookSel || !chapSel || !vsStart || !vsEnd) return;
-
-    const t = I18N[getUiLang()];
-
-    vsStart.innerHTML = `<option value="">—</option>`;
-    vsEnd.innerHTML = `<option value="">${t.optional}</option>`;
-
-    const bid = parseInt(bookSel.value || "0", 10);
-    const ch = parseInt(chapSel.value || "0", 10);
-    if (!bid || !ch) return;
-
-    const readVoice = $("#readingVoice");
-    const readLang = (readVoice && readVoice.value === "es") ? "es" : "en";
-    const version = bibleVersionForReadingLang(readLang);
-
-    try {
-      const j = await apiGet(`/bible/verses_max?version=${encodeURIComponent(version)}&book_id=${bid}&chapter=${ch}`);
-      const maxV = parseInt(j.max_verse || "0", 10);
-      if (!maxV) return;
-
-      vsStart.innerHTML = `<option value="">${t.select}</option>`;
-      vsEnd.innerHTML = `<option value="">${t.optional}</option>`;
-      for (let i = 1; i <= maxV; i++) {
-        const o1 = document.createElement("option");
-        o1.value = String(i);
-        o1.textContent = String(i);
-        vsStart.appendChild(o1);
-
-        const o2 = document.createElement("option");
-        o2.value = String(i);
-        o2.textContent = String(i);
-        vsEnd.appendChild(o2);
-      }
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  async function listenBible() {
-    const t = I18N[getUiLang()];
-
-    const bookSel = $("#bookSelect");
-    const chapSel = $("#chapterSelect");
-    const vsStart = $("#verseStartSelect");
-    const vsEnd = $("#verseEndSelect");
-    const fullCh = $("#fullChapter");
-    const passageRef = $("#passageRef");
-    const passageText = $("#passageText");
-
-    if (!bookSel || !chapSel || !passageRef || !passageText) return;
-
-    const bid = parseInt(bookSel.value || "0", 10);
-    const ch = parseInt(chapSel.value || "0", 10);
-    if (!bid || !ch) return toast(t.pickBookChapterFirst);
-
-    const readVoice = $("#readingVoice");
-    const readLang = (readVoice && readVoice.value === "es") ? "es" : "en";
-    const version = bibleVersionForReadingLang(readLang);
-    const whole = !!(fullCh && fullCh.checked);
-
-    const qs = new URLSearchParams();
-    qs.set("version", version);
-    qs.set("book_id", String(bid));
-    qs.set("chapter", String(ch));
-    if (whole) {
-      qs.set("whole_chapter", "true");
-    } else {
-      const s = parseInt(vsStart?.value || "0", 10);
-      const e = parseInt(vsEnd?.value || "0", 10);
-      if (s) qs.set("verse_start", String(s));
-      if (e) qs.set("verse_end", String(e));
-    }
-
-    try {
-      const j = await apiGet(`/bible/text?${qs.toString()}`);
-      passageRef.textContent = `${j.book} ${j.chapter}`;
-      passageText.textContent = j.text || "—";
-
-      const toSpeak = (j.text || "").trim();
-      if (!toSpeak) return;
-
-      // Speak ONLY the verse text (no extra labels)
-      await speakText(toSpeak, readLang, 1.0);
-    } catch (e) {
-      toast(String(e.message || e));
-    }
-  }
-
-  function initBible() {
-    const listenBtn = $("#listenBible");
-    const stopBtn = $("#stopBible");
-    const readVoice = $("#readingVoice");
-    const bookSel = $("#bookSelect");
-    const chapSel = $("#chapterSelect");
-
-    if (listenBtn) listenBtn.addEventListener("click", listenBible);
-    if (stopBtn) stopBtn.addEventListener("click", stopSpeak);
-
-    if (readVoice) {
-      readVoice.addEventListener("change", async () => {
-        stopSpeak();
-        await refreshBibleStatus();
-        await loadBooks();
-      });
-    }
-
-    if (bookSel) bookSel.addEventListener("change", async () => {
-      await loadChaptersForBook();
+    sel.addEventListener("change", () => {
+      setUiLang(sel.value);
     });
-
-    if (chapSel) chapSel.addEventListener("change", async () => {
-      await loadVersesForChapter();
-    });
-
-    refreshBibleStatus().catch(() => {});
-    loadBooks().catch(() => {});
   }
 
-  // ---------------------------
-  // Init + safety
-  // ---------------------------
-  async function init() {
-    showTopStatus("JS: starting…");
+  // -----------------------------
+  // Boot
+  // -----------------------------
+  function boot() {
+    // JS status initial
+    const uiLang = getUiLang();
+    setText("jsStatus", I18N[uiLang].jsLoading);
 
-    // Set global UI lang from localStorage BEFORE init renders
-    const ui = getUiLang();
-    setUiLang(ui); // sync selects + apply text
+    initMenu();
+    initUiLangSelect();
+    initAuthStubs();
 
-    // Also: if you have per-section selectors, keep them synced on load
-    const devSel = $("#devUiLang");
-    const prSel = $("#prUiLang");
-    if (devSel) devSel.value = ui;
-    if (prSel) prSel.value = ui;
-
-    initTabs();
     initChat();
+    initBible();
     initDevotional();
     initPrayer();
-    initBible();
 
-    // Voice pills: verify locked voices exist
-    const ttsStatus = $("#ttsStatus");
-    const chatVoicePill = $("#chatVoicePill");
+    // Voices
+    loadVoices();
+    setTimeout(loadVoices, 250);
+    setTimeout(loadVoices, 900);
 
-    try {
-      const vEn = await pickLockedVoice("en");
-      const vEs = await pickLockedVoice("es");
-      const ok = !!(vEn && vEs);
-      const msg = ok ? I18N[getUiLang()].voiceReady : I18N[getUiLang()].voiceMissing;
-
-      if (ttsStatus) ttsStatus.textContent = msg;
-      if (chatVoicePill) chatVoicePill.textContent = msg;
-    } catch {
-      const msg = I18N[getUiLang()].voiceMissing;
-      if (ttsStatus) ttsStatus.textContent = msg;
-      if (chatVoicePill) chatVoicePill.textContent = msg;
-    }
-
-    showTopStatus("JS: ready");
+    // Apply language last so it updates everything
+    applyUiLang(getUiLang());
+    updateVoicePills();
+    updateStreakPills();
+    refreshBibleDbStatus().catch(() => {});
   }
 
-  window.addEventListener("error", (e) => {
-    console.error("Global error:", e.error || e.message);
-    showTopStatus("JS: error");
-  });
-
-  window.addEventListener("unhandledrejection", (e) => {
-    console.error("Unhandled rejection:", e.reason);
-    showTopStatus("JS: error");
-  });
-
-  document.addEventListener("DOMContentLoaded", () => {
-    init().catch((e) => {
-      console.error("Init failed:", e);
-      showTopStatus("JS: error");
-    });
-  });
-
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
 })();
+
 
 
 
