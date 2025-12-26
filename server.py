@@ -1,4 +1,5 @@
 from pathlib import Path
+import traceback
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,10 @@ from fastapi.responses import FileResponse, JSONResponse
 
 # Bible API router
 from bible_api import router as bible_router
+
+# ✅ AI Brain (Gemini)
+# agent.py should expose: run_bible_ai(user_text: str, lang: str = "auto") -> str
+from agent import run_bible_ai
 
 
 # -----------------------------
@@ -49,8 +54,8 @@ def _safe_path_under(base: Path, requested_path: str) -> Path:
     """
     base = base.resolve()
 
-    # IMPORTANT: strip any leading "/" or "\" so it cannot become absolute
-    clean = requested_path.lstrip("/\\")
+    # Strip leading "/" or "\" so it cannot become absolute
+    clean = (requested_path or "").lstrip("/\\")
     target = (base / clean).resolve()
 
     if base not in target.parents and target != base:
@@ -69,19 +74,50 @@ def me():
 
 @app.get("/devotional")
 def devotional():
+    # You can later wire this to Gemini too
     return {"ok": True, "devotional": "Coming soon."}
 
 
 @app.get("/daily_prayer")
 def daily_prayer():
+    # You can later wire this to Gemini too
     return {"ok": True, "prayer": "Coming soon."}
 
 
 @app.post("/chat")
 async def chat(req: Request):
-    body = await req.json()
-    user_message = body.get("message", "")
-    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
+    """
+    Expected JSON:
+      { "message": "...", "lang": "auto" | "en" | "es" }
+
+    Returns:
+      { "ok": true, "reply": "..." }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    user_message = (body.get("message") or "").strip()
+    if not user_message:
+        return {"ok": True, "reply": "Please type a message."}
+
+    # Optional language control from frontend
+    lang = (body.get("lang") or "auto").strip().lower()
+    if lang not in ("auto", "en", "es"):
+        lang = "auto"
+
+    try:
+        # ✅ Call your AI brain
+        reply = run_bible_ai(user_message, lang=lang)
+        if not reply:
+            reply = "I’m here. Please try again."
+        return {"ok": True, "reply": str(reply)}
+    except Exception as e:
+        # Log server-side details, return safe message to client
+        print("ERROR in /chat:", repr(e))
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Chat engine failed. Check server logs / API key.")
 
 
 # -----------------------------
@@ -160,5 +196,6 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
