@@ -1,4 +1,5 @@
 from pathlib import Path
+import traceback
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +7,9 @@ from fastapi.responses import FileResponse, JSONResponse
 
 # Bible API router
 from bible_api import router as bible_router
+
+# Gemini brain
+from agent import run_bible_ai
 
 
 # -----------------------------
@@ -48,9 +52,7 @@ def _safe_path_under(base: Path, requested_path: str) -> Path:
     Handles leading slashes safely.
     """
     base = base.resolve()
-
-    # IMPORTANT: strip any leading "/" or "\" so it cannot become absolute
-    clean = requested_path.lstrip("/\\")
+    clean = (requested_path or "").lstrip("/\\")
     target = (base / clean).resolve()
 
     if base not in target.parents and target != base:
@@ -79,9 +81,42 @@ def daily_prayer():
 
 @app.post("/chat")
 async def chat(req: Request):
-    body = await req.json()
-    user_message = body.get("message", "")
-    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
+    """
+    Expected JSON:
+      { "message": "...", "lang": "auto" | "en" | "es" }
+
+    Returns:
+      { "ok": true, "reply": "..." }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    user_message = (body.get("message") or "").strip()
+    if not user_message:
+        return {"ok": True, "reply": "Please type a message."}
+
+    lang = (body.get("lang") or "auto").strip().lower()
+    if lang not in ("auto", "en", "es"):
+        lang = "auto"
+
+    try:
+        reply = run_bible_ai(user_message, lang=lang)
+        reply = (reply or "").strip()
+        if not reply:
+            reply = "I’m here with you. Please try again."
+        return {"ok": True, "reply": reply}
+    except Exception as e:
+        # Log server-side details (Render logs)
+        print("ERROR in /chat:", repr(e))
+        print(traceback.format_exc())
+
+        # Return SAFE message to the UI (no 500 crash loop)
+        return {
+            "ok": True,
+            "reply": "I’m having trouble connecting right now. Please try again in a moment.",
+        }
 
 
 # -----------------------------
@@ -107,20 +142,14 @@ def serve_app_js():
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def serve_manifest():
     if not MANIFEST.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"manifest.webmanifest not found at {str(MANIFEST)}",
-        )
+        raise HTTPException(status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}")
     return FileResponse(str(MANIFEST))
 
 
 @app.get("/service-worker.js", include_in_schema=False)
 def serve_service_worker():
     if not SERVICE_WORKER.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"service-worker.js not found at {str(SERVICE_WORKER)}",
-        )
+        raise HTTPException(status_code=404, detail=f"service-worker.js not found at {str(SERVICE_WORKER)}")
     return FileResponse(str(SERVICE_WORKER))
 
 
@@ -137,13 +166,6 @@ def serve_icons(icon_name: str):
 # -----------------------------
 @app.get("/{path:path}", include_in_schema=False)
 def serve_frontend_fallback(path: str):
-    """
-    SPA fallback:
-    - If a real file exists under /frontend, serve it
-    - Otherwise serve index.html
-    BUT: do NOT fallback for API-style routes
-    """
-
     blocked_prefixes = (
         "bible",
         "me",
@@ -156,16 +178,15 @@ def serve_frontend_fallback(path: str):
     if first_segment in blocked_prefixes:
         raise HTTPException(status_code=404, detail="Not Found")
 
-    # Try to serve an actual static file under frontend/
     candidate = _safe_path_under(FRONTEND_DIR, path)
     if candidate.exists() and candidate.is_file():
         return FileResponse(str(candidate))
 
-    # Otherwise SPA fallback to index.html
     if INDEX_HTML.exists():
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
