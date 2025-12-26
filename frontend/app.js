@@ -9,14 +9,21 @@
   const $ = (sel) => document.querySelector(sel);
 
   const LS = {
+    uiLang: "alyana.ui.lang",
     chatLang: "alyana.chat.lang",
-    devLang: "alyana.dev.lang",
-    prLang: "alyana.pr.lang",
     readingLang: "alyana.read.lang",
     bibleVersion: "alyana.bible.version",
+
+    // “account” (Stripe restore)
+    authEmail: "alyana.auth.email",
+    authStatus: "alyana.auth.status", // "unknown" | "active" | "inactive"
+
+    // saved content
     savedChats: "alyana.saved.chats",
     savedDevs: "alyana.saved.devs",
     savedPrayers: "alyana.saved.prayers",
+
+    // drafts
     chatDraft: "alyana.chat.draft",
     devDraft: "alyana.dev.draft",
     prDraft: "alyana.pr.draft",
@@ -44,10 +51,10 @@
     el.style.color = isError ? "rgba(255,140,140,0.95)" : "";
   }
 
-  function toast(message) {
+  function toast(message, isError = false) {
     const hint = $("#authHint");
     if (hint) {
-      showInline(hint, message, false);
+      showInline(hint, message, isError);
       setTimeout(() => {
         hint.style.display = "none";
       }, 3500);
@@ -60,7 +67,7 @@
     const res = await fetch(path, { headers: { Accept: "application/json" } });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      throw new Error(`GET ${path} -> ${res.status} ${t}`);
+      throw new Error(`GET ${path} -> ${res.status} ${t}`.trim());
     }
     return res.json();
   }
@@ -72,7 +79,6 @@
       body: JSON.stringify(body || {}),
     });
 
-    // ✅ Better error extraction (handles FastAPI {"detail": "..."} and plain text)
     if (!res.ok) {
       const raw = await res.text().catch(() => "");
       let detail = raw;
@@ -86,12 +92,29 @@
     return res.json();
   }
 
+  async function apiPostOrGet(path, body) {
+    try {
+      return await apiPost(path, body);
+    } catch (e) {
+      // If backend implemented GET instead of POST, fallback.
+      try {
+        const qs = new URLSearchParams();
+        Object.entries(body || {}).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && String(v).trim() !== "") qs.set(k, String(v));
+        });
+        const full = qs.toString() ? `${path}?${qs.toString()}` : path;
+        return await apiGet(full);
+      } catch {
+        throw e;
+      }
+    }
+  }
+
   // ---------------------------
   // UI language strings
   // ---------------------------
   const I18N = {
     en: {
-      // global-ish
       delete: "Delete",
       select: "Select…",
       optional: "(optional)",
@@ -105,6 +128,9 @@
       restoreAccess: "Restore access",
       emailUsedForStripe: "Email used for Stripe…",
       accountChecking: "Account: checking…",
+      accountReady: "Account: ready",
+      accountActive: "Account: active",
+      accountInactive: "Account: inactive",
       manageBilling: "Manage billing",
       logout: "Logout",
 
@@ -139,7 +165,7 @@
         "Voice not found. Your browser must have 'Paulina (es-MX)' and 'Karen (en-AU)' installed.",
 
       // bible
-      bibleTitle: "Bible Reader",
+      bibleTitle: "Bible Reader (Listen)",
       bibleHint: "Pick a book/chapter and verse range, or Full Chapter.",
       read: "Read",
       lblBook: "Book",
@@ -165,17 +191,16 @@
       devTitle: "Devotional",
       devIntro:
         "Alyana gives short starter examples. You write and save your real devotional.",
-      devLangLabel: "Language",
       streak: "Streak",
       didIt: "I did it today",
       generate: "Generate",
       devSave: "Save",
       devLabelTheme: "Theme / Title (Alyana)",
       devLabelScripture: "Scripture (Alyana)",
-      devLabelCtx: "Context / Observation",
-      devLabelRef: "Reflection / Insight",
-      devLabelApp: "Application (Practical)",
-      devLabelPr: "Prayer",
+      devLabelCtx: "Alyana Starter — Context / Observation",
+      devLabelRef: "Alyana Starter — Reflection / Insight",
+      devLabelApp: "Alyana Starter — Application (Practical)",
+      devLabelPr: "Alyana Starter — Prayer",
       devNow1: "Now write yours:",
       devNow2: "Now write yours:",
       devNow3: "Now write yours:",
@@ -200,13 +225,12 @@
       prTitle: "Daily Prayer",
       prIntro:
         "Alyana gives a short starter example. You write and save your real prayer.",
-      prLangLabel: "Language",
       prGenerate: "Generate Starters",
       prSave: "Save",
-      prLabelA: "Adoration",
-      prLabelC: "Confession",
-      prLabelT: "Thanksgiving",
-      prLabelS: "Supplication",
+      prLabelA: "Alyana Starter — Adoration",
+      prLabelC: "Alyana Starter — Confession",
+      prLabelT: "Alyana Starter — Thanksgiving",
+      prLabelS: "Alyana Starter — Supplication",
       prLabelN: "Notes",
       prNow1: "Now write your own:",
       prNow2: "Now write your own:",
@@ -222,6 +246,11 @@
       prSavedToast: "Saved prayer.",
       prReqToast:
         "To save: Adoration + Confession + Thanksgiving + Supplication are required.",
+
+      // stripe
+      needEmail: "Please enter the email you used for Stripe, then press Restore access.",
+      stripeNotWired:
+        "Stripe endpoints are not available on the server yet. Add /stripe/checkout, /stripe/restore, and /stripe/portal to server.py.",
     },
 
     es: {
@@ -237,6 +266,9 @@
       restoreAccess: "Restaurar acceso",
       emailUsedForStripe: "Correo usado en Stripe…",
       accountChecking: "Cuenta: verificando…",
+      accountReady: "Cuenta: lista",
+      accountActive: "Cuenta: activa",
+      accountInactive: "Cuenta: inactiva",
       manageBilling: "Administrar pagos",
       logout: "Cerrar sesión",
 
@@ -266,7 +298,7 @@
       voiceMissing:
         "No se encontró la voz. Tu navegador debe tener instaladas 'Paulina (es-MX)' y 'Karen (en-AU)'.",
 
-      bibleTitle: "Lector de Biblia",
+      bibleTitle: "Lector de Biblia (Escuchar)",
       bibleHint: "Elige un libro/capítulo y rango de versículos, o Capítulo completo.",
       read: "Leer",
       lblBook: "Libro",
@@ -289,17 +321,16 @@
 
       devTitle: "Devocional",
       devIntro: "Alyana da ejemplos cortos. Tú escribes y guardas tu devocional real.",
-      devLangLabel: "Idioma",
       streak: "Racha",
       didIt: "Lo hice hoy",
       generate: "Generar",
       devSave: "Guardar",
       devLabelTheme: "Tema / Título (Alyana)",
       devLabelScripture: "Escritura (Alyana)",
-      devLabelCtx: "Contexto / Observación",
-      devLabelRef: "Reflexión / Enseñanza",
-      devLabelApp: "Aplicación (práctica)",
-      devLabelPr: "Oración",
+      devLabelCtx: "Alyana Starter — Contexto / Observación",
+      devLabelRef: "Alyana Starter — Reflexión / Enseñanza",
+      devLabelApp: "Alyana Starter — Aplicación (práctica)",
+      devLabelPr: "Alyana Starter — Oración",
       devNow1: "Ahora escribe el tuyo:",
       devNow2: "Ahora escribe el tuyo:",
       devNow3: "Ahora escribe el tuyo:",
@@ -321,13 +352,12 @@
 
       prTitle: "Oración diaria",
       prIntro: "Alyana da un ejemplo corto. Tú escribes y guardas tu oración real.",
-      prLangLabel: "Idioma",
       prGenerate: "Generar ejemplos",
       prSave: "Guardar",
-      prLabelA: "Adoración",
-      prLabelC: "Confesión",
-      prLabelT: "Acción de gracias",
-      prLabelS: "Súplica",
+      prLabelA: "Alyana Starter — Adoración",
+      prLabelC: "Alyana Starter — Confesión",
+      prLabelT: "Alyana Starter — Acción de gracias",
+      prLabelS: "Alyana Starter — Súplica",
       prLabelN: "Notas",
       prNow1: "Ahora escribe la tuya:",
       prNow2: "Ahora escribe la tuya:",
@@ -343,6 +373,10 @@
       prSavedToast: "Oración guardada.",
       prReqToast:
         "Para guardar: Adoración + Confesión + Acción de gracias + Súplica son requeridos.",
+
+      needEmail: "Escribe el correo que usaste en Stripe y presiona Restaurar acceso.",
+      stripeNotWired:
+        "Los endpoints de Stripe no están disponibles en el servidor todavía. Agrega /stripe/checkout, /stripe/restore y /stripe/portal en server.py.",
     },
   };
 
@@ -351,9 +385,11 @@
     return val === "es" ? "es" : "en";
   }
 
-  function getLang(selId, fallback = "en") {
-    const el = $(selId);
-    return normLang(el && el.value ? el.value : fallback, fallback);
+  function getUILang() {
+    const sel = $("#uiLangSelect");
+    const stored = normLang(localStorage.getItem(LS.uiLang) || "en", "en");
+    const v = sel && sel.value ? normLang(sel.value, stored) : stored;
+    return v;
   }
 
   function setSelectValue(sel, v) {
@@ -370,143 +406,6 @@
   function setPlaceholder(id, value) {
     const el = document.getElementById(id);
     if (el) el.setAttribute("placeholder", value);
-  }
-
-  // Apply UI language for Devotional + Prayer + some global UI
-  function applyUILang() {
-    const devLang = getLang("#devUiLang", localStorage.getItem(LS.devLang) || "en");
-    const prLang = getLang("#prUiLang", localStorage.getItem(LS.prLang) || "en");
-
-    // Persist
-    localStorage.setItem(LS.devLang, devLang);
-    localStorage.setItem(LS.prLang, prLang);
-
-    // Tabs follow devotional language (simple, consistent)
-    const t = I18N[devLang];
-    setText("tabChat", t.tabChat);
-    setText("tabBible", t.tabBible);
-    setText("tabDev", t.tabDev);
-    setText("tabPrayer", t.tabPrayer);
-
-    // Top
-    const supportBtn = $("#supportBtn");
-    if (supportBtn) supportBtn.textContent = t.support;
-    setText("supportNote", t.supportNote);
-    setPlaceholder("loginEmail", t.emailUsedForStripe);
-    const loginBtn = $("#loginBtn");
-    if (loginBtn) loginBtn.textContent = t.restoreAccess;
-
-    // Chat (use devLang as general UI language)
-    setText("chatTitle", t.chatTitle);
-    setText("chatSavedHint", t.savedChatsHint);
-    setText("chatLangLabel", t.chatLangLabel);
-    setPlaceholder("chatInput", t.chatPlaceholder);
-    const chatSendBtn = $("#chatSendBtn");
-    if (chatSendBtn) chatSendBtn.textContent = t.send;
-    const chatListenBtn = $("#chatListenBtn");
-    if (chatListenBtn) chatListenBtn.textContent = t.listen;
-    const chatStopBtn = $("#chatStopBtn");
-    if (chatStopBtn) chatStopBtn.textContent = t.stop;
-    const chatNewBtn = $("#chatNewBtn");
-    if (chatNewBtn) chatNewBtn.textContent = t.new;
-    const chatSaveBtn = $("#chatSaveBtn");
-    if (chatSaveBtn) chatSaveBtn.textContent = t.save;
-    setText("savedChatsTitle", t.savedChatsTitle);
-    setText("savedChatsHint", t.savedChatsHint2);
-
-    // Bible (follow devLang for UI labels; readingVoice still controls DB/voice)
-    setText("bibleTitle", t.bibleTitle);
-    setText("bibleHint", t.bibleHint);
-    const readBibleBtn = $("#readBibleBtn");
-    if (readBibleBtn) readBibleBtn.textContent = t.read;
-    setText("lblBook", t.lblBook);
-    setText("lblChapter", t.lblChapter);
-    setText("lblVerseStart", t.lblVerseStart);
-    setText("lblVerseEnd", t.lblVerseEnd);
-    setText("lblReaderLang", t.lblReaderLang);
-    setText("readerLangNote", t.readerLangNote);
-    setText("lblFullChapter", t.lblFullChapter);
-    setText("fullChapterNote", t.fullChapterNote);
-    setText("lblVersion", t.lblVersion);
-    setText("versionNote", t.versionNote);
-    setText("spanishReadNote", t.spanishReadNote);
-    setText("dbStatusTitle", t.dbStatusTitle);
-    setText("passageTitle", t.passageTitle);
-
-    // Devotional (devLang)
-    const d = I18N[devLang];
-    setText("devTitle", d.devTitle);
-    setText("devIntro", d.devIntro);
-    setText("devLangLabel", d.devLangLabel);
-    const devStreakPill = $("#devStreakPill");
-    if (devStreakPill) {
-      const num = (devStreakPill.textContent || "").match(/\d+/)?.[0] || "0";
-      devStreakPill.textContent = `${d.streak}: ${num}`;
-    }
-    const devStreakBtn = $("#devStreakBtn");
-    if (devStreakBtn) devStreakBtn.textContent = d.didIt;
-    const devotionalBtn = $("#devotionalBtn");
-    if (devotionalBtn) devotionalBtn.textContent = d.generate;
-    const devSaveBtn = $("#devSaveBtn");
-    if (devSaveBtn) devSaveBtn.textContent = d.devSave;
-    setText("devLabelTheme", d.devLabelTheme);
-    setText("devLabelScripture", d.devLabelScripture);
-    setText("devLabelCtxA", d.devLabelCtx);
-    setText("devLabelRefA", d.devLabelRef);
-    setText("devLabelAppA", d.devLabelApp);
-    setText("devLabelPrA", d.devLabelPr);
-    setText("devNow1", d.devNow1);
-    setText("devNow2", d.devNow2);
-    setText("devNow3", d.devNow3);
-    setText("devNow4", d.devNow4);
-    setPlaceholder("devMyContext", d.devMyContextPH);
-    setPlaceholder("devMyReflection", d.devMyReflectionPH);
-    setPlaceholder("devMyApplication", d.devMyApplicationPH);
-    setPlaceholder("devMyPrayer", d.devMyPrayerPH);
-    setText("devLabelNotes", d.devNotes);
-    setPlaceholder("devMyNotes", d.devNotesPH);
-    setText("devReqNote", d.devReqNote);
-    setText("devSavedTitle", d.devSavedTitle);
-    setText("devSavedHint", d.devSavedHint);
-
-    // Prayer (prLang)
-    const p = I18N[prLang];
-    setText("prTitle", p.prTitle);
-    setText("prIntro", p.prIntro);
-    setText("prLangLabel", p.prLangLabel);
-    const prStreakPill = $("#prStreakPill");
-    if (prStreakPill) {
-      const num = (prStreakPill.textContent || "").match(/\d+/)?.[0] || "0";
-      prStreakPill.textContent = `${p.streak}: ${num}`;
-    }
-    const prStreakBtn = $("#prStreakBtn");
-    if (prStreakBtn) prStreakBtn.textContent = p.didIt;
-    const prayerBtn = $("#prayerBtn");
-    if (prayerBtn) prayerBtn.textContent = p.prGenerate;
-    const prSaveBtn = $("#prSaveBtn");
-    if (prSaveBtn) prSaveBtn.textContent = p.prSave;
-
-    setText("prLabelA", p.prLabelA);
-    setText("prLabelC", p.prLabelC);
-    setText("prLabelT", p.prLabelT);
-    setText("prLabelS", p.prLabelS);
-    setText("prLabelN", p.prLabelN);
-    setText("prNow1", p.prNow1);
-    setText("prNow2", p.prNow2);
-    setText("prNow3", p.prNow3);
-    setText("prNow4", p.prNow4);
-    setPlaceholder("myAdoration", p.myAdorationPH);
-    setPlaceholder("myConfession", p.myConfessionPH);
-    setPlaceholder("myThanksgiving", p.myThanksPH);
-    setPlaceholder("mySupplication", p.mySuppPH);
-    setPlaceholder("prayerNotes", p.prNotesPH);
-    setText("prSavedTitle", p.prSavedTitle);
-    setText("prSavedHint", p.prSavedHint);
-
-    // Re-render lists to update "No saved..." + Delete button labels
-    renderSavedChats();
-    renderSavedDevs();
-    renderSavedPrayers();
   }
 
   // ---------------------------
@@ -527,6 +426,19 @@
         if (sec) sec.classList.add("active");
       });
     });
+  }
+
+  function applyTabLabels(uiLang) {
+    const t = I18N[uiLang];
+    const bChat = document.querySelector('.menu-btn[data-target="chatSection"]');
+    const bBible = document.querySelector('.menu-btn[data-target="bibleSection"]');
+    const bDev = document.querySelector('.menu-btn[data-target="devotionalSection"]');
+    const bPr = document.querySelector('.menu-btn[data-target="prayerSection"]');
+
+    if (bChat) bChat.textContent = t.tabChat;
+    if (bBible) bBible.textContent = t.tabBible;
+    if (bDev) bDev.textContent = t.tabDev;
+    if (bPr) bPr.textContent = t.tabPrayer;
   }
 
   // ---------------------------
@@ -558,11 +470,7 @@
     const byName = voices.find((v) =>
       (v.name || "").toLowerCase().includes(spec.wantNameIncludes)
     );
-    if (
-      byName &&
-      (byName.lang || "").toLowerCase().startsWith(spec.wantLangPrefix)
-    )
-      return byName;
+    if (byName && (byName.lang || "").toLowerCase().startsWith(spec.wantLangPrefix)) return byName;
     if (byName) return byName;
 
     const byLang = voices.find((v) =>
@@ -604,6 +512,356 @@
   }
 
   // ---------------------------
+  // Stripe / Account UI
+  // ---------------------------
+  function setAuthUI(state /* "unknown"|"active"|"inactive" */, emailMaybe) {
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
+
+    const pill = $("#authPill");
+    const manageBtn = $("#manageBillingBtn");
+    const logoutBtn = $("#logoutBtn");
+    const email = (emailMaybe || localStorage.getItem(LS.authEmail) || "").trim();
+
+    let label = t.accountChecking;
+    let cls = "pill warn";
+    let canManage = false;
+
+    if (state === "active") {
+      label = t.accountActive;
+      cls = "pill ok";
+      canManage = true;
+    } else if (state === "inactive") {
+      label = t.accountInactive;
+      cls = "pill bad";
+      canManage = true; // allow portal for billing even if inactive (common case)
+    } else if (state === "ready") {
+      label = t.accountReady;
+      cls = "pill warn";
+    }
+
+    if (pill) {
+      pill.className = cls;
+      pill.textContent = label;
+      pill.title = email ? `Email: ${email}` : "";
+    }
+
+    if (manageBtn) manageBtn.disabled = !canManage;
+    if (logoutBtn) logoutBtn.style.display = email ? "" : "none";
+  }
+
+  function getEmailInput() {
+    const el = $("#loginEmail");
+    return (el && el.value ? String(el.value) : "").trim();
+  }
+
+  function setEmailInput(v) {
+    const el = $("#loginEmail");
+    if (el) el.value = v || "";
+  }
+
+  function rememberEmail(email) {
+    const e = (email || "").trim();
+    if (!e) return;
+    localStorage.setItem(LS.authEmail, e);
+  }
+
+  async function stripeRestoreAccess() {
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
+
+    const email = getEmailInput();
+    if (!email) return toast(t.needEmail, true);
+
+    rememberEmail(email);
+    setAuthUI("unknown", email);
+
+    // Expected server response (recommended):
+    // { ok: true, status: "active"|"inactive", customer_email?: "...", portal_url?: "..." }
+    try {
+      const j = await apiPostOrGet("/stripe/restore", { email });
+      const status = (j && j.status ? String(j.status) : "unknown").toLowerCase();
+      localStorage.setItem(LS.authStatus, status);
+
+      if (j && j.customer_email) rememberEmail(String(j.customer_email));
+      setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || email);
+
+      // Optional: if backend returns portal_url after restore, you can auto-open it.
+      // if (j && j.portal_url) window.location.href = String(j.portal_url);
+
+      toast(uiLang === "es" ? "Acceso restaurado." : "Access restored.");
+    } catch (e) {
+      // If endpoint doesn't exist yet, show a helpful message.
+      const msg = String(e && e.message ? e.message : e);
+      if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
+      else toast(msg, true);
+
+      setAuthUI("unknown", email);
+    }
+  }
+
+  async function stripeCheckout() {
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
+
+    const email = (getEmailInput() || localStorage.getItem(LS.authEmail) || "").trim();
+    if (!email) return toast(t.needEmail, true);
+
+    rememberEmail(email);
+
+    // Expected server response:
+    // { ok: true, url: "https://checkout.stripe.com/..." }
+    try {
+      const j = await apiPostOrGet("/stripe/checkout", { email });
+      const url = j && (j.url || j.checkout_url) ? String(j.url || j.checkout_url) : "";
+      if (!url) throw new Error("Checkout URL missing from server response.");
+      window.location.href = url;
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
+      else toast(msg, true);
+    }
+  }
+
+  async function stripePortal() {
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
+
+    const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
+    if (!email) return toast(t.needEmail, true);
+
+    // Expected server response:
+    // { ok: true, url: "https://billing.stripe.com/..." }
+    try {
+      const j = await apiPostOrGet("/stripe/portal", { email });
+      const url = j && (j.url || j.portal_url) ? String(j.url || j.portal_url) : "";
+      if (!url) throw new Error("Portal URL missing from server response.");
+      window.location.href = url;
+    } catch (e) {
+      const msg = String(e && e.message ? e.message : e);
+      if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
+      else toast(msg, true);
+    }
+  }
+
+  function logoutLocal() {
+    localStorage.removeItem(LS.authEmail);
+    localStorage.removeItem(LS.authStatus);
+    setEmailInput("");
+    setAuthUI("unknown", "");
+    toast(getUILang() === "es" ? "Sesión cerrada." : "Logged out.");
+  }
+
+  function initStripeUI() {
+    const supportBtn = $("#supportBtn");
+    const loginBtn = $("#loginBtn");
+    const manageBtn = $("#manageBillingBtn");
+    const logoutBtn = $("#logoutBtn");
+
+    if (supportBtn) supportBtn.addEventListener("click", stripeCheckout);
+    if (loginBtn) loginBtn.addEventListener("click", stripeRestoreAccess);
+    if (manageBtn) manageBtn.addEventListener("click", stripePortal);
+    if (logoutBtn) logoutBtn.addEventListener("click", logoutLocal);
+
+    // restore remembered email
+    const savedEmail = (localStorage.getItem(LS.authEmail) || "").trim();
+    if (savedEmail) setEmailInput(savedEmail);
+
+    const savedStatus = (localStorage.getItem(LS.authStatus) || "unknown").toLowerCase();
+    setAuthUI(savedStatus === "active" ? "active" : savedStatus === "inactive" ? "inactive" : "unknown", savedEmail);
+  }
+
+  // ---------------------------
+  // Apply UI language (single dropdown: #uiLangSelect)
+  // ---------------------------
+  function applyUILang() {
+    const uiLang = getUILang();
+    localStorage.setItem(LS.uiLang, uiLang);
+    const t = I18N[uiLang];
+
+    // Tabs (menu buttons)
+    applyTabLabels(uiLang);
+
+    // Top
+    const supportBtn = $("#supportBtn");
+    if (supportBtn) supportBtn.textContent = t.support;
+
+    const manageBtn = $("#manageBillingBtn");
+    if (manageBtn) manageBtn.textContent = t.manageBilling;
+
+    const logoutBtn = $("#logoutBtn");
+    if (logoutBtn) logoutBtn.textContent = t.logout;
+
+    setPlaceholder("loginEmail", t.emailUsedForStripe);
+
+    const loginBtn = $("#loginBtn");
+    if (loginBtn) loginBtn.textContent = t.restoreAccess;
+
+    // Support note in HTML has class, not id. We update the paragraph by class.
+    const note = document.querySelector(".support-note");
+    if (note) note.textContent = t.supportNote;
+
+    // Account pill (preserve state)
+    const savedStatus = (localStorage.getItem(LS.authStatus) || "unknown").toLowerCase();
+    const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
+    setAuthUI(savedStatus === "active" ? "active" : savedStatus === "inactive" ? "inactive" : "unknown", email);
+
+    // Chat
+    setText("ttsStatus", t.voiceReady); // will be corrected during voice check
+    setText("chatVoicePill", t.voiceReady);
+
+    // Title blocks
+    // (These IDs exist in your backend index.html)
+    // Chat
+    // h3 text itself doesn’t have id, so update the nearest known nodes:
+    const chatCardTitle = document.querySelector("#chatSection h3");
+    if (chatCardTitle) chatCardTitle.textContent = t.chatTitle;
+
+    const chatHint = document.querySelector("#chatSection .muted");
+    if (chatHint) chatHint.textContent = t.savedChatsHint;
+
+    const chatLangLabel = document.querySelector('label[for=""] #chatLangLabel'); // not used
+    // We have an element with id chatLangLabel in your earlier HTML version,
+    // but in the backend HTML it’s a <span class="muted"> inside the label.
+    // So we set it via the select’s parent label:
+    const chatLangWrap = $("#chatLangSelect")?.closest("label");
+    if (chatLangWrap) {
+      const span = chatLangWrap.querySelector(".muted");
+      if (span) span.textContent = t.chatLangLabel;
+    }
+
+    setPlaceholder("chatInput", t.chatPlaceholder);
+
+    const chatSendBtn = $("#chatSendBtn");
+    if (chatSendBtn) chatSendBtn.textContent = t.send;
+
+    const chatListenBtn = $("#chatListenBtn");
+    if (chatListenBtn) chatListenBtn.textContent = t.listen;
+
+    const chatStopBtn = $("#chatStopBtn");
+    if (chatStopBtn) chatStopBtn.textContent = t.stop;
+
+    const chatNewBtn = $("#chatNewBtn");
+    if (chatNewBtn) chatNewBtn.textContent = t.new;
+
+    const chatSaveBtn = $("#chatSaveBtn");
+    if (chatSaveBtn) chatSaveBtn.textContent = t.save;
+
+    const savedChatsTitle = document.querySelector("#chatSection h4");
+    if (savedChatsTitle) savedChatsTitle.textContent = t.savedChatsTitle;
+
+    const savedChatsHint2 = document.querySelector("#chatSection .card:nth-child(2) .muted");
+    if (savedChatsHint2) savedChatsHint2.textContent = t.savedChatsHint2;
+
+    // Bible section labels (IDs exist)
+    const bibleH3 = document.querySelector("#bibleSection h3");
+    if (bibleH3) bibleH3.textContent = t.bibleTitle;
+
+    const bibleHint = $("#bibleSection .muted");
+    if (bibleHint) bibleHint.textContent = t.bibleHint;
+
+    const readBibleBtn = $("#readBibleBtn");
+    if (readBibleBtn) readBibleBtn.textContent = t.read;
+
+    // In your HTML, labels are plain text nodes, not IDs.
+    // But you DO have IDs for status blocks + notes; we update those:
+    const spanishNote = document.querySelector("#bibleSection .small-note");
+    if (spanishNote) spanishNote.textContent = t.spanishReadNote;
+
+    // Devotional section
+    const devH3 = document.querySelector("#devotionalSection h3");
+    if (devH3) devH3.textContent = t.devTitle;
+
+    setText("devIntro", t.devIntro);
+
+    const devStreakPill = $("#devStreakPill");
+    if (devStreakPill) {
+      const num = (devStreakPill.textContent || "").match(/\d+/)?.[0] || "0";
+      devStreakPill.textContent = `${t.streak}: ${num}`;
+    }
+
+    const devStreakBtn = $("#devStreakBtn");
+    if (devStreakBtn) devStreakBtn.textContent = t.didIt;
+
+    const devotionalBtn = $("#devotionalBtn");
+    if (devotionalBtn) devotionalBtn.textContent = t.generate;
+
+    const devSaveBtn = $("#devSaveBtn");
+    if (devSaveBtn) devSaveBtn.textContent = t.devSave;
+
+    setText("devLabelTheme", t.devLabelTheme);
+    setText("devLabelScripture", t.devLabelScripture);
+    setText("devLabelCtxA", t.devLabelCtx);
+    setText("devLabelRefA", t.devLabelRef);
+    setText("devLabelAppA", t.devLabelApp);
+    setText("devLabelPrA", t.devLabelPr);
+    setText("devNow1", t.devNow1);
+    setText("devNow2", t.devNow2);
+    setText("devNow3", t.devNow3);
+    setText("devNow4", t.devNow4);
+    setPlaceholder("devMyContext", t.devMyContextPH);
+    setPlaceholder("devMyReflection", t.devMyReflectionPH);
+    setPlaceholder("devMyApplication", t.devMyApplicationPH);
+    setPlaceholder("devMyPrayer", t.devMyPrayerPH);
+    setText("devLabelNotes", t.devNotes);
+    setPlaceholder("devMyNotes", t.devNotesPH);
+    setText("devReqNote", t.devReqNote);
+
+    const devSavedTitle = document.querySelector('#devotionalSection h4');
+    if (devSavedTitle) devSavedTitle.textContent = t.devSavedTitle;
+
+    const devSavedHint = document.querySelector('#devotionalSection .card:nth-child(2) .muted');
+    if (devSavedHint) devSavedHint.textContent = t.devSavedHint;
+
+    // Prayer section
+    const prH3 = document.querySelector("#prayerSection h3");
+    if (prH3) prH3.textContent = t.prTitle;
+
+    setText("prIntro", t.prIntro);
+
+    const prStreakPill = $("#prStreakPill");
+    if (prStreakPill) {
+      const num = (prStreakPill.textContent || "").match(/\d+/)?.[0] || "0";
+      prStreakPill.textContent = `${t.streak}: ${num}`;
+    }
+
+    const prStreakBtn = $("#prStreakBtn");
+    if (prStreakBtn) prStreakBtn.textContent = t.didIt;
+
+    const prayerBtn = $("#prayerBtn");
+    if (prayerBtn) prayerBtn.textContent = t.prGenerate;
+
+    const prSaveBtn = $("#prSaveBtn");
+    if (prSaveBtn) prSaveBtn.textContent = t.prSave;
+
+    setText("prLabelA", t.prLabelA);
+    setText("prLabelC", t.prLabelC);
+    setText("prLabelT", t.prLabelT);
+    setText("prLabelS", t.prLabelS);
+    setText("prLabelN", t.prLabelN);
+    setText("prNow1", t.prNow1);
+    setText("prNow2", t.prNow2);
+    setText("prNow3", t.prNow3);
+    setText("prNow4", t.prNow4);
+    setPlaceholder("myAdoration", t.myAdorationPH);
+    setPlaceholder("myConfession", t.myConfessionPH);
+    setPlaceholder("myThanksgiving", t.myThanksPH);
+    setPlaceholder("mySupplication", t.mySuppPH);
+    setPlaceholder("prayerNotes", t.prNotesPH);
+
+    const prSavedTitle = document.querySelector('#prayerSection h4');
+    if (prSavedTitle) prSavedTitle.textContent = t.prSavedTitle;
+
+    const prSavedHint = document.querySelector('#prayerSection .card:nth-child(2) .muted');
+    if (prSavedHint) prSavedHint.textContent = t.prSavedHint;
+
+    // Re-render lists so “No saved…” + Delete label update
+    renderSavedChats();
+    renderSavedDevs();
+    renderSavedPrayers();
+  }
+
+  // ---------------------------
   // Chat
   // ---------------------------
   function chatStorageLoad() {
@@ -641,7 +899,7 @@
     const box = $("#chatSavedList");
     if (!box) return;
 
-    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const uiLang = getUILang();
     const t = I18N[uiLang];
 
     const list = chatStorageLoad();
@@ -655,36 +913,37 @@
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
+    list
+      .slice()
+      .reverse()
+      .forEach((item, idxFromEnd) => {
+        const idx = list.length - 1 - idxFromEnd;
 
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${item.title || "Chat"} • ${new Date(
-        item.ts || nowISO()
-      ).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        const chat = $("#chat");
-        if (!chat) return;
-        chat.innerHTML = "";
-        (item.messages || []).forEach((m) => addBubble(m.kind, m.text));
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.type = "button";
+        btn.textContent = `${item.title || "Chat"} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+        btn.addEventListener("click", () => {
+          const chat = $("#chat");
+          if (!chat) return;
+          chat.innerHTML = "";
+          (item.messages || []).forEach((m) => addBubble(m.kind, m.text));
+        });
+
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.type = "button";
+        del.textContent = t.delete;
+        del.style.marginTop = "8px";
+        del.addEventListener("click", () => {
+          const next = chatStorageLoad().filter((_, i) => i !== idx);
+          chatStorageSave(next);
+          renderSavedChats();
+        });
+
+        box.appendChild(btn);
+        box.appendChild(del);
       });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = chatStorageLoad().filter((_, i) => i !== idx);
-        chatStorageSave(next);
-        renderSavedChats();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
   }
 
   function getChatMessagesFromDOM() {
@@ -734,16 +993,13 @@
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+        const uiLang = getUILang();
         const t = I18N[uiLang];
 
         const msgs = getChatMessagesFromDOM();
         if (!msgs.length) return toast(t.nothingToSave);
 
-        const title = (msgs.find((m) => m.kind === "user")?.text || "Chat").slice(
-          0,
-          36
-        );
+        const title = (msgs.find((m) => m.kind === "user")?.text || "Chat").slice(0, 36);
         const list = chatStorageLoad();
         list.push({ ts: nowISO(), title, messages: msgs });
         chatStorageSave(list);
@@ -755,7 +1011,7 @@
     const listenBtn = $("#chatListenBtn");
     if (listenBtn) {
       listenBtn.addEventListener("click", async () => {
-        const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+        const uiLang = getUILang();
         const t = I18N[uiLang];
 
         const last = getLastBotText() || "";
@@ -775,7 +1031,7 @@
         try {
           await speakText(last, lang);
         } catch {
-          toast(I18N[lang].voiceMissing);
+          toast(I18N[lang].voiceMissing, true);
         }
       });
     }
@@ -794,15 +1050,10 @@
         input.value = "";
         localStorage.removeItem(LS.chatDraft);
 
-        sendBtn && (sendBtn.disabled = true);
+        if (sendBtn) sendBtn.disabled = true;
 
-        // ✅ IMPORTANT FIX:
-        // Send "lang" to backend, matching server.py:
-        // { "message": "...", "lang": "auto" | "en" | "es" }
         const langSel = $("#chatLangSelect");
-        const chosen = (langSel && langSel.value ? langSel.value : "auto")
-          .toLowerCase()
-          .trim();
+        const chosen = (langSel && langSel.value ? langSel.value : "auto").toLowerCase().trim();
         const lang = chosen === "en" || chosen === "es" ? chosen : "auto";
 
         try {
@@ -810,15 +1061,14 @@
           const reply = resp && resp.reply ? String(resp.reply) : "(No reply)";
           addBubble("bot", reply);
         } catch (err) {
-          // Friendly client-side message, but keeps the real error visible for you
-          const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+          const uiLang = getUILang();
           const friendly =
             uiLang === "es"
-              ? "Chat falló. Revisa que tu clave Gemini esté en Render y mira los logs."
+              ? "El chat falló. Revisa tu clave Gemini en Render y mira los logs."
               : "Chat failed. Check your Gemini key in Render and review server logs.";
           addBubble("system", `${friendly}\n\n${String(err.message || err)}`);
         } finally {
-          sendBtn && (sendBtn.disabled = false);
+          if (sendBtn) sendBtn.disabled = false;
         }
       });
     }
@@ -840,8 +1090,8 @@
     const box = $("#devSavedList");
     if (!box) return;
 
-    const devLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
-    const t = I18N[devLang];
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
 
     const list = loadSavedDevs();
     box.innerHTML = "";
@@ -854,46 +1104,48 @@
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
+    list
+      .slice()
+      .reverse()
+      .forEach((item, idxFromEnd) => {
+        const idx = list.length - 1 - idxFromEnd;
 
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${(item.theme || t.devTitle).slice(
-        0,
-        40
-      )} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        $("#devTheme").textContent = item.theme || "—";
-        $("#devScriptureRef").textContent = item.scripture_ref || "—";
-        $("#devScriptureText").textContent = item.scripture_text || "—";
-        $("#devStarterContext").textContent = item.starter_context || "—";
-        $("#devStarterReflection").textContent = item.starter_reflection || "—";
-        $("#devStarterApplication").textContent = item.starter_application || "—";
-        $("#devStarterPrayer").textContent = item.starter_prayer || "—";
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.type = "button";
+        btn.textContent = `${(item.theme || t.devTitle).slice(0, 40)} • ${new Date(
+          item.ts || nowISO()
+        ).toLocaleString()}`;
+        btn.addEventListener("click", () => {
+          $("#devTheme").textContent = item.theme || "—";
+          $("#devScriptureRef").textContent = item.scripture_ref || "—";
+          $("#devScriptureText").textContent = item.scripture_text || "—";
+          $("#devStarterContext").textContent = item.starter_context || "—";
+          $("#devStarterReflection").textContent = item.starter_reflection || "—";
+          $("#devStarterApplication").textContent = item.starter_application || "—";
+          $("#devStarterPrayer").textContent = item.starter_prayer || "—";
 
-        $("#devMyContext").value = item.my_context || "";
-        $("#devMyReflection").value = item.my_reflection || "";
-        $("#devMyApplication").value = item.my_application || "";
-        $("#devMyPrayer").value = item.my_prayer || "";
-        $("#devMyNotes").value = item.my_notes || "";
+          $("#devMyContext").value = item.my_context || "";
+          $("#devMyReflection").value = item.my_reflection || "";
+          $("#devMyApplication").value = item.my_application || "";
+          $("#devMyPrayer").value = item.my_prayer || "";
+          $("#devMyNotes").value = item.my_notes || "";
+        });
+
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.type = "button";
+        del.textContent = t.delete;
+        del.style.marginTop = "8px";
+        del.addEventListener("click", () => {
+          const next = loadSavedDevs().filter((_, i) => i !== idx);
+          saveSavedDevs(next);
+          renderSavedDevs();
+        });
+
+        box.appendChild(btn);
+        box.appendChild(del);
       });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = loadSavedDevs().filter((_, i) => i !== idx);
-        saveSavedDevs(next);
-        renderSavedDevs();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
   }
 
   function devotionalStarters(lang) {
@@ -919,7 +1171,7 @@
       ref: "Philippians 4:6–7",
       text:
         "6. Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.\n" +
-        "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
+          "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
       ctx:
         "Paul is encouraging believers to bring every worry to God in prayer instead of carrying anxiety alone.",
       refl:
@@ -933,18 +1185,11 @@
   function initDevotional() {
     const generateBtn = $("#devotionalBtn");
     const saveBtn = $("#devSaveBtn");
-    const devUiLang = $("#devUiLang");
-
-    // Restore dropdown
-    const stored = normLang(localStorage.getItem(LS.devLang) || "en", "en");
-    if (devUiLang) devUiLang.value = stored;
 
     const draft = safeJSON(localStorage.getItem(LS.devDraft) || "{}", {});
     if ($("#devMyContext")) $("#devMyContext").value = draft.my_context || "";
-    if ($("#devMyReflection"))
-      $("#devMyReflection").value = draft.my_reflection || "";
-    if ($("#devMyApplication"))
-      $("#devMyApplication").value = draft.my_application || "";
+    if ($("#devMyReflection")) $("#devMyReflection").value = draft.my_reflection || "";
+    if ($("#devMyApplication")) $("#devMyApplication").value = draft.my_application || "";
     if ($("#devMyPrayer")) $("#devMyPrayer").value = draft.my_prayer || "";
     if ($("#devMyNotes")) $("#devMyNotes").value = draft.my_notes || "";
 
@@ -966,17 +1211,11 @@
       }
     );
 
-    if (devUiLang) {
-      devUiLang.addEventListener("change", () => {
-        applyUILang();
-      });
-    }
-
     if (generateBtn) {
       generateBtn.addEventListener("click", async () => {
         generateBtn.disabled = true;
         try {
-          const lang = getLang("#devUiLang", localStorage.getItem(LS.devLang) || "en");
+          const lang = getUILang(); // devotional starters follow UI language
           const s = devotionalStarters(lang);
 
           $("#devTheme").textContent = s.theme;
@@ -988,7 +1227,7 @@
           $("#devStarterApplication").textContent = s.app;
           $("#devStarterPrayer").textContent = s.pr;
         } catch (e) {
-          toast(String(e.message || e));
+          toast(String(e.message || e), true);
         } finally {
           generateBtn.disabled = false;
         }
@@ -997,7 +1236,7 @@
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        const lang = getLang("#devUiLang", localStorage.getItem(LS.devLang) || "en");
+        const lang = getUILang();
         const t = I18N[lang];
 
         const my_context = ($("#devMyContext")?.value || "").trim();
@@ -1006,7 +1245,7 @@
         const my_prayer = ($("#devMyPrayer")?.value || "").trim();
 
         if (!my_context || !my_reflection || !my_application || !my_prayer) {
-          return toast(t.devReqToast);
+          return toast(t.devReqToast, true);
         }
 
         const item = {
@@ -1051,8 +1290,8 @@
     const box = $("#prSavedList");
     if (!box) return;
 
-    const prLang = normLang(localStorage.getItem(LS.prLang) || "en", "en");
-    const t = I18N[prLang];
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
 
     const list = loadSavedPrayers();
     box.innerHTML = "";
@@ -1065,42 +1304,44 @@
       return;
     }
 
-    list.slice().reverse().forEach((item, idxFromEnd) => {
-      const idx = list.length - 1 - idxFromEnd;
+    list
+      .slice()
+      .reverse()
+      .forEach((item, idxFromEnd) => {
+        const idx = list.length - 1 - idxFromEnd;
 
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = `${(item.title || t.prTitle).slice(
-        0,
-        40
-      )} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
-      btn.addEventListener("click", () => {
-        $("#pA").textContent = item.starterA || "—";
-        $("#pC").textContent = item.starterC || "—";
-        $("#pT").textContent = item.starterT || "—";
-        $("#pS").textContent = item.starterS || "—";
-        $("#myAdoration").value = item.myA || "";
-        $("#myConfession").value = item.myC || "";
-        $("#myThanksgiving").value = item.myT || "";
-        $("#mySupplication").value = item.myS || "";
-        $("#prayerNotes").value = item.notes || "";
+        const btn = document.createElement("button");
+        btn.className = "btn btn-ghost";
+        btn.type = "button";
+        btn.textContent = `${(item.title || t.prTitle).slice(0, 40)} • ${new Date(
+          item.ts || nowISO()
+        ).toLocaleString()}`;
+        btn.addEventListener("click", () => {
+          $("#pA").textContent = item.starterA || "—";
+          $("#pC").textContent = item.starterC || "—";
+          $("#pT").textContent = item.starterT || "—";
+          $("#pS").textContent = item.starterS || "—";
+          $("#myAdoration").value = item.myA || "";
+          $("#myConfession").value = item.myC || "";
+          $("#myThanksgiving").value = item.myT || "";
+          $("#mySupplication").value = item.myS || "";
+          $("#prayerNotes").value = item.notes || "";
+        });
+
+        const del = document.createElement("button");
+        del.className = "btn btn-danger";
+        del.type = "button";
+        del.textContent = t.delete;
+        del.style.marginTop = "8px";
+        del.addEventListener("click", () => {
+          const next = loadSavedPrayers().filter((_, i) => i !== idx);
+          saveSavedPrayers(next);
+          renderSavedPrayers();
+        });
+
+        box.appendChild(btn);
+        box.appendChild(del);
       });
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.textContent = t.delete;
-      del.style.marginTop = "8px";
-      del.addEventListener("click", () => {
-        const next = loadSavedPrayers().filter((_, i) => i !== idx);
-        saveSavedPrayers(next);
-        renderSavedPrayers();
-      });
-
-      box.appendChild(btn);
-      box.appendChild(del);
-    });
   }
 
   function prayerStarters(lang) {
@@ -1123,11 +1364,6 @@
   function initPrayer() {
     const genBtn = $("#prayerBtn");
     const saveBtn = $("#prSaveBtn");
-    const prUiLang = $("#prUiLang");
-
-    // Restore dropdown
-    const stored = normLang(localStorage.getItem(LS.prLang) || "en", "en");
-    if (prUiLang) prUiLang.value = stored;
 
     const draft = safeJSON(localStorage.getItem(LS.prDraft) || "{}", {});
     if ($("#myAdoration")) $("#myAdoration").value = draft.myA || "";
@@ -1156,15 +1392,9 @@
       }
     );
 
-    if (prUiLang) {
-      prUiLang.addEventListener("change", () => {
-        applyUILang();
-      });
-    }
-
     if (genBtn) {
       genBtn.addEventListener("click", () => {
-        const lang = getLang("#prUiLang", localStorage.getItem(LS.prLang) || "en");
+        const lang = getUILang(); // starters follow UI language
         const s = prayerStarters(lang);
         $("#pA").textContent = s.A;
         $("#pC").textContent = s.C;
@@ -1175,7 +1405,7 @@
 
     if (saveBtn) {
       saveBtn.addEventListener("click", () => {
-        const lang = getLang("#prUiLang", localStorage.getItem(LS.prLang) || "en");
+        const lang = getUILang();
         const t = I18N[lang];
 
         const myA = ($("#myAdoration")?.value || "").trim();
@@ -1184,7 +1414,7 @@
         const myS = ($("#mySupplication")?.value || "").trim();
 
         if (!myA || !myC || !myT || !myS) {
-          return toast(t.prReqToast);
+          return toast(t.prReqToast, true);
         }
 
         const item = {
@@ -1214,7 +1444,7 @@
   }
 
   // ---------------------------
-  // Bible Reader (robust book_id OR book name)
+  // Bible Reader
   // ---------------------------
   function bibleVersionForReadingLang(readLang) {
     return readLang === "es" ? "es" : "en_default";
@@ -1238,7 +1468,7 @@
     const el = $("#bibleDbStatus");
     if (!el) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readLang = normLang($("#readingVoice")?.value || "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
@@ -1253,10 +1483,10 @@
     const bookSel = $("#bookSelect");
     if (!bookSel) return;
 
-    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const uiLang = getUILang();
     const t = I18N[uiLang];
 
-    const readLang = getLang("#readingVoice", "en");
+    const readLang = normLang($("#readingVoice")?.value || "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     bookSel.innerHTML = `<option value="">${t.loading}</option>`;
@@ -1285,7 +1515,7 @@
     const vsEnd = $("#verseEndSelect");
     if (!chapSel || !vsStart || !vsEnd) return;
 
-    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const uiLang = getUILang();
     const t = I18N[uiLang];
 
     chapSel.innerHTML = `<option value="">${t.dash}</option>`;
@@ -1295,7 +1525,7 @@
     const pick = getBookSelection();
     if (pick.kind === "none") return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readLang = normLang($("#readingVoice")?.value || "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
@@ -1325,7 +1555,7 @@
     const vsEnd = $("#verseEndSelect");
     if (!chapSel || !vsStart || !vsEnd) return;
 
-    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const uiLang = getUILang();
     const t = I18N[uiLang];
 
     vsStart.innerHTML = `<option value="">${t.dash}</option>`;
@@ -1335,10 +1565,11 @@
     const ch = parseInt(chapSel.value || "0", 10);
     if (pick.kind === "none" || !ch) return;
 
-    const readLang = getLang("#readingVoice", "en");
+    const readLang = normLang($("#readingVoice")?.value || "en", "en");
     const version = bibleVersionForReadingLang(readLang);
 
     try {
+      // verses_max needs book_id, so only works when select value is numeric id.
       if (pick.kind !== "id") return;
 
       const j = await apiGet(
@@ -1373,14 +1604,14 @@
 
     if (!chapSel || !passageRef || !passageText) return;
 
-    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const uiLang = getUILang();
     const t = I18N[uiLang];
 
     const pick = getBookSelection();
     const ch = parseInt(chapSel.value || "0", 10);
-    if (pick.kind === "none" || !ch) return toast(t.pickBookChapter);
+    if (pick.kind === "none" || !ch) return toast(t.pickBookChapter, true);
 
-    const readLang = getLang("#readingVoice", "en");
+    const readLang = normLang($("#readingVoice")?.value || "en", "en");
     const version = bibleVersionForReadingLang(readLang);
     const whole = !!(fullCh && fullCh.checked);
 
@@ -1410,7 +1641,7 @@
 
       await speakText(toSpeak, readLang, 1.0);
     } catch (e) {
-      toast(String(e.message || e));
+      toast(String(e.message || e), true);
     }
   }
 
@@ -1448,7 +1679,7 @@
         await refreshBibleStatus();
         await loadBooks();
 
-        const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+        const uiLang = getUILang();
         const t = I18N[uiLang];
 
         const c = $("#chapterSelect");
@@ -1468,25 +1699,32 @@
   }
 
   // ---------------------------
-  // Init + safety
+  // Init
   // ---------------------------
   async function init() {
     showTopStatus("JS: starting…");
 
     initTabs();
+    initStripeUI();
     initChat();
     initDevotional();
     initPrayer();
     initBible();
 
-    // Restore saved UI selects before applying language
-    const devStored = normLang(localStorage.getItem(LS.devLang) || "en", "en");
-    const prStored = normLang(localStorage.getItem(LS.prLang) || "en", "en");
-    setSelectValue("#devUiLang", devStored);
-    setSelectValue("#prUiLang", prStored);
+    // restore UI language dropdown
+    const storedUILang = normLang(localStorage.getItem(LS.uiLang) || "en", "en");
+    setSelectValue("#uiLangSelect", storedUILang);
+
+    const uiSel = $("#uiLangSelect");
+    if (uiSel) {
+      uiSel.addEventListener("change", () => {
+        applyUILang();
+      });
+    }
 
     applyUILang();
 
+    // Voice check
     const ttsStatus = $("#ttsStatus");
     const chatVoicePill = $("#chatVoicePill");
 
@@ -1494,16 +1732,22 @@
       const vEn = await pickLockedVoice("en");
       const vEs = await pickLockedVoice("es");
       const ok = !!(vEn && vEs);
-      const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+      const uiLang = getUILang();
       const msg = ok ? I18N[uiLang].voiceReady : I18N[uiLang].voiceMissing;
 
       if (ttsStatus) ttsStatus.textContent = msg;
       if (chatVoicePill) chatVoicePill.textContent = msg;
     } catch {
-      const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+      const uiLang = getUILang();
       if (ttsStatus) ttsStatus.textContent = I18N[uiLang].voiceMissing;
       if (chatVoicePill) chatVoicePill.textContent = I18N[uiLang].voiceMissing;
     }
+
+    // Quick health ping (optional)
+    try {
+      await apiGet("/me");
+      // leave auth pill alone; /me doesn't currently return billing status
+    } catch {}
 
     showTopStatus("JS: ready");
   }
@@ -1525,4 +1769,5 @@
     });
   });
 })();
+
 
