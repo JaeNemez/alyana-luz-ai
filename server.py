@@ -21,7 +21,7 @@
     devDraft: "alyana.dev.draft",
     prDraft: "alyana.pr.draft",
 
-    // ✅ Stripe/Auth
+    // Stripe/Auth
     authToken: "alyana.auth.token",
     authEmail: "alyana.auth.email",
   };
@@ -264,7 +264,7 @@
       optional: "(optional)",
       dash: "—",
 
-      support: "❤️ Support Alyana Luz",
+      support: " Support Alyana Luz",
       supportNote:
         "Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.\n" +
         "To access premium features, subscribe with Support, or restore access using the email you used on Stripe.",
@@ -1502,7 +1502,7 @@
     showTopStatus("JS: starting…");
 
     initTabs();
-    initStripeBilling();   // ✅ Stripe
+    initStripeBilling();   // Stripe
     initChat();
     initDevotional();
     initPrayer();
@@ -1528,7 +1528,7 @@
       if (chatVoicePill) chatVoicePill.textContent = I18N[uiLang].voiceMissing;
     }
 
-    await refreshMe(); // ✅ update account pill & billing button
+    await refreshMe(); // update account pill & billing button
     showTopStatus("JS: ready");
   }
 
