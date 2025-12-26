@@ -169,6 +169,7 @@ def _verify_token(token: str) -> dict | None:
         iat = int(payload.get("iat") or 0)
         if not iat:
             return None
+        # token valid for 30 days
         if time.time() - iat > 60 * 60 * 24 * 30:
             return None
         return payload
@@ -239,6 +240,7 @@ def me(req: Request):
         "email": email,
         "customer_id": customer_id,
         "subscribed": subscribed,
+        "status": "active" if subscribed else "inactive",
     }
 
 
@@ -305,13 +307,16 @@ async def stripe_checkout(req: Request):
         success_url = f"{APP_BASE_URL}/?success=1"
         cancel_url = f"{APP_BASE_URL}/?canceled=1"
 
+        # IMPORTANT FIX:
+        # - "customer_creation" is NOT allowed in subscription mode (Stripe returns error)
         params = {
             "mode": "subscription",
             "line_items": [{"price": STRIPE_PRICE_ID, "quantity": 1}],
             "success_url": success_url,
             "cancel_url": cancel_url,
-            "customer_creation": "always",
         }
+
+        # In subscription mode, use customer_email (Stripe will create or reuse customer)
         if email and "@" in email:
             params["customer_email"] = email
 
@@ -358,7 +363,20 @@ async def stripe_restore(req: Request):
             customer=cust.id,
             return_url=f"{APP_BASE_URL}/",
         )
-        return {"ok": True, "url": portal.url, "token": token, "subscribed": subscribed}
+
+        # Return BOTH formats:
+        # - your earlier frontend expected: status / customer_email / portal_url
+        # - your current backend returns: url / token / subscribed
+        status = "active" if subscribed else "inactive"
+        return {
+            "ok": True,
+            "url": portal.url,
+            "portal_url": portal.url,
+            "token": token,
+            "subscribed": subscribed,
+            "status": status,
+            "customer_email": email,
+        }
 
     except HTTPException:
         raise
@@ -368,9 +386,10 @@ async def stripe_restore(req: Request):
 
 
 @app.post("/stripe/portal")
-def stripe_portal(req: Request):
+async def stripe_portal(req: Request):
     _require_stripe_ready()
     payload = _require_auth(req)
+
     customer_id = str(payload.get("customer_id") or "")
     if not customer_id:
         raise HTTPException(status_code=401, detail="Missing customer_id")
@@ -466,6 +485,7 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
