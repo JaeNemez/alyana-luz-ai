@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -414,27 +415,25 @@
 
         .section-body { padding: 12px; }
 
-        /* forms + readability */
         input[type="text"], select, textarea { font-size: 16px; }
         textarea { min-height: 140px; }
         .row > * { min-width: 160px; }
 
-        /* Chat stack */
         .chat-layout {
           display: flex !important;
           flex-direction: column !important;
-          height: auto;       /* IMPORTANT: allow page scroll */
+          height: auto;
           gap: 10px;
           min-height: 0;
         }
 
-        /* THIS is the key: force the chat card + message box to be tall on mobile */
+        /* HUGE on tall Android screens */
         #chatSection .card:first-child {
-          min-height: 72vh;   /* big chat card */
+          min-height: 78vh;
         }
 
         #chat {
-          min-height: 45vh;   /* big visible message window */
+          min-height: 55vh;
         }
 
         .chat-form { flex-shrink: 0; width: 100%; }
