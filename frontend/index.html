@@ -255,9 +255,7 @@
       }
 
       /* =========================================================
-         NEW: Prayer section label styling (bigger, bold, colored)
-         - Does NOT change your theme colors/variables.
-         - Only styles those 4 labels.
+         Prayer section label styling (bigger, bold, colored)
          ========================================================= */
       .pr-label {
         font-weight: 900;
@@ -271,13 +269,41 @@
         border: 1px solid rgba(186,108,184,0.22);
         background: rgba(255,255,255,0.06);
       }
-      .pr-label.adoration { color: rgba(186,108,184,0.95); }   /* matches your accent-3 vibe */
-      .pr-label.confession { color: rgba(203,132,203,0.95); }  /* FIXED: now matches the accent family */
-      .pr-label.thanks { color: rgba(169,92,169,0.95); }       /* matches accent-2 vibe */
-      .pr-label.supplication { color: rgba(154,75,156,0.95); } /* matches accent vibe */
+      .pr-label.adoration { color: rgba(186,108,184,0.95); }
+      .pr-label.confession { color: rgba(203,132,203,0.95); }
+      .pr-label.thanks { color: rgba(169,92,169,0.95); }
+      .pr-label.supplication { color: rgba(154,75,156,0.95); }
 
       @media (max-width: 920px) {
         .pr-label {
+          font-size: 16px;
+        }
+      }
+
+      /* =========================================================
+         NEW: Devotional section label styling (bigger, bold, colored)
+         - Only styles the 4 Devotional “starter” labels
+         - Does NOT change your theme colors/variables.
+         ========================================================= */
+      .dev-label {
+        font-weight: 900;
+        font-size: 15px;
+        letter-spacing: 0.2px;
+        margin-bottom: 8px !important;
+        opacity: 1;
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(186,108,184,0.22);
+        background: rgba(255,255,255,0.06);
+      }
+      .dev-label.context { color: rgba(186,108,184,0.95); }
+      .dev-label.reflection { color: rgba(203,132,203,0.95); }
+      .dev-label.application { color: rgba(169,92,169,0.95); }
+      .dev-label.prayer { color: rgba(154,75,156,0.95); }
+
+      @media (max-width: 920px) {
+        .dev-label {
           font-size: 16px;
         }
       }
@@ -659,28 +685,28 @@
               <div class="divider"></div>
 
               <div class="block">
-                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Alyana Starter — Context / Observation</div>
+                <div class="muted dev-label context" id="devLabelCtxA" style="margin-bottom:6px;">Context / Observation</div>
                 <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow1">Now write yours:</div>
                 <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Alyana Starter — Reflection / Insight</div>
+                <div class="muted dev-label reflection" id="devLabelRefA" style="margin-bottom:6px;">Reflection / Insight</div>
                 <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow2">Now write yours:</div>
                 <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Alyana Starter — Application (Practical)</div>
+                <div class="muted dev-label application" id="devLabelAppA" style="margin-bottom:6px;">Application (Practical)</div>
                 <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow3">Now write yours:</div>
                 <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Alyana Starter — Prayer</div>
+                <div class="muted dev-label prayer" id="devLabelPrA" style="margin-bottom:6px;">Prayer</div>
                 <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow4">Now write your real prayer:</div>
                 <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
@@ -784,6 +810,7 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
