@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 import traceback
 
 from fastapi import FastAPI, HTTPException, Request
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 # Bible API router
 from bible_api import router as bible_router
 
-# Gemini brain
+# AI brain
 from agent import run_bible_ai
 
 
@@ -29,11 +30,8 @@ SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 # App
 # -----------------------------
 app = FastAPI()
-
-# Register API routers FIRST
 app.include_router(bible_router)
 
-# CORS (tighten later)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,25 +42,64 @@ app.add_middleware(
 
 
 # -----------------------------
+# Simple in-memory chat memory
+# -----------------------------
+# Keyed by (ip + user-agent) -> { "ts": last_seen, "history": [ {role, content}, ... ] }
+CHAT_SESSIONS = {}
+SESSION_TTL_SECONDS = 60 * 60 * 6  # 6 hours
+MAX_HISTORY = 30
+
+
+def _session_key(req: Request) -> str:
+    ip = (req.client.host if req.client else "unknown").strip()
+    ua = (req.headers.get("user-agent") or "unknown").strip()
+    return f"{ip}::{ua}"
+
+
+def _cleanup_sessions():
+    now = time.time()
+    dead = []
+    for k, v in CHAT_SESSIONS.items():
+        last = v.get("ts") or 0
+        if now - last > SESSION_TTL_SECONDS:
+            dead.append(k)
+    for k in dead:
+        CHAT_SESSIONS.pop(k, None)
+
+
+def _get_history(req: Request) -> list:
+    _cleanup_sessions()
+    key = _session_key(req)
+    sess = CHAT_SESSIONS.get(key)
+    if not sess:
+        sess = {"ts": time.time(), "history": []}
+        CHAT_SESSIONS[key] = sess
+    sess["ts"] = time.time()
+    return sess["history"]
+
+
+def _push_history(req: Request, role: str, content: str):
+    h = _get_history(req)
+    h.append({"role": role, "content": content})
+    # keep only last MAX_HISTORY
+    if len(h) > MAX_HISTORY:
+        del h[:-MAX_HISTORY]
+
+
+# -----------------------------
 # Helpers
 # -----------------------------
 def _safe_path_under(base: Path, requested_path: str) -> Path:
-    """
-    Prevent path traversal: ensure requested_path stays inside base.
-    Handles leading slashes safely.
-    """
     base = base.resolve()
     clean = (requested_path or "").lstrip("/\\")
     target = (base / clean).resolve()
-
     if base not in target.parents and target != base:
         raise HTTPException(status_code=400, detail="Invalid path")
-
     return target
 
 
 # -----------------------------
-# API health/basic endpoints
+# API endpoints
 # -----------------------------
 @app.get("/me")
 def me():
@@ -85,8 +122,8 @@ async def chat(req: Request):
     Expected JSON:
       { "message": "...", "lang": "auto" | "en" | "es" }
 
-    Returns:
-      { "ok": true, "reply": "..." }
+    Memory:
+      Stores the conversation in-memory per user (IP + User-Agent) for a few hours.
     """
     try:
         body = await req.json()
@@ -102,21 +139,29 @@ async def chat(req: Request):
         lang = "auto"
 
     try:
-        reply = run_bible_ai(user_message, lang=lang)
-        reply = (reply or "").strip()
+        # Save user message to memory first
+        _push_history(req, "user", user_message)
+
+        history = _get_history(req)
+
+        # Ask Alyana with conversation history
+        reply = run_bible_ai(user_message, lang=lang, history=history)
+
         if not reply:
-            reply = "I’m here with you. Please try again."
-        return {"ok": True, "reply": reply}
+            reply = "I’m here. Please try again."
+
+        # Save assistant reply to memory
+        _push_history(req, "assistant", str(reply))
+
+        return {"ok": True, "reply": str(reply)}
+
     except Exception as e:
-        # Log server-side details (Render logs)
         print("ERROR in /chat:", repr(e))
         print(traceback.format_exc())
-
-        # Return SAFE message to the UI (no 500 crash loop)
-        return {
-            "ok": True,
-            "reply": "I’m having trouble connecting right now. Please try again in a moment.",
-        }
+        raise HTTPException(
+            status_code=500,
+            detail="Chat engine failed. Check server logs / API key.",
+        )
 
 
 # -----------------------------
@@ -166,13 +211,7 @@ def serve_icons(icon_name: str):
 # -----------------------------
 @app.get("/{path:path}", include_in_schema=False)
 def serve_frontend_fallback(path: str):
-    blocked_prefixes = (
-        "bible",
-        "me",
-        "chat",
-        "devotional",
-        "daily_prayer",
-    )
+    blocked_prefixes = ("bible", "me", "chat", "devotional", "daily_prayer")
 
     first_segment = (path.split("/", 1)[0] or "").strip().lower()
     if first_segment in blocked_prefixes:
@@ -186,6 +225,7 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
