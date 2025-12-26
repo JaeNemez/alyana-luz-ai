@@ -254,9 +254,6 @@
         margin: 12px 0;
       }
 
-      /* =========================================================
-         Prayer section label styling (bigger, bold, colored)
-         ========================================================= */
       .pr-label {
         font-weight: 900;
         font-size: 15px;
@@ -274,13 +271,6 @@
       .pr-label.thanks { color: rgba(169,92,169,0.95); }
       .pr-label.supplication { color: rgba(154,75,156,0.95); }
 
-      @media (max-width: 920px) {
-        .pr-label { font-size: 16px; }
-      }
-
-      /* =========================================================
-         Devotional section label styling (bigger, bold, colored)
-         ========================================================= */
       .dev-label {
         font-weight: 900;
         font-size: 15px;
@@ -299,12 +289,9 @@
       .dev-label.prayer { color: rgba(154,75,156,0.95); }
 
       @media (max-width: 920px) {
-        .dev-label { font-size: 16px; }
+        .pr-label, .dev-label { font-size: 16px; }
       }
 
-      /* =========================================================
-         NEW: Bible "Read" inline button (small, next to text)
-         ========================================================= */
       .bible-subrow{
         display: flex;
         align-items: center;
@@ -330,7 +317,6 @@
         border: 1px solid rgba(255,255,255,0.14);
       }
 
-      /* CHAT */
       .chat-layout {
         flex: 1;
         overflow: hidden;
@@ -414,7 +400,6 @@
 
       .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
 
-      /* Mobile */
       @media (max-width: 920px) {
         body {
           align-items: stretch;
@@ -491,7 +476,7 @@
           </button>
         </div>
 
-        <p class="support-note">
+        <p class="support-note" id="supportNote">
           Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
           <br />
           To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
@@ -510,10 +495,10 @@
       </div>
 
       <nav class="menu-bar">
-        <button class="menu-btn active" data-target="chatSection" type="button">Chat</button>
-        <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
-        <button class="menu-btn" data-target="devotionalSection" type="button">Devotional</button>
-        <button class="menu-btn" data-target="prayerSection" type="button">Daily Prayer</button>
+        <button class="menu-btn active" data-target="chatSection" type="button" id="tabChat">Chat</button>
+        <button class="menu-btn" data-target="bibleSection" type="button" id="tabBible">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button" id="tabDev">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button" id="tabPrayer">Daily Prayer</button>
       </nav>
 
       <div class="main">
@@ -523,13 +508,13 @@
             <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
               <div class="row" style="align-items:center; margin-bottom:10px;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 4px 0;">Chat</h3>
-                  <div class="muted">Saved chat logs are stored on this device.</div>
+                  <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
+                  <div class="muted" id="chatSavedHint">Saved chat logs are stored on this device.</div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="chatLangLabel">Chat Language</span>
                     <select id="chatLangSelect">
                       <option value="auto" selected>Auto (based on what they type)</option>
                       <option value="en">English</option>
@@ -553,8 +538,8 @@
             </div>
 
             <div class="card" style="overflow:auto;">
-              <h4 style="margin-bottom:6px;">Saved Chats</h4>
-              <div class="muted">Load or delete any saved chat.</div>
+              <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
+              <div class="muted" id="savedChatsHint">Load or delete any saved chat.</div>
               <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved chats yet.</small>
               </div>
@@ -568,11 +553,10 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2; min-width:260px;">
-                  <h3 style="margin-bottom:6px;">Bible Reader</h3>
+                  <h3 style="margin-bottom:6px;" id="bibleTitle">Bible Reader</h3>
 
-                  <!-- Text + small Read button on the same line -->
                   <div class="muted bible-subrow">
-                    <span>Pick a book/chapter and verse range, or Full Chapter.</span>
+                    <span id="bibleHint">Pick a book/chapter and verse range, or Full Chapter.</span>
                     <button class="mini-btn primary" id="readBibleBtn" type="button">Read</button>
                   </div>
                 </div>
@@ -584,28 +568,28 @@
 
               <div class="row" style="margin-top:12px;">
                 <div style="flex:2;">
-                  <label>Book</label>
+                  <label id="lblBook">Book</label>
                   <select id="bookSelect">
                     <option value="">Loading…</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Chapter</label>
+                  <label id="lblChapter">Chapter</label>
                   <select id="chapterSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (start)</label>
+                  <label id="lblVerseStart">Verse (start)</label>
                   <select id="verseStartSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (end)</label>
+                  <label id="lblVerseEnd">Verse (end)</label>
                   <select id="verseEndSelect">
                     <option value="">(optional)</option>
                   </select>
@@ -614,24 +598,24 @@
 
               <div class="row" style="margin-top:12px; align-items:flex-end;">
                 <div>
-                  <label>Reader Language</label>
+                  <label id="lblReaderLang">Reader Language</label>
                   <select id="readingVoice">
                     <option value="en" selected>English</option>
                     <option value="es">Spanish</option>
                   </select>
-                  <div class="small-note">Only two voices, locked for consistency.</div>
+                  <div class="small-note" id="readerLangNote">Only two voices, locked for consistency.</div>
                 </div>
 
                 <div style="min-width:220px;">
                   <label style="display:flex; gap:10px; align-items:center;">
                     <input type="checkbox" id="fullChapter" />
-                    Full Chapter
+                    <span id="lblFullChapter">Full Chapter</span>
                   </label>
-                  <div class="small-note">If Full Chapter is on, verses are ignored.</div>
+                  <div class="small-note" id="fullChapterNote">If Full Chapter is on, verses are ignored.</div>
                 </div>
 
                 <div>
-                  <label>Version label (English only)</label>
+                  <label id="lblVersion">Version label (English only)</label>
                   <select id="versionSelect">
                     <option value="KJV" selected>KJV</option>
                     <option value="NKJV">NKJV</option>
@@ -643,24 +627,22 @@
                     <option value="AMP">AMP</option>
                     <option value="MSG">MSG</option>
                   </select>
-                  <div class="small-note">For Spanish voice, we do not speak the version label.</div>
+                  <div class="small-note" id="versionNote">For Spanish voice, we do not speak the version label.</div>
                 </div>
               </div>
 
-              <!-- Removed the big Listen/Stop buttons row -->
-
-              <div class="small-note">
+              <div class="small-note" id="spanishReadNote">
                 Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
               </div>
             </div>
 
             <div class="card">
-              <h4>Bible DB Status</h4>
+              <h4 id="dbStatusTitle">Bible DB Status</h4>
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
             <div class="card">
-              <h4>Passage</h4>
+              <h4 id="passageTitle">Passage</h4>
               <div class="muted" id="passageRef">—</div>
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
             </div>
@@ -673,7 +655,7 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Devotional</h3>
+                  <h3 style="margin:0 0 6px 0;" id="devTitle">Devotional</h3>
                   <div class="muted" id="devIntro">
                     Alyana gives short starter examples. You write and save your real devotional.
                   </div>
@@ -681,7 +663,7 @@
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="devLangLabel">Language</span>
                     <select id="devUiLang">
                       <option value="en" selected>English</option>
                       <option value="es">Español</option>
@@ -748,8 +730,8 @@
             </div>
 
             <div class="card">
-              <h4>Saved Devotionals</h4>
-              <div class="muted">Load or delete past devotionals saved on this device.</div>
+              <h4 id="devSavedTitle">Saved Devotionals</h4>
+              <div class="muted" id="devSavedHint">Load or delete past devotionals saved on this device.</div>
               <div class="saved-list" id="devSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved devotionals yet.</small>
               </div>
@@ -763,7 +745,7 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
+                  <h3 style="margin:0 0 6px 0;" id="prTitle">Daily Prayer</h3>
                   <div class="muted" id="prIntro">
                     Alyana gives a short starter example. You write and save your real prayer.
                   </div>
@@ -771,7 +753,7 @@
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="prLangLabel">Language</span>
                     <select id="prUiLang">
                       <option value="en" selected>English</option>
                       <option value="es">Español</option>
@@ -821,8 +803,8 @@
             </div>
 
             <div class="card">
-              <h4>Saved Prayers</h4>
-              <div class="muted">Load or delete past prayers saved on this device.</div>
+              <h4 id="prSavedTitle">Saved Prayers</h4>
+              <div class="muted" id="prSavedHint">Load or delete past prayers saved on this device.</div>
               <div class="saved-list" id="prSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved prayers yet.</small>
               </div>
@@ -835,3 +817,4 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
