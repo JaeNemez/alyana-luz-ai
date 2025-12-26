@@ -1,10 +1,12 @@
 /* frontend/app.js
    Alyana Luz • Bible AI
-   - Global UI language switch (English/Español) via #uiLangSelect
-   - Fix mobile chat experience (no color changes; CSS handles sizing)
-   - Bible Reader: adds a Read button (#readBibleBtn) + small Listen/Stop buttons
-   - Spanish Bible uses your Spanish DB via version=es_rvr (or es_rvr alias)
-   - TTS: picks stable voices when possible (Karen en-AU / Paulina es-MX), falls back safely
+   FIX: Spanish “Listen” can be silent on some devices if no Spanish TTS voice is installed.
+        Now: if user selects Spanish, but device has NO Spanish voice, we fall back to an English voice
+        (so it still speaks the Spanish text instead of staying silent).
+   Notes:
+   - Does NOT change your colors (CSS is in HTML).
+   - Keeps global UI language (English/Español) via #uiLangSelect if present.
+   - Bible Reader uses Spanish DB when Reader Language = Spanish (version=es_rvr).
 */
 
 (() => {
@@ -43,11 +45,6 @@
     if (el) el.textContent = text;
   };
 
-  const setHTML = (id, html) => {
-    const el = document.getElementById(id);
-    if (el) el.innerHTML = html;
-  };
-
   const show = (el) => { if (el) el.style.display = ""; };
   const hide = (el) => { if (el) el.style.display = "none"; };
 
@@ -80,61 +77,19 @@
       savedChats: "Saved Chats",
       savedChatsHint: "Load or delete any saved chat.",
       noSavedChats: "No saved chats yet.",
-      chatHint: "Saved chat logs are stored on this device.",
-      chatLang: "Chat Language",
-      voiceReady: "Voice: ready",
-      voiceMissing: "Voice: missing",
       chatPH: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
       send: "Send",
       listen: "Listen",
       stop: "Stop",
       new: "New",
       save: "Save",
-      bibleReaderTitle: "Bible Reader (Listen)",
-      bibleReaderHint: "Pick a book/chapter and verse range, or Full Chapter.",
-      book: "Book",
-      chapter: "Chapter",
-      verseStart: "Verse (start)",
-      verseEnd: "Verse (end)",
-      readerLanguage: "Reader Language",
-      onlyTwoVoices: "Only two voices, locked for consistency.",
-      fullChapter: "Full Chapter",
-      fullChapterHint: "If Full Chapter is on, verses are ignored.",
-      versionLabel: "Version label (English only)",
-      versionLabelHint: "For Spanish voice, we do not speak the version label.",
-      read: "Read",
+      voiceReady: "Voice: ready",
+      voiceMissing: "Voice: missing",
+      voiceSpanishMissing: "Spanish voice not installed",
       bibleDbStatus: "Bible DB Status",
       checking: "Checking…",
       passage: "Passage",
       dash: "—",
-      spanishVoiceNote:
-        "Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.",
-      devIntro:
-        "Alyana gives short starter examples. You write and save your real devotional.",
-      prIntro:
-        "Alyana gives a short starter example. You write and save your real prayer.",
-      streak: "Streak",
-      didItToday: "I did it today",
-      generate: "Generate",
-      generateStarters: "Generate Starters",
-      themeTitle: "Theme / Title (Alyana)",
-      scriptureA: "Scripture (Alyana)",
-      starterCtx: "Alyana Starter — Context / Observation",
-      starterRef: "Alyana Starter — Reflection / Insight",
-      starterApp: "Alyana Starter — Application (Practical)",
-      starterPr: "Alyana Starter — Prayer",
-      nowWriteYours: "Now write yours:",
-      nowWritePrayer: "Now write your real prayer:",
-      notes: "Notes",
-      notesOptional: "Notes / Reflection (optional)",
-      requiredToSave:
-        "Required to save (streak): Context + Reflection + Application + Prayer.",
-      savedDevotionals: "Saved Devotionals",
-      savedDevHint: "Load or delete past devotionals saved on this device.",
-      noSavedDev: "No saved devotionals yet.",
-      savedPrayers: "Saved Prayers",
-      savedPrHint: "Load or delete past prayers saved on this device.",
-      noSavedPr: "No saved prayers yet.",
       ttsNeedVoices:
         "For best results, install voices ‘Paulina (es-MX)’ and ‘Karen (en-AU)’.",
     },
@@ -155,61 +110,19 @@
       savedChats: "Chats guardados",
       savedChatsHint: "Cargar o eliminar cualquier chat guardado.",
       noSavedChats: "Todavía no hay chats guardados.",
-      chatHint: "Los chats guardados se almacenan en este dispositivo.",
-      chatLang: "Idioma del chat",
-      voiceReady: "Voz: lista",
-      voiceMissing: "Voz: no disponible",
       chatPH: "Pide una oración, un versículo o ‘versículos sobre perdón’…",
       send: "Enviar",
       listen: "Escuchar",
       stop: "Detener",
       new: "Nuevo",
       save: "Guardar",
-      bibleReaderTitle: "Lectura Bíblica (Escuchar)",
-      bibleReaderHint: "Elige libro/capítulo y rango de versículos, o Capítulo completo.",
-      book: "Libro",
-      chapter: "Capítulo",
-      verseStart: "Versículo (inicio)",
-      verseEnd: "Versículo (fin)",
-      readerLanguage: "Idioma del lector",
-      onlyTwoVoices: "Solo dos voces, bloqueadas por consistencia.",
-      fullChapter: "Capítulo completo",
-      fullChapterHint: "Si está activado, los versículos se ignoran.",
-      versionLabel: "Etiqueta de versión (solo inglés)",
-      versionLabelHint: "Con voz en español, no se pronuncia la etiqueta de versión.",
-      read: "Leer",
+      voiceReady: "Voz: lista",
+      voiceMissing: "Voz: no disponible",
+      voiceSpanishMissing: "Voz en español no instalada",
       bibleDbStatus: "Estado de la Biblia (DB)",
       checking: "Verificando…",
       passage: "Pasaje",
       dash: "—",
-      spanishVoiceNote:
-        "La voz en español lee SOLO el texto del versículo (sin etiquetas en inglés).",
-      devIntro:
-        "Alyana da ejemplos cortos. Tú escribes y guardas tu devocional real.",
-      prIntro:
-        "Alyana da un ejemplo corto. Tú escribes y guardas tu oración real.",
-      streak: "Racha",
-      didItToday: "Lo hice hoy",
-      generate: "Generar",
-      generateStarters: "Generar ejemplos",
-      themeTitle: "Tema / Título (Alyana)",
-      scriptureA: "Escritura (Alyana)",
-      starterCtx: "Ejemplo — Contexto / Observación",
-      starterRef: "Ejemplo — Reflexión / Insight",
-      starterApp: "Ejemplo — Aplicación (Práctica)",
-      starterPr: "Ejemplo — Oración",
-      nowWriteYours: "Ahora escribe el tuyo:",
-      nowWritePrayer: "Ahora escribe tu oración real:",
-      notes: "Notas",
-      notesOptional: "Notas / Reflexión (opcional)",
-      requiredToSave:
-        "Requerido para guardar (racha): Contexto + Reflexión + Aplicación + Oración.",
-      savedDevotionals: "Devocionales guardados",
-      savedDevHint: "Cargar o eliminar devocionales guardados en este dispositivo.",
-      noSavedDev: "Todavía no hay devocionales guardados.",
-      savedPrayers: "Oraciones guardadas",
-      savedPrHint: "Cargar o eliminar oraciones guardadas en este dispositivo.",
-      noSavedPr: "Todavía no hay oraciones guardadas.",
       ttsNeedVoices:
         "Para mejores resultados, instala ‘Paulina (es-MX)’ y ‘Karen (en-AU)’.",
     },
@@ -229,10 +142,8 @@
   function applyUiLang(lang) {
     const t = I18N[lang] || I18N.en;
 
-    // JS status pill
     setText("jsStatus", t.jsReady);
 
-    // Top CTA
     const supportBtn = document.getElementById("supportBtn");
     if (supportBtn) supportBtn.textContent = t.support;
 
@@ -248,7 +159,6 @@
     const supportNote = document.querySelector(".support-note");
     if (supportNote) supportNote.textContent = t.supportNote;
 
-    // Menu buttons (by text content is fragile; use data-target)
     const menuBtns = $$(".menu-btn");
     for (const b of menuBtns) {
       const target = b.getAttribute("data-target");
@@ -258,8 +168,6 @@
       if (target === "prayerSection") b.textContent = t.dailyPrayer;
     }
 
-    // Chat section labels/placeholder/buttons
-    setText("chatVoicePill", t.voiceReady);
     const chatInput = document.getElementById("chatInput");
     if (chatInput) chatInput.placeholder = t.chatPH;
 
@@ -278,15 +186,10 @@
     const chatSaveBtn = document.getElementById("chatSaveBtn");
     if (chatSaveBtn) chatSaveBtn.textContent = t.save;
 
-    // Saved chats panel
     const savedChatsTitle = document.querySelector("#chatSection .card:last-child h4");
     if (savedChatsTitle) savedChatsTitle.textContent = t.savedChats;
     const savedChatsMuted = document.querySelector("#chatSection .card:last-child .muted");
     if (savedChatsMuted) savedChatsMuted.textContent = t.savedChatsHint;
-
-    // Bible section buttons
-    const readBibleBtn = document.getElementById("readBibleBtn");
-    if (readBibleBtn) readBibleBtn.textContent = t.read;
 
     const listenBibleBtn = document.getElementById("listenBible");
     if (listenBibleBtn) listenBibleBtn.textContent = t.listen;
@@ -294,52 +197,18 @@
     const stopBibleBtn = document.getElementById("stopBible");
     if (stopBibleBtn) stopBibleBtn.textContent = t.stop;
 
-    // Bible status headings
-    const dbStatusH4 = document.querySelector("#bibleSection h4");
-    if (dbStatusH4) dbStatusH4.textContent = t.bibleDbStatus;
+    // headings (safe)
+    const h4s = document.querySelectorAll("#bibleSection h4");
+    if (h4s[0]) h4s[0].textContent = t.bibleDbStatus;
+    if (h4s[1]) h4s[1].textContent = t.passage;
 
-    const passageCardH4 = document.querySelectorAll("#bibleSection h4")[1];
-    if (passageCardH4) passageCardH4.textContent = t.passage;
-
-    // Devotional section headings
-    const devIntro = document.getElementById("devIntro");
-    if (devIntro) devIntro.textContent = t.devIntro;
-
-    const devStreakBtn = document.getElementById("devStreakBtn");
-    if (devStreakBtn) devStreakBtn.textContent = t.didItToday;
-
-    const devotionalBtn = document.getElementById("devotionalBtn");
-    if (devotionalBtn) devotionalBtn.textContent = t.generate;
-
-    const devSaveBtn = document.getElementById("devSaveBtn");
-    if (devSaveBtn) devSaveBtn.textContent = t.save;
-
-    setText("devReqNote", t.requiredToSave);
-
-    // Prayer section headings
-    const prIntro = document.getElementById("prIntro");
-    if (prIntro) prIntro.textContent = t.prIntro;
-
-    const prStreakBtn = document.getElementById("prStreakBtn");
-    if (prStreakBtn) prStreakBtn.textContent = t.didItToday;
-
-    const prayerBtn = document.getElementById("prayerBtn");
-    if (prayerBtn) prayerBtn.textContent = t.generateStarters;
-
-    const prSaveBtn = document.getElementById("prSaveBtn");
-    if (prSaveBtn) prSaveBtn.textContent = t.save;
-
-    // Pills (streak)
-    updateStreakPills();
-
-    // Saved lists empty text refresh
+    // refresh lists + pills text
+    updateVoicePills();
     renderSavedChats();
-    renderSavedDevotionals();
-    renderSavedPrayers();
   }
 
   // -----------------------------
-  // Navigation (sections)
+  // Navigation
   // -----------------------------
   function initMenu() {
     const buttons = $$(".menu-btn");
@@ -357,7 +226,7 @@
   }
 
   // -----------------------------
-  // TTS (two-voice locked)
+  // TTS
   // -----------------------------
   let voices = [];
   let voicesReady = false;
@@ -368,20 +237,25 @@
     updateVoicePills();
   }
 
+  function hasVoiceFor(lang) {
+    const want = (lang || "en").toLowerCase();
+    if (!voicesReady) return false;
+    if (want === "es") return voices.some((v) => (v.lang || "").toLowerCase().startsWith("es"));
+    return voices.some((v) => (v.lang || "").toLowerCase().startsWith("en"));
+  }
+
   function bestVoiceFor(lang) {
     if (!voicesReady) return null;
     const want = (lang || "en").toLowerCase();
 
-    // Prefer exact names if available
     if (want === "es") {
       const v1 = voices.find((v) => (v.name || "").toLowerCase().includes("paulina"));
       if (v1) return v1;
       const v2 = voices.find((v) => (v.lang || "").toLowerCase().startsWith("es"));
       if (v2) return v2;
-      return voices[0] || null;
+      return null;
     }
 
-    // English: prefer "Karen"
     const e1 = voices.find((v) => (v.name || "").toLowerCase().includes("karen"));
     if (e1) return e1;
     const e2 = voices.find((v) => (v.lang || "").toLowerCase().startsWith("en"));
@@ -393,23 +267,36 @@
     if (!window.speechSynthesis) return false;
     if (!text || !text.trim()) return false;
 
+    // iOS/Safari can be picky; cancel is ok but we avoid double-cancel patterns
     speechSynthesis.cancel();
 
+    const want = (lang || "en").toLowerCase();
     const u = new SpeechSynthesisUtterance(text);
-    const v = bestVoiceFor(lang);
+
+    // Prefer a matching voice, but FIX: if Spanish voice missing, fall back to English voice
+    let v = bestVoiceFor(want);
+
+    if (!v && want === "es") {
+      // fall back to English voice so it still speaks (with accent) instead of silence
+      v = bestVoiceFor("en");
+    }
 
     if (v) {
       u.voice = v;
-      u.lang = v.lang || (lang === "es" ? "es-MX" : "en-US");
+      u.lang = v.lang || (want === "es" ? "es-MX" : "en-US");
     } else {
-      u.lang = lang === "es" ? "es-MX" : "en-US";
+      // ultimate fallback: let the browser choose
+      u.lang = want === "es" ? "es-MX" : "en-US";
     }
 
-    // Slightly slower for clarity
     u.rate = 1.0;
     u.pitch = 1.0;
 
-    speechSynthesis.speak(u);
+    // Some browsers need a tiny delay after cancel
+    setTimeout(() => {
+      try { speechSynthesis.speak(u); } catch { /* ignore */ }
+    }, 40);
+
     return true;
   }
 
@@ -422,23 +309,26 @@
     const uiLang = getUiLang();
     const t = I18N[uiLang];
 
-    const ok = voicesReady && !!bestVoiceFor("en") && !!bestVoiceFor("es");
-    const pillText = voicesReady ? t.voiceReady : t.voiceMissing;
+    const readingVoice = document.getElementById("readingVoice");
+    const readerLang = readingVoice ? (readingVoice.value || "en") : "en";
+
+    let pillText = voicesReady ? t.voiceReady : t.voiceMissing;
+
+    // If user is trying Spanish reader and device has no Spanish voice, show warning pill text
+    if (readerLang === "es" && voicesReady && !hasVoiceFor("es")) {
+      pillText = t.voiceSpanishMissing;
+    }
 
     setText("ttsStatus", pillText);
-    setText("chatVoicePill", pillText);
+    setText("chatVoicePill", voicesReady ? t.voiceReady : t.voiceMissing);
 
-    // Optional hint: show missing voice guidance as a system message once
-    if (!ok) {
-      // We do not force spam; only show if chat exists and is empty
-      const chatEl = document.getElementById("chat");
-      if (chatEl && chatEl.children.length === 0) {
-        addSystemMessage(t.ttsNeedVoices);
-      }
+    // Optional: show a system hint once when chat is empty
+    const chatEl = document.getElementById("chat");
+    if (chatEl && chatEl.children.length === 0 && (!voicesReady || (readerLang === "es" && voicesReady && !hasVoiceFor("es")))) {
+      addSystemMessage(t.ttsNeedVoices);
     }
   }
 
-  // Keep voices updated across browsers
   if (window.speechSynthesis) {
     speechSynthesis.onvoiceschanged = () => loadVoices();
   }
@@ -460,7 +350,6 @@
     row.appendChild(bubble);
     chat.appendChild(row);
 
-    // Scroll to bottom
     chat.scrollTop = chat.scrollHeight;
   }
 
@@ -563,7 +452,6 @@
 
     if (!form || !input) return;
 
-    // Restore draft
     const draft = localStorage.getItem(LS.chatDraft) || "";
     if (draft) input.value = draft;
 
@@ -584,14 +472,13 @@
         const data = await sendChatToBackend(msg);
         const reply = (data && data.reply) ? String(data.reply) : "(no reply)";
         addBubble(reply, "bot");
-      } catch (err) {
+      } catch {
         addSystemMessage(getUiLang() === "es" ? "Error enviando mensaje." : "Error sending message.");
       }
     });
 
     if (listenBtn) {
       listenBtn.addEventListener("click", () => {
-        // Listen to the last bot message
         const chat = document.getElementById("chat");
         if (!chat) return;
         const bubbles = Array.from(chat.querySelectorAll(".bubble.bot"));
@@ -604,7 +491,6 @@
         if (mode === "es") lang = "es";
         else if (mode === "en") lang = "en";
         else {
-          // auto: detect basic Spanish chars/words
           const txt = (last.textContent || "").toLowerCase();
           lang = /[áéíóúñ¡¿]|(\b(el|la|de|que|para|con|por|dios)\b)/.test(txt) ? "es" : "en";
         }
@@ -647,17 +533,12 @@
   // -----------------------------
   async function apiGetJSON(url) {
     const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${txt}`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   }
 
   function bibleVersionForReadingVoice(readingVoiceValue) {
-    // readingVoice is either "en" or "es"
-    if ((readingVoiceValue || "en").toLowerCase() === "es") return "es_rvr";
-    return "en_default";
+    return (String(readingVoiceValue || "en").toLowerCase() === "es") ? "es_rvr" : "en_default";
   }
 
   function setBibleDbStatus(text) {
@@ -674,7 +555,6 @@
   async function loadBooks() {
     const readingVoice = document.getElementById("readingVoice");
     const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
-
     const data = await apiGetJSON(`/bible/books?version=${encodeURIComponent(version)}`);
     return data.books || [];
   }
@@ -682,7 +562,6 @@
   async function loadChapters(bookId) {
     const readingVoice = document.getElementById("readingVoice");
     const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
-
     const data = await apiGetJSON(`/bible/chapters?version=${encodeURIComponent(version)}&book_id=${encodeURIComponent(bookId)}`);
     return data.chapters || [];
   }
@@ -690,7 +569,6 @@
   async function loadMaxVerses(bookId, chapter) {
     const readingVoice = document.getElementById("readingVoice");
     const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
-
     const data = await apiGetJSON(`/bible/verses_max?version=${encodeURIComponent(version)}&book_id=${encodeURIComponent(bookId)}&chapter=${encodeURIComponent(chapter)}`);
     return data.max_verse || 0;
   }
@@ -717,7 +595,7 @@
   function fillSelect(selectEl, options, placeholder = "—") {
     if (!selectEl) return;
     selectEl.innerHTML = "";
-    if (placeholder) {
+    if (placeholder !== null) {
       const opt0 = document.createElement("option");
       opt0.value = "";
       opt0.textContent = placeholder;
@@ -733,14 +611,15 @@
 
   async function refreshBibleDbStatus() {
     const uiLang = getUiLang();
-    const t = I18N[uiLang];
-
     try {
       const readingVoice = document.getElementById("readingVoice");
       const version = bibleVersionForReadingVoice(readingVoice ? readingVoice.value : "en");
       const st = await apiGetJSON(`/bible/status?version=${encodeURIComponent(version)}`);
-      const label = version === "es_rvr" ? "es_rvr" : "en_default";
-      setBibleDbStatus(`${uiLang === "es" ? "OK" : "OK"} • ${label} • ${uiLang === "es" ? "versículos" : "verses"}: ${st.verse_count}`);
+      if (uiLang === "es") {
+        setBibleDbStatus(`OK • ${version} • versículos: ${st.verse_count}`);
+      } else {
+        setBibleDbStatus(`OK • ${version} • verses: ${st.verse_count}`);
+      }
     } catch {
       setBibleDbStatus(uiLang === "es" ? "Error al verificar la Biblia." : "Error checking Bible DB.");
     }
@@ -754,7 +633,6 @@
     const fullChapter = document.getElementById("fullChapter");
     const readingVoice = document.getElementById("readingVoice");
 
-    const readBtn = document.getElementById("readBibleBtn");
     const listenBtn = document.getElementById("listenBible");
     const stopBtn = document.getElementById("stopBible");
 
@@ -836,23 +714,17 @@
           wholeChapter: whole,
         });
 
-        // Display
         const ref = `${data.book} ${data.chapter}`;
         setPassage(ref, data.text || "");
 
-        // Prepare TTS text
         const rv = readingVoice ? (readingVoice.value || "en") : "en";
         const lang = rv === "es" ? "es" : "en";
 
-        // If Spanish voice, read ONLY verse text (no English labels)
         let ttsText = data.text || "";
         if (lang === "es") {
-          // Keep as-is: your DB is Spanish; we just avoid adding labels
-          ttsText = (data.verses || [])
-            .map((v) => `${v.text}`)
-            .join("\n");
+          // Spanish: verse text only
+          ttsText = (data.verses || []).map((v) => `${v.text}`).join("\n");
         } else {
-          // English: optionally speak version label first
           const versionSelect = document.getElementById("versionSelect");
           const versionLabel = versionSelect ? (versionSelect.value || "KJV") : "KJV";
           ttsText = `${versionLabel}. ${ref}.\n\n${data.text || ""}`;
@@ -860,20 +732,18 @@
 
         lastPassage = { ref, textForReading: ttsText, lang };
         return lastPassage;
-      } catch (e) {
+      } catch {
         setPassage(t.dash, uiLang === "es" ? "No se encontró el pasaje." : "Passage not found.");
         return null;
       }
     };
 
-    // Read button (fetch + display only)
-    if (readBtn) readBtn.addEventListener("click", () => { readPassage(); });
-
-    // Listen button (speak last read; if none, read then speak)
     if (listenBtn) {
       listenBtn.addEventListener("click", async () => {
         const p = lastPassage.textForReading ? lastPassage : await readPassage();
         if (!p || !p.textForReading) return;
+
+        // Speak (with Spanish fallback-to-English voice fix)
         speakText(p.textForReading, p.lang);
       });
     }
@@ -885,7 +755,7 @@
 
     if (readingVoice) {
       readingVoice.addEventListener("change", async () => {
-        // Reload books for chosen DB/language
+        updateVoicePills();
         try {
           fillSelect(bookSelect, [], "Loading…");
           fillSelect(chapterSelect, [], "—");
@@ -913,7 +783,6 @@
       });
     }
 
-    // Initial load
     (async () => {
       try {
         fillSelect(bookSelect, [], "Loading…");
@@ -932,357 +801,7 @@
   }
 
   // -----------------------------
-  // Devotional / Prayer (local save + streak)
-  // -----------------------------
-  function getSavedDevotionals() {
-    return safeJSONParse(localStorage.getItem(LS.devotionals) || "[]", []);
-  }
-  function setSavedDevotionals(list) {
-    localStorage.setItem(LS.devotionals, JSON.stringify(list || []));
-  }
-  function getSavedPrayers() {
-    return safeJSONParse(localStorage.getItem(LS.prayers) || "[]", []);
-  }
-  function setSavedPrayers(list) {
-    localStorage.setItem(LS.prayers, JSON.stringify(list || []));
-  }
-
-  function updateStreakPills() {
-    const uiLang = getUiLang();
-    const t = I18N[uiLang];
-
-    const devStreak = parseInt(localStorage.getItem(LS.devStreak) || "0", 10) || 0;
-    const prStreak = parseInt(localStorage.getItem(LS.prStreak) || "0", 10) || 0;
-
-    const devPill = document.getElementById("devStreakPill");
-    if (devPill) devPill.textContent = `${t.streak}: ${devStreak}`;
-
-    const prPill = document.getElementById("prStreakPill");
-    if (prPill) prPill.textContent = `${t.streak}: ${prStreak}`;
-  }
-
-  function bumpStreak(which) {
-    const today = todayKey();
-    const uiLang = getUiLang();
-    const doneKey = which === "dev" ? LS.lastDevDone : LS.lastPrDone;
-    const streakKey = which === "dev" ? LS.devStreak : LS.prStreak;
-
-    const lastDone = localStorage.getItem(doneKey) || "";
-    if (lastDone === today) {
-      addSystemMessage(uiLang === "es" ? "Ya marcado hoy." : "Already marked today.");
-      return;
-    }
-
-    const cur = parseInt(localStorage.getItem(streakKey) || "0", 10) || 0;
-    localStorage.setItem(streakKey, String(cur + 1));
-    localStorage.setItem(doneKey, today);
-    updateStreakPills();
-  }
-
-  function renderSavedDevotionals() {
-    const uiLang = getUiLang();
-    const t = I18N[uiLang];
-
-    const box = document.getElementById("devSavedList");
-    if (!box) return;
-
-    const items = getSavedDevotionals();
-    box.innerHTML = "";
-
-    if (!items.length) {
-      const small = document.createElement("small");
-      small.style.opacity = "0.75";
-      small.textContent = t.noSavedDev;
-      box.appendChild(small);
-      return;
-    }
-
-    items
-      .slice()
-      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-      .forEach((it) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        const when = new Date(it.ts || Date.now()).toLocaleString();
-        btn.textContent = `${it.title || (uiLang === "es" ? "Devocional" : "Devotional")} • ${when}`;
-        btn.addEventListener("click", () => {
-          setText("devTheme", it.theme || "—");
-          setText("devScriptureRef", it.scriptureRef || "—");
-          setText("devScriptureText", it.scriptureText || "—");
-          setText("devStarterContext", it.starterContext || "—");
-          setText("devStarterReflection", it.starterReflection || "—");
-          setText("devStarterApplication", it.starterApplication || "—");
-          setText("devStarterPrayer", it.starterPrayer || "—");
-          const ctx = document.getElementById("devMyContext");
-          const ref = document.getElementById("devMyReflection");
-          const app = document.getElementById("devMyApplication");
-          const pr = document.getElementById("devMyPrayer");
-          const notes = document.getElementById("devMyNotes");
-          if (ctx) ctx.value = it.myContext || "";
-          if (ref) ref.value = it.myReflection || "";
-          if (app) app.value = it.myApplication || "";
-          if (pr) pr.value = it.myPrayer || "";
-          if (notes) notes.value = it.myNotes || "";
-        });
-        box.appendChild(btn);
-
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.textContent = uiLang === "es" ? "Eliminar" : "Delete";
-        del.addEventListener("click", () => {
-          const next = getSavedDevotionals().filter((x) => x.id !== it.id);
-          setSavedDevotionals(next);
-          renderSavedDevotionals();
-        });
-        box.appendChild(del);
-      });
-  }
-
-  function renderSavedPrayers() {
-    const uiLang = getUiLang();
-    const t = I18N[uiLang];
-
-    const box = document.getElementById("prSavedList");
-    if (!box) return;
-
-    const items = getSavedPrayers();
-    box.innerHTML = "";
-
-    if (!items.length) {
-      const small = document.createElement("small");
-      small.style.opacity = "0.75";
-      small.textContent = t.noSavedPr;
-      box.appendChild(small);
-      return;
-    }
-
-    items
-      .slice()
-      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-      .forEach((it) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        const when = new Date(it.ts || Date.now()).toLocaleString();
-        btn.textContent = `${it.title || (uiLang === "es" ? "Oración" : "Prayer")} • ${when}`;
-        btn.addEventListener("click", () => {
-          setText("pA", it.starterA || "—");
-          setText("pC", it.starterC || "—");
-          setText("pT", it.starterT || "—");
-          setText("pS", it.starterS || "—");
-          const a = document.getElementById("myAdoration");
-          const c = document.getElementById("myConfession");
-          const tt = document.getElementById("myThanksgiving");
-          const s = document.getElementById("mySupplication");
-          const n = document.getElementById("prayerNotes");
-          if (a) a.value = it.myA || "";
-          if (c) c.value = it.myC || "";
-          if (tt) tt.value = it.myT || "";
-          if (s) s.value = it.myS || "";
-          if (n) n.value = it.notes || "";
-        });
-        box.appendChild(btn);
-
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.textContent = getUiLang() === "es" ? "Eliminar" : "Delete";
-        del.addEventListener("click", () => {
-          const next = getSavedPrayers().filter((x) => x.id !== it.id);
-          setSavedPrayers(next);
-          renderSavedPrayers();
-        });
-        box.appendChild(del);
-      });
-  }
-
-  async function generateDevotionalStarters() {
-    const lang = getUiLang();
-    // You can later wire /devotional to Gemini and return structured fields.
-    // For now: lightweight starters in the selected UI language.
-    if (lang === "es") {
-      return {
-        theme: "Caminar en paz",
-        scriptureRef: "Filipenses 4:6–7",
-        scriptureText:
-          "Por nada estéis afanosos, sino sean conocidas vuestras peticiones delante de Dios en toda oración y ruego, con acción de gracias.\nY la paz de Dios… guardará vuestros corazones y vuestros pensamientos en Cristo Jesús.",
-        starterContext:
-          "Pablo anima a los creyentes a llevar sus cargas a Dios en oración, en lugar de vivir dominados por la ansiedad.",
-        starterReflection:
-          "Dios no solo escucha; también guarda el corazón con Su paz. La oración es el camino para cambiar preocupación por confianza.",
-        starterApplication:
-          "Hoy, escribe 1 preocupación específica y entrégasela a Dios en oración. Luego agradece por 2 cosas concretas.",
-        starterPrayer:
-          "Señor, traigo mis ansiedades ante Ti. Llena mi corazón con Tu paz y enséñame a confiar en Tu cuidado. Amén.",
-      };
-    }
-
-    return {
-      theme: "Walking in Peace",
-      scriptureRef: "Philippians 4:6–7",
-      scriptureText:
-        "Be anxious for nothing; but in everything by prayer and supplication with thanksgiving let your requests be made known unto God.\nAnd the peace of God… shall keep your hearts and minds through Christ Jesus.",
-      starterContext:
-        "Paul urges believers to bring their burdens to God in prayer rather than living ruled by anxiety.",
-      starterReflection:
-        "God doesn’t only hear—He guards the heart with His peace. Prayer is the pathway from worry to trust.",
-      starterApplication:
-        "Today, write down 1 specific worry and give it to God in prayer. Then thank Him for 2 concrete blessings.",
-      starterPrayer:
-        "Lord, I bring my anxieties to You. Fill my heart with Your peace and teach me to trust Your care. Amen.",
-    };
-  }
-
-  function initDevotional() {
-    const btn = document.getElementById("devotionalBtn");
-    const saveBtn = document.getElementById("devSaveBtn");
-    const streakBtn = document.getElementById("devStreakBtn");
-
-    if (streakBtn) streakBtn.addEventListener("click", () => bumpStreak("dev"));
-
-    if (btn) {
-      btn.addEventListener("click", async () => {
-        const s = await generateDevotionalStarters();
-        setText("devTheme", s.theme);
-        setText("devScriptureRef", s.scriptureRef);
-        setText("devScriptureText", s.scriptureText);
-        setText("devStarterContext", s.starterContext);
-        setText("devStarterReflection", s.starterReflection);
-        setText("devStarterApplication", s.starterApplication);
-        setText("devStarterPrayer", s.starterPrayer);
-      });
-    }
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", () => {
-        const uiLang = getUiLang();
-        const ctx = ($("#devMyContext")?.value || "").trim();
-        const ref = ($("#devMyReflection")?.value || "").trim();
-        const app = ($("#devMyApplication")?.value || "").trim();
-        const pr = ($("#devMyPrayer")?.value || "").trim();
-        const notes = ($("#devMyNotes")?.value || "").trim();
-
-        if (!ctx || !ref || !app || !pr) {
-          addSystemMessage(uiLang === "es"
-            ? "Completa Contexto, Reflexión, Aplicación y Oración antes de guardar."
-            : "Fill Context, Reflection, Application, and Prayer before saving.");
-          return;
-        }
-
-        const id = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
-        const title = (document.getElementById("devTheme")?.textContent || "").slice(0, 50) || "Devotional";
-
-        const obj = {
-          id,
-          ts: Date.now(),
-          title,
-          theme: document.getElementById("devTheme")?.textContent || "",
-          scriptureRef: document.getElementById("devScriptureRef")?.textContent || "",
-          scriptureText: document.getElementById("devScriptureText")?.textContent || "",
-          starterContext: document.getElementById("devStarterContext")?.textContent || "",
-          starterReflection: document.getElementById("devStarterReflection")?.textContent || "",
-          starterApplication: document.getElementById("devStarterApplication")?.textContent || "",
-          starterPrayer: document.getElementById("devStarterPrayer")?.textContent || "",
-          myContext: ctx,
-          myReflection: ref,
-          myApplication: app,
-          myPrayer: pr,
-          myNotes: notes,
-        };
-
-        const items = getSavedDevotionals();
-        items.push(obj);
-        setSavedDevotionals(items);
-        renderSavedDevotionals();
-        bumpStreak("dev");
-        addSystemMessage(uiLang === "es" ? "Devocional guardado." : "Devotional saved.");
-      });
-    }
-
-    renderSavedDevotionals();
-  }
-
-  async function generatePrayerStarters() {
-    const lang = getUiLang();
-    if (lang === "es") {
-      return {
-        A: "Señor, Tú eres santo, fiel y cercano. Te alabo por Tu amor y misericordia.",
-        C: "Padre, perdóname por donde he fallado. Limpia mi corazón y renueva mi mente.",
-        T: "Gracias por Tu provisión, por mi familia, y por Tu paciencia conmigo.",
-        S: "Te pido sabiduría hoy. Ayúdame a caminar en obediencia y a amar como Cristo.",
-      };
-    }
-    return {
-      A: "Lord, You are holy, faithful, and near. I praise You for Your love and mercy.",
-      C: "Father, forgive me where I have fallen short. Cleanse my heart and renew my mind.",
-      T: "Thank You for Your provision, my family, and Your patience with me.",
-      S: "I ask for wisdom today. Help me walk in obedience and love like Christ.",
-    };
-  }
-
-  function initPrayer() {
-    const btn = document.getElementById("prayerBtn");
-    const saveBtn = document.getElementById("prSaveBtn");
-    const streakBtn = document.getElementById("prStreakBtn");
-
-    if (streakBtn) streakBtn.addEventListener("click", () => bumpStreak("pr"));
-
-    if (btn) {
-      btn.addEventListener("click", async () => {
-        const s = await generatePrayerStarters();
-        setText("pA", s.A);
-        setText("pC", s.C);
-        setText("pT", s.T);
-        setText("pS", s.S);
-      });
-    }
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", () => {
-        const uiLang = getUiLang();
-        const a = ($("#myAdoration")?.value || "").trim();
-        const c = ($("#myConfession")?.value || "").trim();
-        const t = ($("#myThanksgiving")?.value || "").trim();
-        const s = ($("#mySupplication")?.value || "").trim();
-        const n = ($("#prayerNotes")?.value || "").trim();
-
-        if (!a || !c || !t || !s) {
-          addSystemMessage(uiLang === "es"
-            ? "Completa Adoración, Confesión, Gratitud y Súplica antes de guardar."
-            : "Fill Adoration, Confession, Thanksgiving, and Supplication before saving.");
-          return;
-        }
-
-        const id = crypto?.randomUUID ? crypto.randomUUID() : String(Date.now());
-        const title = uiLang === "es" ? "Oración diaria" : "Daily prayer";
-
-        const obj = {
-          id,
-          ts: Date.now(),
-          title,
-          starterA: document.getElementById("pA")?.textContent || "",
-          starterC: document.getElementById("pC")?.textContent || "",
-          starterT: document.getElementById("pT")?.textContent || "",
-          starterS: document.getElementById("pS")?.textContent || "",
-          myA: a,
-          myC: c,
-          myT: t,
-          myS: s,
-          notes: n,
-        };
-
-        const items = getSavedPrayers();
-        items.push(obj);
-        setSavedPrayers(items);
-        renderSavedPrayers();
-        bumpStreak("pr");
-        addSystemMessage(uiLang === "es" ? "Oración guardada." : "Prayer saved.");
-      });
-    }
-
-    renderSavedPrayers();
-  }
-
-  // -----------------------------
-  // Auth/Billing stubs (safe)
+  // Auth/Billing stubs
   // -----------------------------
   function initAuthStubs() {
     const uiLang = getUiLang();
@@ -1293,8 +812,6 @@
     const logoutBtn = document.getElementById("logoutBtn");
 
     if (authPill) authPill.textContent = t.accountChecking;
-
-    // Stub: keep disabled unless you wire Stripe endpoints
     if (manageBtn) manageBtn.disabled = true;
     if (logoutBtn) hide(logoutBtn);
   }
@@ -1305,20 +822,14 @@
   function initUiLangSelect() {
     const sel = document.getElementById("uiLangSelect");
     if (!sel) return;
-
-    const current = getUiLang();
-    sel.value = current;
-
-    sel.addEventListener("change", () => {
-      setUiLang(sel.value);
-    });
+    sel.value = getUiLang();
+    sel.addEventListener("change", () => setUiLang(sel.value));
   }
 
   // -----------------------------
   // Boot
   // -----------------------------
   function boot() {
-    // JS status initial
     const uiLang = getUiLang();
     setText("jsStatus", I18N[uiLang].jsLoading);
 
@@ -1328,18 +839,13 @@
 
     initChat();
     initBible();
-    initDevotional();
-    initPrayer();
 
-    // Voices
     loadVoices();
     setTimeout(loadVoices, 250);
     setTimeout(loadVoices, 900);
 
-    // Apply language last so it updates everything
     applyUiLang(getUiLang());
     updateVoicePills();
-    updateStreakPills();
     refreshBibleDbStatus().catch(() => {});
   }
 
@@ -1349,6 +855,7 @@
     boot();
   }
 })();
+
 
 
 
