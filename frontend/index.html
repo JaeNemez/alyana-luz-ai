@@ -1,23 +1,9 @@
-<!-- frontend/index.html -->
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
     <title>Alyana Luz · Bible AI</title>
-
-    <!-- PWA -->
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <meta name="theme-color" content="#2b0a50" />
-
-    <!-- iOS PWA -->
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="Alyana Luz" />
-    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-
-    <!-- Favicon -->
-    <link rel="icon" href="/icons/icon-192.png" />
 
     <style>
       * { box-sizing: border-box; }
@@ -291,6 +277,9 @@
         border-radius: 16px;
         border: 1px solid rgba(186,108,184,0.22);
         background: rgba(10, 8, 28, 0.45);
+
+        /* FIX: give bottom breathing room so last message isn't hidden behind the input */
+        padding-bottom: 28px;
       }
 
       .bubble-row { display: flex; width: 100%; }
@@ -333,8 +322,25 @@
         gap: 10px;
         background: rgba(10, 8, 28, 0.88);
         flex-wrap: wrap;
+
+        /* FIX: keep the composer visible; prevents “disappearing input” on mobile */
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+
+        /* FIX: avoid keyboard/safe-area covering the input */
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       }
-      .chat-form input[type="text"] { border-radius: 999px; flex: 1; min-width: 240px; }
+
+      .chat-form input[type="text"] {
+        border-radius: 999px;
+        flex: 1;
+        min-width: 240px;
+
+        /* FIX: make input easier to see/tap */
+        min-height: 44px;
+      }
+
       .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
       .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
@@ -381,6 +387,16 @@
 
         .chat-form {
           flex-shrink: 0;
+
+          /* FIX: on mobile make it full width and always visible */
+          width: 100%;
+        }
+
+        .chat-form input[type="text"] {
+          /* FIX: prevent iOS zoom + make typing comfortable */
+          font-size: 16px;
+          width: 100%;
+          min-width: 0;
         }
       }
     </style>
@@ -747,22 +763,10 @@
       </div>
     </div>
 
-    <!-- Main App Script -->
     <script src="/app.js" defer></script>
-
-    <!-- Service Worker -->
-    <script>
-      (function () {
-        if (!("serviceWorker" in navigator)) return;
-        window.addEventListener("load", function () {
-          navigator.serviceWorker
-            .register("/service-worker.js")
-            .catch(function () {});
-        });
-      })();
-    </script>
   </body>
 </html>
+
 
 
 
