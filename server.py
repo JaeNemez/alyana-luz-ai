@@ -1,7 +1,4 @@
-# server.py
 from pathlib import Path
-import os
-import logging
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,16 +6,6 @@ from fastapi.responses import FileResponse, JSONResponse
 
 # Bible API router
 from bible_api import router as bible_router
-
-# ✅ Gemini chat engine (your agent.py must have run_bible_ai(prompt: str) -> str)
-from agent import run_bible_ai
-
-
-# -----------------------------
-# Logging
-# -----------------------------
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-log = logging.getLogger("alyana")
 
 
 # -----------------------------
@@ -39,7 +26,7 @@ SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 # -----------------------------
 app = FastAPI()
 
-# ✅ Register API routers FIRST
+# Register API routers FIRST
 app.include_router(bible_router)
 
 # CORS (tighten later)
@@ -90,39 +77,11 @@ def daily_prayer():
     return {"ok": True, "prayer": "Coming soon."}
 
 
-# ✅ FIXED: /chat now calls agent.py (Gemini) safely
 @app.post("/chat")
 async def chat(req: Request):
-    try:
-        body = await req.json()
-        user_message = (body.get("message") or "").strip()
-
-        if not user_message:
-            raise HTTPException(status_code=400, detail="Message is required.")
-
-        # Key check (matches what you showed in Render: GOOGLE_API_KEY)
-        if not os.getenv("GOOGLE_API_KEY"):
-            log.error("GOOGLE_API_KEY missing in environment variables.")
-            raise HTTPException(
-                status_code=500,
-                detail="Chat engine failed. Missing GOOGLE_API_KEY.",
-            )
-
-        reply = run_bible_ai(user_message)
-        if not reply:
-            reply = "I’m here. Please try again."
-
-        return {"ok": True, "reply": str(reply)}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Logs will show the real error in Render Logs
-        log.exception("Chat engine failed with exception.")
-        raise HTTPException(
-            status_code=500,
-            detail="Chat engine failed. Check server logs.",
-        )
+    body = await req.json()
+    user_message = body.get("message", "")
+    return {"ok": True, "reply": f"(stub) You said: {user_message}"}
 
 
 # -----------------------------
@@ -148,14 +107,20 @@ def serve_app_js():
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def serve_manifest():
     if not MANIFEST.exists():
-        raise HTTPException(status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"manifest.webmanifest not found at {str(MANIFEST)}",
+        )
     return FileResponse(str(MANIFEST))
 
 
 @app.get("/service-worker.js", include_in_schema=False)
 def serve_service_worker():
     if not SERVICE_WORKER.exists():
-        raise HTTPException(status_code=404, detail=f"service-worker.js not found at {str(SERVICE_WORKER)}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"service-worker.js not found at {str(SERVICE_WORKER)}",
+        )
     return FileResponse(str(SERVICE_WORKER))
 
 
@@ -201,6 +166,7 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
