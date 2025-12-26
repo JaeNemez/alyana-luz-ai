@@ -77,13 +77,11 @@
   // ---------------------------
   const I18N = {
     en: {
-      // global-ish
       delete: "Delete",
       select: "Select…",
       optional: "(optional)",
       dash: "—",
 
-      // top
       support: "❤️ Support Alyana Luz",
       supportNote:
         "Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.\n" +
@@ -94,13 +92,11 @@
       manageBilling: "Manage billing",
       logout: "Logout",
 
-      // tabs
       tabChat: "Chat",
       tabBible: "Read Bible",
       tabDev: "Devotional",
       tabPrayer: "Daily Prayer",
 
-      // chat
       chatTitle: "Chat",
       savedChatsHint: "Saved chat logs are stored on this device.",
       chatLangLabel: "Chat Language",
@@ -116,15 +112,12 @@
       savedOk: "Saved.",
       noBotToRead: "No bot message to read yet.",
 
-      // common list
       noSaved: "No saved items yet.",
 
-      // voices
       voiceReady: "Voice: ready",
       voiceMissing:
         "Voice not found. Your browser must have 'Paulina (es-MX)' and 'Karen (en-AU)' installed.",
 
-      // bible
       bibleTitle: "Bible Reader",
       bibleHint: "Pick a book/chapter and verse range, or Full Chapter.",
       read: "Read",
@@ -146,7 +139,6 @@
       bibleNotFound:
         "Bible DB not found. Confirm your Render deployment includes /data/bible.db and /data/bible_es_rvr.db.",
 
-      // devotional
       devTitle: "Devotional",
       devIntro: "Alyana gives short starter examples. You write and save your real devotional.",
       devLangLabel: "Language",
@@ -176,7 +168,6 @@
       devSavedToast: "Saved devotional.",
       devReqToast: "To save: Context + Reflection + Application + Prayer are required.",
 
-      // prayer
       prTitle: "Daily Prayer",
       prIntro: "Alyana gives a short starter example. You write and save your real prayer.",
       prLangLabel: "Language",
@@ -346,23 +337,93 @@
     if (el) el.setAttribute("placeholder", value);
   }
 
+  // ---------------------------
+  // Spanish book display names (UI)
+  // Use IDs 1..66, matching typical Bible ordering.
+  // ---------------------------
+  const BOOK_NAMES_ES = {
+    1: "Génesis",
+    2: "Éxodo",
+    3: "Levítico",
+    4: "Números",
+    5: "Deuteronomio",
+    6: "Josué",
+    7: "Jueces",
+    8: "Rut",
+    9: "1 Samuel",
+    10: "2 Samuel",
+    11: "1 Reyes",
+    12: "2 Reyes",
+    13: "1 Crónicas",
+    14: "2 Crónicas",
+    15: "Esdras",
+    16: "Nehemías",
+    17: "Ester",
+    18: "Job",
+    19: "Salmos",
+    20: "Proverbios",
+    21: "Eclesiastés",
+    22: "Cantares",
+    23: "Isaías",
+    24: "Jeremías",
+    25: "Lamentaciones",
+    26: "Ezequiel",
+    27: "Daniel",
+    28: "Oseas",
+    29: "Joel",
+    30: "Amós",
+    31: "Abdías",
+    32: "Jonás",
+    33: "Miqueas",
+    34: "Nahúm",
+    35: "Habacuc",
+    36: "Sofonías",
+    37: "Hageo",
+    38: "Zacarías",
+    39: "Malaquías",
+    40: "Mateo",
+    41: "Marcos",
+    42: "Lucas",
+    43: "Juan",
+    44: "Hechos",
+    45: "Romanos",
+    46: "1 Corintios",
+    47: "2 Corintios",
+    48: "Gálatas",
+    49: "Efesios",
+    50: "Filipenses",
+    51: "Colosenses",
+    52: "1 Tesalonicenses",
+    53: "2 Tesalonicenses",
+    54: "1 Timoteo",
+    55: "2 Timoteo",
+    56: "Tito",
+    57: "Filemón",
+    58: "Hebreos",
+    59: "Santiago",
+    60: "1 Pedro",
+    61: "2 Pedro",
+    62: "1 Juan",
+    63: "2 Juan",
+    64: "3 Juan",
+    65: "Judas",
+    66: "Apocalipsis",
+  };
+
   // Apply UI language for Devotional + Prayer + some global UI
   function applyUILang() {
     const devLang = getLang("#devUiLang", localStorage.getItem(LS.devLang) || "en");
     const prLang = getLang("#prUiLang", localStorage.getItem(LS.prLang) || "en");
 
-    // Persist
     localStorage.setItem(LS.devLang, devLang);
     localStorage.setItem(LS.prLang, prLang);
 
-    // Tabs follow devotional language (simple, consistent)
     const t = I18N[devLang];
     setText("tabChat", t.tabChat);
     setText("tabBible", t.tabBible);
     setText("tabDev", t.tabDev);
     setText("tabPrayer", t.tabPrayer);
 
-    // Top
     const supportBtn = $("#supportBtn");
     if (supportBtn) supportBtn.textContent = t.support;
     setText("supportNote", t.supportNote);
@@ -370,7 +431,6 @@
     const loginBtn = $("#loginBtn");
     if (loginBtn) loginBtn.textContent = t.restoreAccess;
 
-    // Chat (use devLang as general UI language)
     setText("chatTitle", t.chatTitle);
     setText("chatSavedHint", t.savedChatsHint);
     setText("chatLangLabel", t.chatLangLabel);
@@ -388,11 +448,14 @@
     setText("savedChatsTitle", t.savedChatsTitle);
     setText("savedChatsHint", t.savedChatsHint2);
 
-    // Bible (follow devLang for UI labels; readingVoice still controls DB/voice)
+    // Bible UI labels follow devLang
     setText("bibleTitle", t.bibleTitle);
     setText("bibleHint", t.bibleHint);
+
+    // ✅ Per your request: button text always "Read" (not translated)
     const readBibleBtn = $("#readBibleBtn");
-    if (readBibleBtn) readBibleBtn.textContent = t.read;
+    if (readBibleBtn) readBibleBtn.textContent = "Read";
+
     setText("lblBook", t.lblBook);
     setText("lblChapter", t.lblChapter);
     setText("lblVerseStart", t.lblVerseStart);
@@ -414,7 +477,6 @@
     setText("devLangLabel", d.devLangLabel);
     const devStreakPill = $("#devStreakPill");
     if (devStreakPill) {
-      // keep number if present
       const num = (devStreakPill.textContent || "").match(/\d+/)?.[0] || "0";
       devStreakPill.textContent = `${d.streak}: ${num}`;
     }
@@ -478,7 +540,6 @@
     setText("prSavedTitle", p.prSavedTitle);
     setText("prSavedHint", p.prSavedHint);
 
-    // Re-render lists to update "No saved..." + Delete button labels
     renderSavedChats();
     renderSavedDevs();
     renderSavedPrayers();
@@ -569,14 +630,10 @@
   }
 
   // ---------------------------
-  // Chat
+  // Chat (unchanged)
   // ---------------------------
-  function chatStorageLoad() {
-    return safeJSON(localStorage.getItem(LS.savedChats) || "[]", []);
-  }
-  function chatStorageSave(list) {
-    localStorage.setItem(LS.savedChats, JSON.stringify(list || []));
-  }
+  function chatStorageLoad() { return safeJSON(localStorage.getItem(LS.savedChats) || "[]", []); }
+  function chatStorageSave(list) { localStorage.setItem(LS.savedChats, JSON.stringify(list || [])); }
 
   function addBubble(kind, text) {
     const chat = $("#chat");
@@ -676,7 +733,6 @@
     const sendBtn = $("#chatSendBtn");
     const stopBtn = $("#chatStopBtn");
 
-    // Restore draft
     if (input) input.value = localStorage.getItem(LS.chatDraft) || "";
 
     if (input) {
@@ -772,14 +828,10 @@
   }
 
   // ---------------------------
-  // Devotionals
+  // Devotionals (unchanged)
   // ---------------------------
-  function loadSavedDevs() {
-    return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []);
-  }
-  function saveSavedDevs(list) {
-    localStorage.setItem(LS.savedDevs, JSON.stringify(list || []));
-  }
+  function loadSavedDevs() { return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []); }
+  function saveSavedDevs(list) { localStorage.setItem(LS.savedDevs, JSON.stringify(list || [])); }
 
   function renderSavedDevs() {
     const box = $("#devSavedList");
@@ -871,7 +923,6 @@
     const saveBtn = $("#devSaveBtn");
     const devUiLang = $("#devUiLang");
 
-    // Restore dropdown
     const stored = normLang(localStorage.getItem(LS.devLang) || "en", "en");
     if (devUiLang) devUiLang.value = stored;
 
@@ -898,11 +949,7 @@
       if (el) el.addEventListener("input", saveDraft);
     });
 
-    if (devUiLang) {
-      devUiLang.addEventListener("change", () => {
-        applyUILang();
-      });
-    }
+    if (devUiLang) devUiLang.addEventListener("change", () => applyUILang());
 
     if (generateBtn) {
       generateBtn.addEventListener("click", async () => {
@@ -970,14 +1017,10 @@
   }
 
   // ---------------------------
-  // Daily Prayer
+  // Daily Prayer (unchanged)
   // ---------------------------
-  function loadSavedPrayers() {
-    return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []);
-  }
-  function saveSavedPrayers(list) {
-    localStorage.setItem(LS.savedPrayers, JSON.stringify(list || []));
-  }
+  function loadSavedPrayers() { return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []); }
+  function saveSavedPrayers(list) { localStorage.setItem(LS.savedPrayers, JSON.stringify(list || [])); }
 
   function renderSavedPrayers() {
     const box = $("#prSavedList");
@@ -1054,7 +1097,6 @@
     const saveBtn = $("#prSaveBtn");
     const prUiLang = $("#prUiLang");
 
-    // Restore dropdown
     const stored = normLang(localStorage.getItem(LS.prLang) || "en", "en");
     if (prUiLang) prUiLang.value = stored;
 
@@ -1083,11 +1125,7 @@
       if (el) el.addEventListener("input", saveDraft);
     });
 
-    if (prUiLang) {
-      prUiLang.addEventListener("change", () => {
-        applyUILang();
-      });
-    }
+    if (prUiLang) prUiLang.addEventListener("change", () => applyUILang());
 
     if (genBtn) {
       genBtn.addEventListener("click", () => {
@@ -1141,7 +1179,7 @@
   }
 
   // ---------------------------
-  // Bible Reader (robust book_id OR book name)
+  // Bible Reader
   // ---------------------------
   function bibleVersionForReadingLang(readLang) {
     return readLang === "es" ? "es" : "en_default";
@@ -1160,6 +1198,12 @@
     }
     return { kind: "name", book: raw };
   }
+
+  // ✅ Store last loaded passage so Listen button can speak it
+  const lastPassage = {
+    text: "",
+    lang: "en",
+  };
 
   async function refreshBibleStatus() {
     const el = $("#bibleDbStatus");
@@ -1196,7 +1240,14 @@
       books.forEach((b) => {
         const opt = document.createElement("option");
         opt.value = String(b.id);
-        opt.textContent = b.name;
+
+        // ✅ If Spanish reading, display Spanish book names in dropdown
+        if (readLang === "es") {
+          opt.textContent = BOOK_NAMES_ES[b.id] || b.name;
+        } else {
+          opt.textContent = b.name;
+        }
+
         bookSel.appendChild(opt);
       });
     } catch (e) {
@@ -1290,7 +1341,8 @@
     } catch (e) {}
   }
 
-  async function listenBible() {
+  // ✅ Read now ONLY fetches + displays into Passage (no auto listen)
+  async function readBibleToPassage() {
     const chapSel = $("#chapterSelect");
     const vsStart = $("#verseStartSelect");
     const vsEnd = $("#verseEndSelect");
@@ -1332,38 +1384,48 @@
       passageRef.textContent = `${j.book} ${j.chapter}`;
       passageText.textContent = j.text || "—";
 
-      const toSpeak = (j.text || "").trim();
-      if (!toSpeak) return;
-
-      await speakText(toSpeak, readLang, 1.0);
+      // store for Listen button
+      lastPassage.text = (j.text || "").trim();
+      lastPassage.lang = readLang;
     } catch (e) {
       toast(String(e.message || e));
     }
   }
 
-  async function toggleReadBible() {
-    if (isSpeaking()) {
-      stopSpeak();
-      return;
+  async function listenCurrentPassage() {
+    const uiLang = normLang(localStorage.getItem(LS.devLang) || "en", "en");
+    const t = I18N[uiLang];
+
+    if (!lastPassage.text) {
+      return toast(t.pickBookChapter);
     }
-    await listenBible();
+
+    try {
+      await speakText(lastPassage.text, lastPassage.lang, 1.0);
+    } catch {
+      toast(I18N[lastPassage.lang].voiceMissing);
+    }
   }
 
   function initBible() {
-    const readBtn = $("#readBibleBtn") || $("#listenBible");
-    const stopBtn = $("#stopBible");
+    const readBtn = $("#readBibleBtn");
+    const listenBtn = $("#passageListenBtn");
+    const stopBtn = $("#passageStopBtn");
+
     const readVoice = $("#readingVoice");
     const bookSel = $("#bookSelect");
     const chapSel = $("#chapterSelect");
 
     if (readBtn) {
       readBtn.addEventListener("click", async () => {
-        const hasSeparateStop = !!stopBtn;
-        if (hasSeparateStop && readBtn.id === "listenBible") {
-          await listenBible();
-        } else {
-          await toggleReadBible();
-        }
+        stopSpeak();
+        await readBibleToPassage();
+      });
+    }
+
+    if (listenBtn) {
+      listenBtn.addEventListener("click", async () => {
+        await listenCurrentPassage();
       });
     }
 
@@ -1372,6 +1434,11 @@
     if (readVoice) {
       readVoice.addEventListener("change", async () => {
         stopSpeak();
+
+        // reset last passage when switching language
+        lastPassage.text = "";
+        lastPassage.lang = getLang("#readingVoice", "en");
+
         await refreshBibleStatus();
         await loadBooks();
 
@@ -1406,7 +1473,6 @@
     initPrayer();
     initBible();
 
-    // Restore saved UI selects before applying language
     const devStored = normLang(localStorage.getItem(LS.devLang) || "en", "en");
     const prStored = normLang(localStorage.getItem(LS.prLang) || "en", "en");
     setSelectValue("#devUiLang", devStored);
@@ -1452,42 +1518,3 @@
     });
   });
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
