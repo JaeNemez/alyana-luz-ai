@@ -1,5 +1,7 @@
+# server.py
 from pathlib import Path
-import traceback
+import os
+import logging
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,9 +10,15 @@ from fastapi.responses import FileResponse, JSONResponse
 # Bible API router
 from bible_api import router as bible_router
 
-# ✅ AI Brain (Gemini)
-# agent.py should expose: run_bible_ai(user_text: str, lang: str = "auto") -> str
+# ✅ Gemini chat engine (your agent.py must have run_bible_ai(prompt: str) -> str)
 from agent import run_bible_ai
+
+
+# -----------------------------
+# Logging
+# -----------------------------
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+log = logging.getLogger("alyana")
 
 
 # -----------------------------
@@ -54,8 +62,8 @@ def _safe_path_under(base: Path, requested_path: str) -> Path:
     """
     base = base.resolve()
 
-    # Strip leading "/" or "\" so it cannot become absolute
-    clean = (requested_path or "").lstrip("/\\")
+    # IMPORTANT: strip any leading "/" or "\" so it cannot become absolute
+    clean = requested_path.lstrip("/\\")
     target = (base / clean).resolve()
 
     if base not in target.parents and target != base:
@@ -74,50 +82,47 @@ def me():
 
 @app.get("/devotional")
 def devotional():
-    # You can later wire this to Gemini too
     return {"ok": True, "devotional": "Coming soon."}
 
 
 @app.get("/daily_prayer")
 def daily_prayer():
-    # You can later wire this to Gemini too
     return {"ok": True, "prayer": "Coming soon."}
 
 
+# ✅ FIXED: /chat now calls agent.py (Gemini) safely
 @app.post("/chat")
 async def chat(req: Request):
-    """
-    Expected JSON:
-      { "message": "...", "lang": "auto" | "en" | "es" }
-
-    Returns:
-      { "ok": true, "reply": "..." }
-    """
     try:
         body = await req.json()
-    except Exception:
-        body = {}
+        user_message = (body.get("message") or "").strip()
 
-    user_message = (body.get("message") or "").strip()
-    if not user_message:
-        return {"ok": True, "reply": "Please type a message."}
+        if not user_message:
+            raise HTTPException(status_code=400, detail="Message is required.")
 
-    # Optional language control from frontend
-    lang = (body.get("lang") or "auto").strip().lower()
-    if lang not in ("auto", "en", "es"):
-        lang = "auto"
+        # Key check (matches what you showed in Render: GOOGLE_API_KEY)
+        if not os.getenv("GOOGLE_API_KEY"):
+            log.error("GOOGLE_API_KEY missing in environment variables.")
+            raise HTTPException(
+                status_code=500,
+                detail="Chat engine failed. Missing GOOGLE_API_KEY.",
+            )
 
-    try:
-        # ✅ Call your AI brain
-        reply = run_bible_ai(user_message, lang=lang)
+        reply = run_bible_ai(user_message)
         if not reply:
             reply = "I’m here. Please try again."
+
         return {"ok": True, "reply": str(reply)}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        # Log server-side details, return safe message to client
-        print("ERROR in /chat:", repr(e))
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Chat engine failed. Check server logs / API key.")
+        # Logs will show the real error in Render Logs
+        log.exception("Chat engine failed with exception.")
+        raise HTTPException(
+            status_code=500,
+            detail="Chat engine failed. Check server logs.",
+        )
 
 
 # -----------------------------
@@ -196,6 +201,7 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
