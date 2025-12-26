@@ -254,44 +254,6 @@
         margin: 12px 0;
       }
 
-      .pr-label {
-        font-weight: 900;
-        font-size: 15px;
-        letter-spacing: 0.2px;
-        margin-bottom: 8px !important;
-        opacity: 1;
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(186,108,184,0.22);
-        background: rgba(255,255,255,0.06);
-      }
-      .pr-label.adoration { color: rgba(186,108,184,0.95); }
-      .pr-label.confession { color: rgba(203,132,203,0.95); }
-      .pr-label.thanks { color: rgba(169,92,169,0.95); }
-      .pr-label.supplication { color: rgba(154,75,156,0.95); }
-
-      .dev-label {
-        font-weight: 900;
-        font-size: 15px;
-        letter-spacing: 0.2px;
-        margin-bottom: 8px !important;
-        opacity: 1;
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 999px;
-        border: 1px solid rgba(186,108,184,0.22);
-        background: rgba(255,255,255,0.06);
-      }
-      .dev-label.context { color: rgba(186,108,184,0.95); }
-      .dev-label.reflection { color: rgba(203,132,203,0.95); }
-      .dev-label.application { color: rgba(169,92,169,0.95); }
-      .dev-label.prayer { color: rgba(154,75,156,0.95); }
-
-      @media (max-width: 920px) {
-        .pr-label, .dev-label { font-size: 16px; }
-      }
-
       .bible-subrow{
         display: flex;
         align-items: center;
@@ -300,8 +262,32 @@
         flex-wrap: wrap;
       }
 
+      /* Bigger Read button (always says Read) */
+      .read-btn-big{
+        padding: 10px 16px;
+        border-radius: 999px;
+        font-weight: 950;
+        font-size: 14px;
+        min-height: 44px;
+        min-width: 110px;
+        border: 1px solid rgba(255,255,255,0.14);
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        color: #fff;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+      }
+      .read-btn-big:active { transform: translateY(1px); }
+
+      .passage-actions{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
       .mini-btn{
-        padding: 6px 10px;
+        padding: 8px 12px;
         border-radius: 999px;
         border: 1px solid rgba(186,108,184,0.18);
         cursor: pointer;
@@ -310,11 +296,16 @@
         color: #ffffff;
         background: rgba(255,255,255,0.08);
         white-space: nowrap;
+        min-height: 38px;
       }
 
       .mini-btn.primary{
         background: linear-gradient(135deg, var(--accent-2), var(--accent));
         border: 1px solid rgba(255,255,255,0.14);
+      }
+      .mini-btn.danger{
+        background: rgba(225,29,72,0.92);
+        border-color: rgba(225,29,72,0.35);
       }
 
       .chat-layout {
@@ -557,7 +548,9 @@
 
                   <div class="muted bible-subrow">
                     <span id="bibleHint">Pick a book/chapter and verse range, or Full Chapter.</span>
-                    <button class="mini-btn primary" id="readBibleBtn" type="button">Read</button>
+
+                    <!-- ✅ Bigger "Read" (always says Read) -->
+                    <button class="read-btn-big" id="readBibleBtn" type="button">Read</button>
                   </div>
                 </div>
 
@@ -641,9 +634,20 @@
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
+            <!-- ✅ Passage card now has Listen/Stop -->
             <div class="card">
-              <h4 id="passageTitle">Passage</h4>
-              <div class="muted" id="passageRef">—</div>
+              <div class="row" style="align-items:center;">
+                <div style="flex:2;">
+                  <h4 id="passageTitle" style="margin:0;">Passage</h4>
+                  <div class="muted" id="passageRef" style="margin-top:6px;">—</div>
+                </div>
+
+                <div class="passage-actions">
+                  <button class="mini-btn primary" id="passageListenBtn" type="button">Listen</button>
+                  <button class="mini-btn danger" id="passageStopBtn" type="button">Stop</button>
+                </div>
+              </div>
+
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
             </div>
           </div>
@@ -692,28 +696,28 @@
               <div class="divider"></div>
 
               <div class="block">
-                <div class="muted dev-label context" id="devLabelCtxA" style="margin-bottom:6px;">Context / Observation</div>
+                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Context / Observation</div>
                 <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow1">Now write yours:</div>
                 <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted dev-label reflection" id="devLabelRefA" style="margin-bottom:6px;">Reflection / Insight</div>
+                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Reflection / Insight</div>
                 <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow2">Now write yours:</div>
                 <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted dev-label application" id="devLabelAppA" style="margin-bottom:6px;">Application (Practical)</div>
+                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Application (Practical)</div>
                 <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow3">Now write yours:</div>
                 <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted dev-label prayer" id="devLabelPrA" style="margin-bottom:6px;">Prayer</div>
+                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Prayer</div>
                 <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow4">Now write your real prayer:</div>
                 <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
@@ -769,28 +773,28 @@
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="muted pr-label adoration" id="prLabelA" style="margin-bottom:6px;">Adoration</div>
+                <div class="muted" id="prLabelA" style="margin-bottom:6px;">Adoration</div>
                 <div id="pA" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow1">Now write your own:</div>
                 <textarea id="myAdoration" placeholder="Adoration (praise God for who He is)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted pr-label confession" id="prLabelC" style="margin-bottom:6px;">Confession</div>
+                <div class="muted" id="prLabelC" style="margin-bottom:6px;">Confession</div>
                 <div id="pC" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow2">Now write your own:</div>
                 <textarea id="myConfession" placeholder="Confession (what I need to confess)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted pr-label thanks" id="prLabelT" style="margin-bottom:6px;">Thanksgiving</div>
+                <div class="muted" id="prLabelT" style="margin-bottom:6px;">Thanksgiving</div>
                 <div id="pT" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow3">Now write your own:</div>
                 <textarea id="myThanksgiving" placeholder="Thanksgiving (what I’m grateful for)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted pr-label supplication" id="prLabelS" style="margin-bottom:6px;">Supplication</div>
+                <div class="muted" id="prLabelS" style="margin-bottom:6px;">Supplication</div>
                 <div id="pS" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow4">Now write your own:</div>
                 <textarea id="mySupplication" placeholder="Supplication (requests for myself/others)…"></textarea>
@@ -817,4 +821,5 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
