@@ -262,32 +262,8 @@
         flex-wrap: wrap;
       }
 
-      /* Bigger Read button (always says Read) */
-      .read-btn-big{
-        padding: 10px 16px;
-        border-radius: 999px;
-        font-weight: 950;
-        font-size: 14px;
-        min-height: 44px;
-        min-width: 110px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: linear-gradient(135deg, var(--accent-2), var(--accent));
-        color: #fff;
-        cursor: pointer;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
-      }
-      .read-btn-big:active { transform: translateY(1px); }
-
-      .passage-actions{
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-      }
-
       .mini-btn{
-        padding: 8px 12px;
+        padding: 6px 10px;
         border-radius: 999px;
         border: 1px solid rgba(186,108,184,0.18);
         cursor: pointer;
@@ -296,16 +272,29 @@
         color: #ffffff;
         background: rgba(255,255,255,0.08);
         white-space: nowrap;
-        min-height: 38px;
       }
 
+      /* ✅ Bigger "Read" button */
       .mini-btn.primary{
         background: linear-gradient(135deg, var(--accent-2), var(--accent));
         border: 1px solid rgba(255,255,255,0.14);
+        padding: 10px 18px;
+        font-size: 14px;
+        min-width: 120px;
       }
-      .mini-btn.danger{
-        background: rgba(225,29,72,0.92);
-        border-color: rgba(225,29,72,0.35);
+
+      /* ✅ Passage header buttons */
+      .passage-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .passage-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
       }
 
       .chat-layout {
@@ -548,9 +537,7 @@
 
                   <div class="muted bible-subrow">
                     <span id="bibleHint">Pick a book/chapter and verse range, or Full Chapter.</span>
-
-                    <!-- ✅ Bigger "Read" (always says Read) -->
-                    <button class="read-btn-big" id="readBibleBtn" type="button">Read</button>
+                    <button class="mini-btn primary" id="readBibleBtn" type="button">Read</button>
                   </div>
                 </div>
 
@@ -634,20 +621,18 @@
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
-            <!-- ✅ Passage card now has Listen/Stop -->
             <div class="card">
-              <div class="row" style="align-items:center;">
-                <div style="flex:2;">
-                  <h4 id="passageTitle" style="margin:0;">Passage</h4>
-                  <div class="muted" id="passageRef" style="margin-top:6px;">—</div>
-                </div>
+              <div class="passage-header">
+                <h4 id="passageTitle">Passage</h4>
 
+                <!-- ✅ New controls -->
                 <div class="passage-actions">
-                  <button class="mini-btn primary" id="passageListenBtn" type="button">Listen</button>
-                  <button class="mini-btn danger" id="passageStopBtn" type="button">Stop</button>
+                  <button class="mini-btn" id="passageListenBtn" type="button">Listen</button>
+                  <button class="mini-btn" id="passageStopBtn" type="button">Stop</button>
                 </div>
               </div>
 
+              <div class="muted" id="passageRef">—</div>
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
             </div>
           </div>
@@ -821,5 +806,6 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
