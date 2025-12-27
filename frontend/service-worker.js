@@ -23,8 +23,7 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
-// Network-first for JS so updates propagate quickly.
-// Cache-first for navigation fallback.
+// Network-first for HTML, cache-first for other assets
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
@@ -32,8 +31,10 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin
   if (url.origin !== self.location.origin) return;
 
-  // Always try network first for app.js
-  if (url.pathname === "/app.js") {
+  const accept = req.headers.get("accept") || "";
+  const isHTML = accept.includes("text/html");
+
+  if (isHTML) {
     event.respondWith((async () => {
       try {
         const fresh = await fetch(req);
@@ -42,27 +43,12 @@ self.addEventListener("fetch", (event) => {
         return fresh;
       } catch {
         const cached = await caches.match(req);
-        return cached || new Response("", { status: 503 });
+        return cached || caches.match("/") || new Response("Offline", { status: 200 });
       }
     })());
     return;
   }
 
-  // For navigations, try cache then network then fallback to "/"
-  if (req.mode === "navigate") {
-    event.respondWith((async () => {
-      const cached = await caches.match("/");
-      try {
-        const fresh = await fetch(req);
-        return fresh;
-      } catch {
-        return cached || new Response("", { status: 503 });
-      }
-    })());
-    return;
-  }
-
-  // Default: cache-first for small static assets
   event.respondWith((async () => {
     const cached = await caches.match(req);
     if (cached) return cached;
@@ -72,10 +58,11 @@ self.addEventListener("fetch", (event) => {
       cache.put(req, fresh.clone());
       return fresh;
     } catch {
-      return new Response("", { status: 503 });
+      return new Response("", { status: 504 });
     }
   })());
 });
+
 
 
 
