@@ -176,7 +176,14 @@
         color: #ffffff;
       }
 
-      .main { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+      .main {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
       .app-section { display: none; height: 100%; overflow: hidden; min-height: 0; }
       .app-section.active { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
@@ -193,6 +200,7 @@
       .card h3, .card h4 { margin: 0 0 10px 0; color: rgba(255,255,255,0.92); }
 
       .muted { opacity: 0.85; font-size: 13px; color: var(--text-2); }
+
       .row { display: flex; gap: 10px; flex-wrap: wrap; }
       .row > * { flex: 1; min-width: 220px; }
 
@@ -238,25 +246,6 @@
       .btn-ghost { background: rgba(255,255,255,0.07); color: white; border-color: rgba(186,108,184,0.18); }
       .btn:disabled { opacity: 0.6; cursor: default; }
 
-      .btn-small {
-        padding: 9px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 900;
-        min-width: 92px;
-      }
-
-      .bible-actions {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .bible-actions .btn-read {
-        flex: 1;
-        min-width: 220px;
-      }
-
       .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
 
       .block {
@@ -273,7 +262,48 @@
         margin: 12px 0;
       }
 
-      /* CHAT */
+      .bible-subrow{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .mini-btn{
+        padding: 8px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(186,108,184,0.18);
+        cursor: pointer;
+        font-weight: 900;
+        font-size: 12px;
+        color: #ffffff;
+        background: rgba(255,255,255,0.08);
+        white-space: nowrap;
+      }
+
+      .mini-btn.primary{
+        background: linear-gradient(135deg, var(--accent-2), var(--accent));
+        border: 1px solid rgba(255,255,255,0.14);
+        padding: 10px 18px;
+        font-size: 14px;
+        min-width: 120px;
+      }
+
+      .passage-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .passage-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      /* CHAT layout (desktop) */
       .chat-layout {
         flex: 1;
         overflow: hidden;
@@ -297,7 +327,7 @@
         border-radius: 16px;
         border: 1px solid rgba(186,108,184,0.22);
         background: rgba(10, 8, 28, 0.45);
-        min-height: 0;
+        padding-bottom: 18px;
       }
 
       .bubble-row { display: flex; width: 100%; }
@@ -340,29 +370,25 @@
         gap: 10px;
         background: rgba(10, 8, 28, 0.88);
         flex-wrap: wrap;
-        flex-shrink: 0; /* ✅ keep it visible */
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       }
 
-      /* ✅ Make the input larger and never collapse */
       .chat-form input[type="text"] {
         border-radius: 999px;
-        flex: 1 1 100%;
-        min-width: 0;
-        height: 44px;           /* ✅ bigger tap target */
-        padding: 12px 16px;     /* ✅ bigger typing area */
-        font-size: 16px;        /* ✅ stops iOS zoom + improves readability */
+        flex: 1;
+        min-width: 240px;
+        min-height: 46px;
+        font-size: 16px; /* stops iOS zoom */
       }
 
-      /* ✅ Buttons stay reachable on mobile */
-      .chat-form .btn {
-        border-radius: 999px;
-        padding: 10px 18px;
-        white-space: nowrap;
-      }
+      .chat-form .btn { border-radius: 999px; padding: 10px 18px; }
 
       .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
 
-      /* Mobile */
+      /* MOBILE */
       @media (max-width: 920px) {
         body {
           align-items: stretch;
@@ -377,21 +403,23 @@
           border-radius: 0;
         }
 
-        .main {
-          flex: 1;
-          min-height: 0;
-        }
+        header { padding: 14px 14px 10px; }
+        .top-cta { padding: 10px 14px 12px; gap: 10px; }
+        .menu-bar { padding: 10px 12px; }
+
+        .main { flex: 1; min-height: 0; }
 
         .chat-layout {
           display: flex !important;
           flex-direction: column !important;
           height: 100%;
           gap: 10px;
+          padding: 12px;
           min-height: 0;
         }
 
-        /* ✅ Ensure the chat card becomes a flex column and can shrink/grow properly */
-        #chatSection .card:first-child {
+        /* Make chat card a flex column */
+        #chatSection .card:first-child{
           flex: 1;
           min-height: 0;
           display: flex;
@@ -399,17 +427,13 @@
           overflow: hidden;
         }
 
-        /* ✅ Make the message list take remaining space */
-        #chat {
-          flex: 1;
-          min-height: 0;
-        }
+        #chat { flex: 1; min-height: 0; }
+        .chat-form { flex-shrink: 0; }
+        .chat-form input[type="text"] { width: 100%; min-width: 0; }
 
-        /* ✅ Keep the form visible + comfortable spacing */
-        .chat-form {
-          flex-shrink: 0;
-          padding-bottom: 14px;
-        }
+        .mini-btn, .btn { min-height: 44px; }
+        .row > * { min-width: 160px; }
+        textarea { min-height: 140px; }
       }
     </style>
   </head>
@@ -418,26 +442,28 @@
     <div class="app">
       <header>
         <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
-        <small>pray • learn • walk in the Light</small>
+        <small id="tagline">pray • learn • walk in the Light</small>
         <span class="js-pill" id="jsStatus">JS: loading…</span>
       </header>
 
       <div class="top-cta">
         <button class="support-btn" id="supportBtn" type="button" title="Support Alyana Luz">
-          ❤️ Support Alyana Luz
+          ❤️ <span id="supportBtnText">Support Alyana Luz</span>
         </button>
 
         <div class="account-row" aria-label="Account and billing">
           <span class="pill warn" id="authPill">Account: checking…</span>
+
           <button class="btn btn-ghost" id="manageBillingBtn" type="button" disabled>
-            Manage billing
+            <span id="manageBillingText">Manage billing</span>
           </button>
+
           <button class="btn btn-danger" id="logoutBtn" type="button" style="display:none;">
-            Logout
+            <span id="logoutText">Logout</span>
           </button>
 
           <label style="min-width:170px;">
-            <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+            <span class="muted" style="display:block; margin-bottom:4px;" id="uiLangLabel">Language</span>
             <select id="uiLangSelect">
               <option value="en" selected>English</option>
               <option value="es">Español</option>
@@ -445,7 +471,7 @@
           </label>
         </div>
 
-        <p class="support-note">
+        <p class="support-note" id="supportNote">
           Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
           <br />
           To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
@@ -464,10 +490,10 @@
       </div>
 
       <nav class="menu-bar">
-        <button class="menu-btn active" data-target="chatSection" type="button">Chat</button>
-        <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
-        <button class="menu-btn" data-target="devotionalSection" type="button">Devotional</button>
-        <button class="menu-btn" data-target="prayerSection" type="button">Daily Prayer</button>
+        <button class="menu-btn active" data-target="chatSection" type="button" id="tabChat">Chat</button>
+        <button class="menu-btn" data-target="bibleSection" type="button" id="tabBible">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button" id="tabDev">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button" id="tabPrayer">Daily Prayer</button>
       </nav>
 
       <div class="main">
@@ -477,13 +503,13 @@
             <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
               <div class="row" style="align-items:center; margin-bottom:10px;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 4px 0;">Chat</h3>
-                  <div class="muted">Saved chat logs are stored on this device.</div>
+                  <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
+                  <div class="muted" id="chatSavedHint">Saved chat logs are stored on this device.</div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="chatLangLabel">Chat Language</span>
                     <select id="chatLangSelect">
                       <option value="auto" selected>Auto (based on what they type)</option>
                       <option value="en">English</option>
@@ -497,7 +523,12 @@
               <div id="chat"></div>
 
               <form id="chatForm" class="chat-form">
-                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
+                <input
+                  id="chatInput"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…"
+                />
                 <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
                 <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
                 <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
@@ -507,8 +538,8 @@
             </div>
 
             <div class="card" style="overflow:auto;">
-              <h4 style="margin-bottom:6px;">Saved Chats</h4>
-              <div class="muted">Load or delete any saved chat.</div>
+              <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
+              <div class="muted" id="savedChatsHint">Load or delete any saved chat.</div>
               <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved chats yet.</small>
               </div>
@@ -522,9 +553,14 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2; min-width:260px;">
-                  <h3 style="margin-bottom:6px;">Bible Reader (Listen)</h3>
-                  <div class="muted">Pick a book/chapter and verse range, or Full Chapter.</div>
+                  <h3 style="margin-bottom:6px;" id="bibleTitle">Bible Reader</h3>
+
+                  <div class="muted bible-subrow">
+                    <span id="bibleHint">Pick a book/chapter and verse range, or Full Chapter.</span>
+                    <button class="mini-btn primary" id="readBibleBtn" type="button">Read</button>
+                  </div>
                 </div>
+
                 <div style="display:flex; justify-content:flex-end;">
                   <span class="pill" id="ttsStatus">Voice: ready</span>
                 </div>
@@ -532,28 +568,28 @@
 
               <div class="row" style="margin-top:12px;">
                 <div style="flex:2;">
-                  <label>Book</label>
+                  <label id="lblBook">Book</label>
                   <select id="bookSelect">
                     <option value="">Loading…</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Chapter</label>
+                  <label id="lblChapter">Chapter</label>
                   <select id="chapterSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (start)</label>
+                  <label id="lblVerseStart">Verse (start)</label>
                   <select id="verseStartSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (end)</label>
+                  <label id="lblVerseEnd">Verse (end)</label>
                   <select id="verseEndSelect">
                     <option value="">(optional)</option>
                   </select>
@@ -562,24 +598,24 @@
 
               <div class="row" style="margin-top:12px; align-items:flex-end;">
                 <div>
-                  <label>Reader Language</label>
+                  <label id="lblReaderLang">Reader Language</label>
                   <select id="readingVoice">
                     <option value="en" selected>English</option>
                     <option value="es">Spanish</option>
                   </select>
-                  <div class="small-note">Only two voices, locked for consistency.</div>
+                  <div class="small-note" id="readerLangNote">Only two voices, locked for consistency.</div>
                 </div>
 
                 <div style="min-width:220px;">
                   <label style="display:flex; gap:10px; align-items:center;">
                     <input type="checkbox" id="fullChapter" />
-                    Full Chapter
+                    <span id="lblFullChapter">Full Chapter</span>
                   </label>
-                  <div class="small-note">If Full Chapter is on, verses are ignored.</div>
+                  <div class="small-note" id="fullChapterNote">If Full Chapter is on, verses are ignored.</div>
                 </div>
 
                 <div>
-                  <label>Version label (English only)</label>
+                  <label id="lblVersion">Version label (English only)</label>
                   <select id="versionSelect">
                     <option value="KJV" selected>KJV</option>
                     <option value="NKJV">NKJV</option>
@@ -591,30 +627,29 @@
                     <option value="AMP">AMP</option>
                     <option value="MSG">MSG</option>
                   </select>
-                  <div class="small-note">For Spanish voice, we do not speak the version label.</div>
+                  <div class="small-note" id="versionNote">For Spanish voice, we do not speak the version label.</div>
                 </div>
               </div>
 
-              <div class="row" style="margin-top:12px;">
-                <div class="bible-actions" style="width:100%;">
-                  <button class="btn btn-primary btn-read" id="readBibleBtn" type="button">Read</button>
-                  <button class="btn btn-ghost btn-small" id="listenBible" type="button">Listen</button>
-                  <button class="btn btn-danger btn-small" id="stopBible" type="button">Stop</button>
-                </div>
-              </div>
-
-              <div class="small-note">
+              <div class="small-note" id="spanishReadNote">
                 Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
               </div>
             </div>
 
             <div class="card">
-              <h4>Bible DB Status</h4>
+              <h4 id="dbStatusTitle">Bible DB Status</h4>
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
             <div class="card">
-              <h4>Passage</h4>
+              <div class="passage-header">
+                <h4 id="passageTitle">Passage</h4>
+                <div class="passage-actions">
+                  <button class="mini-btn" id="passageListenBtn" type="button">Listen</button>
+                  <button class="mini-btn" id="passageStopBtn" type="button">Stop</button>
+                </div>
+              </div>
+
               <div class="muted" id="passageRef">—</div>
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
             </div>
@@ -627,13 +662,21 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Devotional</h3>
+                  <h3 style="margin:0 0 6px 0;" id="devTitle">Devotional</h3>
                   <div class="muted" id="devIntro">
                     Alyana gives short starter examples. You write and save your real devotional.
                   </div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="devLangLabel">Language</span>
+                    <select id="devUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
+                    </select>
+                  </label>
+
                   <span class="pill" id="devStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="devStreakBtn" type="button">I did it today</button>
 
@@ -656,28 +699,28 @@
               <div class="divider"></div>
 
               <div class="block">
-                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Alyana Starter — Context / Observation</div>
+                <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Context / Observation</div>
                 <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow1">Now write yours:</div>
                 <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Alyana Starter — Reflection / Insight</div>
+                <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Reflection / Insight</div>
                 <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow2">Now write yours:</div>
                 <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Alyana Starter — Application (Practical)</div>
+                <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Application (Practical)</div>
                 <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow3">Now write yours:</div>
                 <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Alyana Starter — Prayer</div>
+                <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Prayer</div>
                 <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="devNow4">Now write your real prayer:</div>
                 <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
@@ -694,8 +737,8 @@
             </div>
 
             <div class="card">
-              <h4>Saved Devotionals</h4>
-              <div class="muted">Load or delete past devotionals saved on this device.</div>
+              <h4 id="devSavedTitle">Saved Devotionals</h4>
+              <div class="muted" id="devSavedHint">Load or delete past devotionals saved on this device.</div>
               <div class="saved-list" id="devSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved devotionals yet.</small>
               </div>
@@ -709,13 +752,21 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
+                  <h3 style="margin:0 0 6px 0;" id="prTitle">Daily Prayer</h3>
                   <div class="muted" id="prIntro">
                     Alyana gives a short starter example. You write and save your real prayer.
                   </div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; align-items:center; flex-wrap:wrap;">
+                  <label style="min-width:170px;">
+                    <span class="muted" style="display:block; margin-bottom:4px;" id="prLangLabel">Language</span>
+                    <select id="prUiLang">
+                      <option value="en" selected>English</option>
+                      <option value="es">Español</option>
+                    </select>
+                  </label>
+
                   <span class="pill" id="prStreakPill">Streak: 0</span>
                   <button class="btn btn-ghost" id="prStreakBtn" type="button">I did it today</button>
 
@@ -725,28 +776,28 @@
               </div>
 
               <div class="block" style="margin-top:12px;">
-                <div class="muted" id="prLabelA" style="margin-bottom:6px;">Alyana Starter — Adoration</div>
+                <div class="muted" id="prLabelA" style="margin-bottom:6px;">Adoration</div>
                 <div id="pA" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow1">Now write your own:</div>
                 <textarea id="myAdoration" placeholder="Adoration (praise God for who He is)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="prLabelC" style="margin-bottom:6px;">Alyana Starter — Confession</div>
+                <div class="muted" id="prLabelC" style="margin-bottom:6px;">Confession</div>
                 <div id="pC" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow2">Now write your own:</div>
                 <textarea id="myConfession" placeholder="Confession (what I need to confess)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="prLabelT" style="margin-bottom:6px;">Alyana Starter — Thanksgiving</div>
+                <div class="muted" id="prLabelT" style="margin-bottom:6px;">Thanksgiving</div>
                 <div id="pT" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow3">Now write your own:</div>
                 <textarea id="myThanksgiving" placeholder="Thanksgiving (what I’m grateful for)…"></textarea>
               </div>
 
               <div class="block">
-                <div class="muted" id="prLabelS" style="margin-bottom:6px;">Alyana Starter — Supplication</div>
+                <div class="muted" id="prLabelS" style="margin-bottom:6px;">Supplication</div>
                 <div id="pS" style="white-space:pre-wrap;">—</div>
                 <div class="small-note" id="prNow4">Now write your own:</div>
                 <textarea id="mySupplication" placeholder="Supplication (requests for myself/others)…"></textarea>
@@ -759,8 +810,8 @@
             </div>
 
             <div class="card">
-              <h4>Saved Prayers</h4>
-              <div class="muted">Load or delete past prayers saved on this device.</div>
+              <h4 id="prSavedTitle">Saved Prayers</h4>
+              <div class="muted" id="prSavedHint">Load or delete past prayers saved on this device.</div>
               <div class="saved-list" id="prSavedList" style="margin-top:10px;">
                 <small style="opacity:0.75;">No saved prayers yet.</small>
               </div>
@@ -773,6 +824,7 @@
     <script src="/app.js" defer></script>
   </body>
 </html>
+
 
 
 
