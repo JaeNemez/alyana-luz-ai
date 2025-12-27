@@ -88,3 +88,4 @@ def run_bible_ai(prompt: str, lang: str = "auto", history: list | None = None) -
 
     return text
 
+
