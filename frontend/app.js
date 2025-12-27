@@ -408,9 +408,36 @@
     },
   };
 
+  // ---------------------------
+  // ✅ FIXED: robust language normalization
+  // ---------------------------
   function normLang(v, fallback = "en") {
-    const val = (v || fallback || "en").toLowerCase();
-    return val === "es" ? "es" : "en";
+    const raw = String(v || fallback || "en").trim().toLowerCase();
+
+    // Spanish variants (handles option values like "Español", "es-MX", "spanish", etc.)
+    if (
+      raw === "es" ||
+      raw.startsWith("es-") ||
+      raw.includes("español") ||
+      raw.includes("espanol") ||
+      raw.includes("spanish")
+    ) {
+      return "es";
+    }
+
+    // English variants
+    if (
+      raw === "en" ||
+      raw.startsWith("en-") ||
+      raw.includes("english") ||
+      raw.includes("inglés") ||
+      raw.includes("ingles")
+    ) {
+      return "en";
+    }
+
+    // fallback safety
+    return fallback === "es" ? "es" : "en";
   }
 
   function getUILang() {
@@ -641,7 +668,7 @@
       localStorage.setItem(LS.authStatus, status);
       setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || email);
 
-      // ✅ Re-check /me for final truth (handles trialing/active logic)
+      // Re-check /me for final truth
       await refreshMeFromServer();
 
       if (showToast) toast(t.accessRestored);
@@ -896,7 +923,7 @@
   }
 
   // ---------------------------
-  // Chat
+  // Chat (unchanged)
   // ---------------------------
   function chatStorageLoad() {
     return safeJSON(localStorage.getItem(LS.savedChats) || "[]", []);
@@ -1094,9 +1121,9 @@
           const reply = resp && resp.reply ? String(resp.reply) : "(No reply)";
           addBubble("bot", reply);
         } catch (err) {
-          const uiLang = getUILang();
+          const uiLangNow = getUILang();
           const friendly =
-            uiLang === "es"
+            uiLangNow === "es"
               ? "El chat falló. Revisa tu clave Gemini en Render y mira los logs."
               : "Chat failed. Check your Gemini key in Render and review server logs.";
           addBubble("system", `${friendly}\n\n${String(err.message || err)}`);
@@ -1110,7 +1137,7 @@
   }
 
   // ---------------------------
-  // Devotionals (unchanged from your code)
+  // Devotionals (your same logic)
   // ---------------------------
   function loadSavedDevs() { return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []); }
   function saveSavedDevs(list) { localStorage.setItem(LS.savedDevs, JSON.stringify(list || [])); }
@@ -1289,7 +1316,7 @@
   }
 
   // ---------------------------
-  // Daily Prayer (unchanged from your code)
+  // Daily Prayer (your same logic)
   // ---------------------------
   function loadSavedPrayers() { return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []); }
   function saveSavedPrayers(list) { localStorage.setItem(LS.savedPrayers, JSON.stringify(list || [])); }
@@ -1442,7 +1469,7 @@
   }
 
   // ---------------------------
-  // Bible Reader (unchanged from your code)
+  // Bible Reader (unchanged)
   // ---------------------------
   function bibleVersionForReadingLang(readLang) {
     return readLang === "es" ? "es" : "en_default";
@@ -1707,6 +1734,7 @@
     initPrayer();
     initBible();
 
+    // Use stored uiLang, but normalize safely
     const storedUILang = normLang(localStorage.getItem(LS.uiLang) || "en", "en");
     setSelectValue("#uiLangSelect", storedUILang);
 
@@ -1719,9 +1747,9 @@
 
     applyUILang();
 
-    // ✅ Handle Stripe redirect results
-    const uiLang = getUILang();
-    const t = I18N[uiLang];
+    // Stripe redirect results
+    const langNow = getUILang();
+    const t = I18N[langNow];
 
     const success = getQueryParam("success");
     const canceled = getQueryParam("canceled");
@@ -1729,13 +1757,9 @@
     if (success === "1") {
       toast(t.stripeSuccess, false);
 
-      // If user already typed/saved email, auto-restore so pill flips to Active
       const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
       if (email) {
         await stripeRestoreAccess(false);
-      } else {
-        // If no email stored, we cannot restore automatically
-        // user can press Restore access manually
       }
 
       removeQueryParams(["success"]);
@@ -1752,18 +1776,17 @@
       const vEn = await pickLockedVoice("en");
       const vEs = await pickLockedVoice("es");
       const ok = !!(vEn && vEs);
-      const langNow = getUILang();
-      const msg = ok ? I18N[langNow].voiceReady : I18N[langNow].voiceMissing;
+      const msg = ok ? I18N[getUILang()].voiceReady : I18N[getUILang()].voiceMissing;
 
       if (ttsStatus) ttsStatus.textContent = msg;
       if (chatVoicePill) chatVoicePill.textContent = msg;
     } catch {
-      const langNow = getUILang();
-      if (ttsStatus) ttsStatus.textContent = I18N[langNow].voiceMissing;
-      if (chatVoicePill) chatVoicePill.textContent = I18N[langNow].voiceMissing;
+      const msg = I18N[getUILang()].voiceMissing;
+      if (ttsStatus) ttsStatus.textContent = msg;
+      if (chatVoicePill) chatVoicePill.textContent = msg;
     }
 
-    // Health/auth ping (updates account pill if token exists)
+    // Health/auth ping
     await refreshMeFromServer();
 
     showTopStatus("JS: ready");
