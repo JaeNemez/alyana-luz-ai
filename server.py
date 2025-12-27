@@ -47,6 +47,9 @@ STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()  # used for signed session tokens
 
+# ✅ 7-day trial length (override in Render if you want)
+TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "7")
+
 if STRIPE_SECRET_KEY and stripe:
     stripe.api_key = STRIPE_SECRET_KEY
 
@@ -203,12 +206,22 @@ def _stripe_customer_by_email(email: str):
     return customers.data[0]
 
 
-def _stripe_has_active_subscription(customer_id: str) -> bool:
+# ✅ IMPORTANT: treat trialing as subscribed too
+def _stripe_has_active_or_trialing_subscription(customer_id: str) -> bool:
     _require_stripe_ready()
     if not customer_id:
         return False
-    subs = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
-    return bool(subs and subs.data)
+
+    # Fetch subscriptions and check statuses ourselves
+    subs = stripe.Subscription.list(customer=customer_id, status="all", limit=20)
+    if not subs or not subs.data:
+        return False
+
+    for s in subs.data:
+        st = str(getattr(s, "status", "") or "")
+        if st in ("active", "trialing"):
+            return True
+    return False
 
 
 # -----------------------------
@@ -230,7 +243,7 @@ def me(req: Request):
     subscribed = False
     try:
         if customer_id and STRIPE_SECRET_KEY and stripe:
-            subscribed = _stripe_has_active_subscription(customer_id)
+            subscribed = _stripe_has_active_or_trialing_subscription(customer_id)
     except Exception:
         subscribed = False
 
@@ -307,13 +320,16 @@ async def stripe_checkout(req: Request):
         success_url = f"{APP_BASE_URL}/?success=1"
         cancel_url = f"{APP_BASE_URL}/?canceled=1"
 
-        # IMPORTANT FIX:
-        # - "customer_creation" is NOT allowed in subscription mode (Stripe returns error)
         params = {
             "mode": "subscription",
             "line_items": [{"price": STRIPE_PRICE_ID, "quantity": 1}],
             "success_url": success_url,
             "cancel_url": cancel_url,
+
+            # ✅ 7-day trial (set TRIAL_DAYS=0 to disable)
+            "subscription_data": {
+                "trial_period_days": TRIAL_DAYS
+            },
         }
 
         # In subscription mode, use customer_email (Stripe will create or reuse customer)
@@ -322,6 +338,7 @@ async def stripe_checkout(req: Request):
 
         session = stripe.checkout.Session.create(**params)
         return {"ok": True, "url": session.url}
+
     except Exception as e:
         print("ERROR stripe_checkout:", repr(e))
         raise HTTPException(status_code=500, detail=f"Stripe checkout failed: {repr(e)}")
@@ -355,7 +372,7 @@ async def stripe_restore(req: Request):
 
         subscribed = False
         try:
-            subscribed = _stripe_has_active_subscription(cust.id)
+            subscribed = _stripe_has_active_or_trialing_subscription(cust.id)
         except Exception:
             subscribed = False
 
@@ -364,9 +381,6 @@ async def stripe_restore(req: Request):
             return_url=f"{APP_BASE_URL}/",
         )
 
-        # Return BOTH formats:
-        # - your earlier frontend expected: status / customer_email / portal_url
-        # - your current backend returns: url / token / subscribed
         status = "active" if subscribed else "inactive"
         return {
             "ok": True,
@@ -414,12 +428,23 @@ async def stripe_webhook(req: Request):
     sig = req.headers.get("stripe-signature") or ""
 
     try:
-        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig, secret=STRIPE_WEBHOOK_SECRET)
+        event = stripe.Webhook.construct_event(
+            payload=payload, sig_header=sig, secret=STRIPE_WEBHOOK_SECRET
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid webhook: {repr(e)}")
 
     etype = event.get("type")
     print("Stripe webhook event:", etype)
+
+    # Optional: you can add logic here later (email receipts, analytics, etc.)
+    # Common subscription events:
+    # - checkout.session.completed
+    # - customer.subscription.created
+    # - customer.subscription.updated
+    # - customer.subscription.deleted
+    # - invoice.paid
+    # - invoice.payment_failed
 
     return {"ok": True}
 
@@ -485,6 +510,7 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
 
