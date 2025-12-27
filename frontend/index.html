@@ -238,25 +238,6 @@
       .btn-ghost { background: rgba(255,255,255,0.07); color: white; border-color: rgba(186,108,184,0.18); }
       .btn:disabled { opacity: 0.6; cursor: default; }
 
-      .btn-small {
-        padding: 9px 12px;
-        border-radius: 999px;
-        font-size: 12px;
-        font-weight: 900;
-        min-width: 92px;
-      }
-
-      .bible-actions {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .bible-actions .btn-read {
-        flex: 1;
-        min-width: 220px;
-      }
-
       .saved-list button { width: 100%; text-align: left; margin-top: 8px; }
 
       .block {
@@ -273,7 +254,9 @@
         margin: 12px 0;
       }
 
-      /* CHAT */
+      /* ===========================
+         CHAT LAYOUT
+         =========================== */
       .chat-layout {
         flex: 1;
         overflow: hidden;
@@ -283,12 +266,17 @@
         padding: 12px;
         min-height: 0;
       }
+
       @media (max-width: 920px) {
-        .chat-layout { grid-template-columns: 1fr; }
+        .chat-layout {
+          grid-template-columns: 1fr;
+        }
       }
 
+      /* Chat message area */
       #chat {
-        height: 100%;
+        flex: 1;
+        min-height: 0;
         overflow-y: auto;
         padding: 12px;
         display: flex;
@@ -297,7 +285,7 @@
         border-radius: 16px;
         border: 1px solid rgba(186,108,184,0.22);
         background: rgba(10, 8, 28, 0.45);
-        min-height: 0;
+        -webkit-overflow-scrolling: touch;
       }
 
       .bubble-row { display: flex; width: 100%; }
@@ -333,35 +321,64 @@
         text-align: center;
       }
 
+      /* ✅ FIXED + READABLE mobile chat input */
       .chat-form {
-        padding: 12px 14px;
-        border-top: 1px solid rgba(255,255,255,0.08);
         display: flex;
-        gap: 10px;
-        background: rgba(10, 8, 28, 0.88);
         flex-wrap: wrap;
-        flex-shrink: 0;
+        gap: 10px;
+        padding: 12px 12px 14px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+        background: rgba(10, 8, 28, 0.92);
+        border-radius: 16px;
       }
 
-      .chat-form input[type="text"] {
-        border-radius: 999px;
+      .chat-form input[type="text"]{
         flex: 1 1 100%;
         min-width: 0;
-        height: 44px;
+        height: 48px;
         padding: 12px 16px;
-        font-size: 16px;
-      }
-
-      .chat-form .btn {
         border-radius: 999px;
-        padding: 10px 18px;
-        white-space: nowrap;
+        font-size: 16px; /* mobile friendly */
+        background: rgba(10, 8, 28, 0.85);
       }
 
-      .small-note { font-size: 12px; opacity: 0.85; margin-top: 8px; color: var(--text-2); }
+      .chat-form .btn{
+        flex: 1 1 calc(50% - 5px);
+        border-radius: 999px;
+        padding: 12px 14px;
+        font-size: 14px;
+      }
 
-      /* Mobile */
-      @media (max-width: 920px) {
+      /* On very small screens: buttons become 2 rows of 2 */
+      @media (max-width: 420px){
+        .chat-form .btn{
+          flex: 1 1 48%;
+        }
+      }
+
+      /* Make the whole left chat card behave correctly */
+      #chatCard {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
+      }
+
+      /* ✅ Sticky input on mobile: stays visible while scrolling messages */
+      @media (max-width: 920px){
+        #chatCard {
+          height: auto;
+          min-height: 60vh;
+        }
+        .chat-form {
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
+        }
+      }
+
+      /* Mobile layout: app fills screen and allows scrolling */
+      @media (max-width: 900px) {
         body {
           align-items: stretch;
           justify-content: flex-start;
@@ -375,61 +392,22 @@
           border-radius: 0;
         }
 
-        .main {
-          flex: 1;
-          min-height: 0;
-        }
+        .main { min-height: 0; }
 
-        .chat-layout {
-          display: flex !important;
-          flex-direction: column !important;
-          height: 100%;
-          gap: 10px;
-          min-height: 0;
-        }
-
-        #chatSection .card:first-child {
-          flex: 1;
-          min-height: 0;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-
-        #chat {
-          flex: 1;
-          min-height: 0;
-        }
-
-        .chat-form {
-          flex-shrink: 0;
-          padding-bottom: 14px;
+        .section-body{
+          -webkit-overflow-scrolling: touch;
         }
       }
 
-      /* ===========================
-         MOBILE SCROLL FIX (ADDED)
-         =========================== */
+      /* ✅ Extra safety: ensure scroll always works */
       @media (max-width: 900px) {
         html, body {
-          height: auto;
-          overflow-y: auto;
+          height: 100%;
+          overflow: hidden;
         }
-
-        .app {
-          height: auto;
-          min-height: 100vh;
-          overflow-y: auto;
-        }
-
-        .main {
-          overflow-y: auto;
-        }
-
-        .section-body {
-          overflow-y: auto;
-          -webkit-overflow-scrolling: touch;
-        }
+        .app { overflow: hidden; }
+        .main { overflow: hidden; }
+        .section-body { overflow-y: auto; }
       }
     </style>
   </head>
@@ -438,34 +416,34 @@
     <div class="app">
       <header>
         <h1><span class="emoji">📖</span> Alyana Luz · Bible AI</h1>
-        <small>pray • learn • walk in the Light</small>
+        <small id="tagline">pray • learn • walk in the Light</small>
         <span class="js-pill" id="jsStatus">JS: loading…</span>
       </header>
 
       <div class="top-cta">
-        <button class="support-btn" id="supportBtn" type="button" title="Support Alyana Luz">
-          ❤️ Support Alyana Luz
+        <button class="support-btn" id="supportBtn" type="button">
+          ❤️ <span id="supportBtnText">Support Alyana Luz</span>
         </button>
 
         <div class="account-row" aria-label="Account and billing">
           <span class="pill warn" id="authPill">Account: checking…</span>
           <button class="btn btn-ghost" id="manageBillingBtn" type="button" disabled>
-            Manage billing
+            <span id="manageBillingText">Manage billing</span>
           </button>
           <button class="btn btn-danger" id="logoutBtn" type="button" style="display:none;">
-            Logout
+            <span id="logoutText">Logout</span>
           </button>
 
           <label style="min-width:170px;">
-            <span class="muted" style="display:block; margin-bottom:4px;">Language</span>
+            <span class="muted" id="uiLangLabel" style="display:block; margin-bottom:4px;">Language</span>
             <select id="uiLangSelect">
-              <option value="en" selected>English</option>
+              <option value="en">English</option>
               <option value="es">Español</option>
             </select>
           </label>
         </div>
 
-        <p class="support-note">
+        <p class="support-note" id="supportNote">
           Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
           <br />
           To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
@@ -476,7 +454,9 @@
             <input id="loginEmail" type="text" placeholder="Email used for Stripe…" />
           </div>
           <div style="flex:0; min-width:180px;">
-            <button class="btn btn-primary" id="loginBtn" type="button" style="width:100%;">Restore access</button>
+            <button class="btn btn-primary" id="loginBtn" type="button" style="width:100%;">
+              <span id="restoreBtnText">Restore access</span>
+            </button>
           </div>
         </div>
 
@@ -484,26 +464,26 @@
       </div>
 
       <nav class="menu-bar">
-        <button class="menu-btn active" data-target="chatSection" type="button">Chat</button>
-        <button class="menu-btn" data-target="bibleSection" type="button">Read Bible</button>
-        <button class="menu-btn" data-target="devotionalSection" type="button">Devotional</button>
-        <button class="menu-btn" data-target="prayerSection" type="button">Daily Prayer</button>
+        <button class="menu-btn active" data-target="chatSection" type="button" id="tabChat">Chat</button>
+        <button class="menu-btn" data-target="bibleSection" type="button" id="tabBible">Read Bible</button>
+        <button class="menu-btn" data-target="devotionalSection" type="button" id="tabDev">Devotional</button>
+        <button class="menu-btn" data-target="prayerSection" type="button" id="tabPrayer">Daily Prayer</button>
       </nav>
 
       <div class="main">
         <!-- CHAT -->
         <section id="chatSection" class="app-section active">
           <div class="chat-layout">
-            <div class="card" style="display:flex; flex-direction:column; overflow:hidden;">
+            <div class="card" id="chatCard">
               <div class="row" style="align-items:center; margin-bottom:10px;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 4px 0;">Chat</h3>
-                  <div class="muted">Saved chat logs are stored on this device.</div>
+                  <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
+                  <div class="muted" id="chatSub">Saved chat logs are stored on this device.</div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
                   <label style="min-width:170px;">
-                    <span class="muted" style="display:block; margin-bottom:4px;">Chat Language</span>
+                    <span class="muted" id="chatLangLabel" style="display:block; margin-bottom:4px;">Chat Language</span>
                     <select id="chatLangSelect">
                       <option value="auto" selected>Auto (based on what they type)</option>
                       <option value="en">English</option>
@@ -517,7 +497,12 @@
               <div id="chat"></div>
 
               <form id="chatForm" class="chat-form">
-                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…" />
+                <input
+                  id="chatInput"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…"
+                />
                 <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
                 <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
                 <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
@@ -527,10 +512,10 @@
             </div>
 
             <div class="card" style="overflow:auto;">
-              <h4 style="margin-bottom:6px;">Saved Chats</h4>
-              <div class="muted">Load or delete any saved chat.</div>
+              <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
+              <div class="muted" id="savedChatsSub">Load or delete any saved chat.</div>
               <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
-                <small style="opacity:0.75;">No saved chats yet.</small>
+                <small style="opacity:0.75;" id="noSavedChats">No saved chats yet.</small>
               </div>
             </div>
           </div>
@@ -542,8 +527,8 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2; min-width:260px;">
-                  <h3 style="margin-bottom:6px;">Bible Reader (Listen)</h3>
-                  <div class="muted">Pick a book/chapter and verse range, or Full Chapter.</div>
+                  <h3 style="margin-bottom:6px;" id="bibleTitle">Bible Reader (Listen)</h3>
+                  <div class="muted" id="bibleSub">Pick a book/chapter and verse range, or Full Chapter.</div>
                 </div>
                 <div style="display:flex; justify-content:flex-end;">
                   <span class="pill" id="ttsStatus">Voice: ready</span>
@@ -552,28 +537,28 @@
 
               <div class="row" style="margin-top:12px;">
                 <div style="flex:2;">
-                  <label>Book</label>
+                  <label id="labelBook">Book</label>
                   <select id="bookSelect">
                     <option value="">Loading…</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Chapter</label>
+                  <label id="labelChapter">Chapter</label>
                   <select id="chapterSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (start)</label>
+                  <label id="labelVerseStart">Verse (start)</label>
                   <select id="verseStartSelect">
                     <option value="">—</option>
                   </select>
                 </div>
 
                 <div>
-                  <label>Verse (end)</label>
+                  <label id="labelVerseEnd">Verse (end)</label>
                   <select id="verseEndSelect">
                     <option value="">(optional)</option>
                   </select>
@@ -582,24 +567,28 @@
 
               <div class="row" style="margin-top:12px; align-items:flex-end;">
                 <div>
-                  <label>Reader Language</label>
+                  <label id="labelReaderLang">Reader Language</label>
                   <select id="readingVoice">
                     <option value="en" selected>English</option>
                     <option value="es">Spanish</option>
                   </select>
-                  <div class="small-note">Only two voices, locked for consistency.</div>
+                  <div class="muted" id="readerLangNote" style="font-size:12px; margin-top:6px;">
+                    Only two voices, locked for consistency.
+                  </div>
                 </div>
 
                 <div style="min-width:220px;">
                   <label style="display:flex; gap:10px; align-items:center;">
                     <input type="checkbox" id="fullChapter" />
-                    Full Chapter
+                    <span id="fullChapterText">Full Chapter</span>
                   </label>
-                  <div class="small-note">If Full Chapter is on, verses are ignored.</div>
+                  <div class="muted" id="fullChapterNote" style="font-size:12px; margin-top:6px;">
+                    If Full Chapter is on, verses are ignored.
+                  </div>
                 </div>
 
                 <div>
-                  <label>Version label (English only)</label>
+                  <label id="labelVersion">Version label (English only)</label>
                   <select id="versionSelect">
                     <option value="KJV" selected>KJV</option>
                     <option value="NKJV">NKJV</option>
@@ -611,30 +600,34 @@
                     <option value="AMP">AMP</option>
                     <option value="MSG">MSG</option>
                   </select>
-                  <div class="small-note">For Spanish voice, we do not speak the version label.</div>
+                  <div class="muted" id="versionNote" style="font-size:12px; margin-top:6px;">
+                    For Spanish voice, we do not speak the version label.
+                  </div>
                 </div>
               </div>
 
               <div class="row" style="margin-top:12px;">
-                <div class="bible-actions" style="width:100%;">
-                  <button class="btn btn-primary btn-read" id="readBibleBtn" type="button">Read</button>
-                  <button class="btn btn-ghost btn-small" id="listenBible" type="button">Listen</button>
-                  <button class="btn btn-danger btn-small" id="stopBible" type="button">Stop</button>
+                <div style="width:100%; display:flex; gap:10px; flex-wrap:wrap;">
+                  <button class="btn btn-primary" id="readBibleBtn" type="button" style="flex: 1; min-width: 220px;">
+                    <span id="readBtnText">Read</span>
+                  </button>
+                  <button class="btn btn-ghost" id="listenBible" type="button">Listen</button>
+                  <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
                 </div>
               </div>
 
-              <div class="small-note">
+              <div class="muted" id="bibleBottomNote" style="font-size:12px; margin-top:10px;">
                 Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.
               </div>
             </div>
 
             <div class="card">
-              <h4>Bible DB Status</h4>
+              <h4 id="dbStatusTitle">Bible DB Status</h4>
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
             <div class="card">
-              <h4>Passage</h4>
+              <h4 id="passageTitle">Passage</h4>
               <div class="muted" id="passageRef">—</div>
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
             </div>
@@ -647,7 +640,7 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Devotional</h3>
+                  <h3 style="margin:0 0 6px 0;" id="devTitle">Devotional</h3>
                   <div class="muted" id="devIntro">
                     Alyana gives short starter examples. You write and save your real devotional.
                   </div>
@@ -678,28 +671,28 @@
               <div class="block">
                 <div class="muted" id="devLabelCtxA" style="margin-bottom:6px;">Alyana Starter — Context / Observation</div>
                 <div id="devStarterContext" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="devNow1">Now write yours:</div>
+                <div class="muted" id="devNow1" style="font-size:12px; margin-top:8px;">Now write yours:</div>
                 <textarea id="devMyContext" placeholder="Context / Observation (What’s happening? Who is speaking? Why does it matter?)"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="devLabelRefA" style="margin-bottom:6px;">Alyana Starter — Reflection / Insight</div>
                 <div id="devStarterReflection" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="devNow2">Now write yours:</div>
+                <div class="muted" id="devNow2" style="font-size:12px; margin-top:8px;">Now write yours:</div>
                 <textarea id="devMyReflection" placeholder="Reflection / Insight (What does this reveal about God? About me?)"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="devLabelAppA" style="margin-bottom:6px;">Alyana Starter — Application (Practical)</div>
                 <div id="devStarterApplication" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="devNow3">Now write yours:</div>
+                <div class="muted" id="devNow3" style="font-size:12px; margin-top:8px;">Now write yours:</div>
                 <textarea id="devMyApplication" placeholder="Application (What will I do today because of this?)"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="devLabelPrA" style="margin-bottom:6px;">Alyana Starter — Prayer</div>
                 <div id="devStarterPrayer" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="devNow4">Now write your real prayer:</div>
+                <div class="muted" id="devNow4" style="font-size:12px; margin-top:8px;">Now write your real prayer:</div>
                 <textarea id="devMyPrayer" placeholder="Prayer (write your real prayer here)"></textarea>
               </div>
 
@@ -708,16 +701,16 @@
                 <textarea id="devMyNotes" placeholder="Notes…"></textarea>
               </div>
 
-              <div class="small-note" id="devReqNote" style="margin-top:10px;">
+              <div class="muted" id="devReqNote" style="font-size:12px; margin-top:10px;">
                 Required to save (streak): Context + Reflection + Application + Prayer.
               </div>
             </div>
 
             <div class="card">
-              <h4>Saved Devotionals</h4>
-              <div class="muted">Load or delete past devotionals saved on this device.</div>
+              <h4 id="devSavedTitle">Saved Devotionals</h4>
+              <div class="muted" id="devSavedSub">Load or delete past devotionals saved on this device.</div>
               <div class="saved-list" id="devSavedList" style="margin-top:10px;">
-                <small style="opacity:0.75;">No saved devotionals yet.</small>
+                <small style="opacity:0.75;" id="devNone">No saved devotionals yet.</small>
               </div>
             </div>
           </div>
@@ -729,7 +722,7 @@
             <div class="card">
               <div class="row" style="align-items:flex-end;">
                 <div style="flex:2;">
-                  <h3 style="margin:0 0 6px 0;">Daily Prayer</h3>
+                  <h3 style="margin:0 0 6px 0;" id="prTitle">Daily Prayer</h3>
                   <div class="muted" id="prIntro">
                     Alyana gives a short starter example. You write and save your real prayer.
                   </div>
@@ -747,28 +740,28 @@
               <div class="block" style="margin-top:12px;">
                 <div class="muted" id="prLabelA" style="margin-bottom:6px;">Alyana Starter — Adoration</div>
                 <div id="pA" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="prNow1">Now write your own:</div>
+                <div class="muted" id="prNow1" style="font-size:12px; margin-top:8px;">Now write your own:</div>
                 <textarea id="myAdoration" placeholder="Adoration (praise God for who He is)…"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="prLabelC" style="margin-bottom:6px;">Alyana Starter — Confession</div>
                 <div id="pC" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="prNow2">Now write your own:</div>
+                <div class="muted" id="prNow2" style="font-size:12px; margin-top:8px;">Now write your own:</div>
                 <textarea id="myConfession" placeholder="Confession (what I need to confess)…"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="prLabelT" style="margin-bottom:6px;">Alyana Starter — Thanksgiving</div>
                 <div id="pT" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="prNow3">Now write your own:</div>
+                <div class="muted" id="prNow3" style="font-size:12px; margin-top:8px;">Now write your own:</div>
                 <textarea id="myThanksgiving" placeholder="Thanksgiving (what I’m grateful for)…"></textarea>
               </div>
 
               <div class="block">
                 <div class="muted" id="prLabelS" style="margin-bottom:6px;">Alyana Starter — Supplication</div>
                 <div id="pS" style="white-space:pre-wrap;">—</div>
-                <div class="small-note" id="prNow4">Now write your own:</div>
+                <div class="muted" id="prNow4" style="font-size:12px; margin-top:8px;">Now write your own:</div>
                 <textarea id="mySupplication" placeholder="Supplication (requests for myself/others)…"></textarea>
               </div>
 
@@ -779,10 +772,10 @@
             </div>
 
             <div class="card">
-              <h4>Saved Prayers</h4>
-              <div class="muted">Load or delete past prayers saved on this device.</div>
+              <h4 id="prSavedTitle">Saved Prayers</h4>
+              <div class="muted" id="prSavedSub">Load or delete past prayers saved on this device.</div>
               <div class="saved-list" id="prSavedList" style="margin-top:10px;">
-                <small style="opacity:0.75;">No saved prayers yet.</small>
+                <small style="opacity:0.75;" id="prNone">No saved prayers yet.</small>
               </div>
             </div>
           </div>
@@ -791,6 +784,358 @@
     </div>
 
     <script src="/app.js" defer></script>
+
+    <!-- ✅ Language switcher (no need to edit app.js) -->
+    <script>
+      (function () {
+        const $ = (id) => document.getElementById(id);
+
+        const TEXT = {
+          en: {
+            tagline: "pray • learn • walk in the Light",
+            language: "Language",
+            support: "Support Alyana Luz",
+            manageBilling: "Manage billing",
+            logout: "Logout",
+            supportNote:
+              "Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.\nTo access premium features, subscribe with Support, or restore access using the email you used on Stripe.",
+            loginPlaceholder: "Email used for Stripe…",
+            restoreAccess: "Restore access",
+
+            tabChat: "Chat",
+            tabBible: "Read Bible",
+            tabDev: "Devotional",
+            tabPrayer: "Daily Prayer",
+
+            chatTitle: "Chat",
+            chatSub: "Saved chat logs are stored on this device.",
+            chatLangLabel: "Chat Language",
+            chatAuto: "Auto (based on what they type)",
+            chatInputPH: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
+            send: "Send",
+            listen: "Listen",
+            stop: "Stop",
+            newChat: "New",
+            save: "Save",
+            savedChatsTitle: "Saved Chats",
+            savedChatsSub: "Load or delete any saved chat.",
+            noSavedChats: "No saved chats yet.",
+
+            devTitle: "Devotional",
+            devIntro: "Alyana gives short starter examples. You write and save your real devotional.",
+            devTheme: "Theme / Title (Alyana)",
+            devScripture: "Scripture (Alyana)",
+            devCtxA: "Alyana Starter — Context / Observation",
+            devRefA: "Alyana Starter — Reflection / Insight",
+            devAppA: "Alyana Starter — Application (Practical)",
+            devPrA: "Alyana Starter — Prayer",
+            devNotes: "Notes / Reflection (optional)",
+            nowWrite: "Now write yours:",
+            nowWritePrayer: "Now write your real prayer:",
+            devPH_ctx: "Context / Observation (What’s happening? Who is speaking? Why does it matter?)",
+            devPH_ref: "Reflection / Insight (What does this reveal about God? About me?)",
+            devPH_app: "Application (What will I do today because of this?)",
+            devPH_pr: "Prayer (write your real prayer here)",
+            devPH_notes: "Notes…",
+            devReq: "Required to save (streak): Context + Reflection + Application + Prayer.",
+            devSavedTitle: "Saved Devotionals",
+            devSavedSub: "Load or delete past devotionals saved on this device.",
+            devNone: "No saved devotionals yet.",
+            didToday: "I did it today",
+            generate: "Generate",
+
+            prTitle: "Daily Prayer",
+            prIntro: "Alyana gives a short starter example. You write and save your real prayer.",
+            prA: "Alyana Starter — Adoration",
+            prC: "Alyana Starter — Confession",
+            prT: "Alyana Starter — Thanksgiving",
+            prS: "Alyana Starter — Supplication",
+            prN: "Notes",
+            prNow: "Now write your own:",
+            prPH_A: "Adoration (praise God for who He is)…",
+            prPH_C: "Confession (what I need to confess)…",
+            prPH_T: "Thanksgiving (what I’m grateful for)…",
+            prPH_S: "Supplication (requests for myself/others)…",
+            prPH_N: "Notes…",
+            prSavedTitle: "Saved Prayers",
+            prSavedSub: "Load or delete past prayers saved on this device.",
+            prNone: "No saved prayers yet.",
+            generateStarters: "Generate Starters",
+
+            bibleTitle: "Bible Reader (Listen)",
+            bibleSub: "Pick a book/chapter and verse range, or Full Chapter.",
+            labelBook: "Book",
+            labelChapter: "Chapter",
+            labelVerseStart: "Verse (start)",
+            labelVerseEnd: "Verse (end)",
+            labelReaderLang: "Reader Language",
+            readerLangNote: "Only two voices, locked for consistency.",
+            fullChapterText: "Full Chapter",
+            fullChapterNote: "If Full Chapter is on, verses are ignored.",
+            labelVersion: "Version label (English only)",
+            versionNote: "For Spanish voice, we do not speak the version label.",
+            readBtn: "Read",
+            listenBtn: "Listen",
+            stopBtn: "Stop",
+            bibleBottomNote: "Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.",
+            dbStatusTitle: "Bible DB Status",
+            passageTitle: "Passage"
+          },
+          es: {
+            tagline: "orar • aprender • andar en la Luz",
+            language: "Idioma",
+            support: "Apoyar a Alyana Luz",
+            manageBilling: "Administrar pagos",
+            logout: "Salir",
+            supportNote:
+              "Tu apoyo ayuda a mantener y hacer crecer Alyana Luz — mejorando continuamente el desarrollo y expandiendo este ministerio.\nPara acceder a funciones premium, suscríbete con Apoyo o restaura el acceso usando el correo que usaste en Stripe.",
+            loginPlaceholder: "Correo usado en Stripe…",
+            restoreAccess: "Restaurar acceso",
+
+            tabChat: "Chat",
+            tabBible: "Leer Biblia",
+            tabDev: "Devocional",
+            tabPrayer: "Oración Diaria",
+
+            chatTitle: "Chat",
+            chatSub: "Los chats guardados se almacenan en este dispositivo.",
+            chatLangLabel: "Idioma del chat",
+            chatAuto: "Auto (según lo que escriba)",
+            chatInputPH: "Pide una oración, un versículo o ‘versículos sobre el perdón’…",
+            send: "Enviar",
+            listen: "Escuchar",
+            stop: "Detener",
+            newChat: "Nuevo",
+            save: "Guardar",
+            savedChatsTitle: "Chats guardados",
+            savedChatsSub: "Carga o elimina cualquier chat guardado.",
+            noSavedChats: "Aún no hay chats guardados.",
+
+            devTitle: "Devocional",
+            devIntro: "Alyana da ejemplos cortos para empezar. Tú escribes y guardas tu devocional real.",
+            devTheme: "Tema / Título (Alyana)",
+            devScripture: "Escritura (Alyana)",
+            devCtxA: "Inicio de Alyana — Contexto / Observación",
+            devRefA: "Inicio de Alyana — Reflexión / Insight",
+            devAppA: "Inicio de Alyana — Aplicación (Práctica)",
+            devPrA: "Inicio de Alyana — Oración",
+            devNotes: "Notas / Reflexión (opcional)",
+            nowWrite: "Ahora escribe el tuyo:",
+            nowWritePrayer: "Ahora escribe tu oración real:",
+            devPH_ctx: "Contexto / Observación (¿Qué está pasando? ¿Quién habla? ¿Por qué importa?)",
+            devPH_ref: "Reflexión / Insight (¿Qué revela esto sobre Dios? ¿Sobre mí?)",
+            devPH_app: "Aplicación (¿Qué haré hoy por causa de esto?)",
+            devPH_pr: "Oración (escribe aquí tu oración real)",
+            devPH_notes: "Notas…",
+            devReq: "Requerido para guardar (racha): Contexto + Reflexión + Aplicación + Oración.",
+            devSavedTitle: "Devocionales guardados",
+            devSavedSub: "Carga o elimina devocionales guardados en este dispositivo.",
+            devNone: "Aún no hay devocionales guardados.",
+            didToday: "Lo hice hoy",
+            generate: "Generar",
+
+            prTitle: "Oración Diaria",
+            prIntro: "Alyana da un ejemplo corto para empezar. Tú escribes y guardas tu oración real.",
+            prA: "Inicio de Alyana — Adoración",
+            prC: "Inicio de Alyana — Confesión",
+            prT: "Inicio de Alyana — Gratitud",
+            prS: "Inicio de Alyana — Súplica",
+            prN: "Notas",
+            prNow: "Ahora escribe la tuya:",
+            prPH_A: "Adoración (alaba a Dios por quien Él es)…",
+            prPH_C: "Confesión (lo que necesito confesar)…",
+            prPH_T: "Gratitud (por lo que estoy agradecido)…",
+            prPH_S: "Súplica (peticiones por mí/otros)…",
+            prPH_N: "Notas…",
+            prSavedTitle: "Oraciones guardadas",
+            prSavedSub: "Carga o elimina oraciones guardadas en este dispositivo.",
+            prNone: "Aún no hay oraciones guardadas.",
+            generateStarters: "Generar inicios",
+
+            bibleTitle: "Lector de Biblia (Escuchar)",
+            bibleSub: "Elige un libro/capítulo y rango de versículos, o Capítulo completo.",
+            labelBook: "Libro",
+            labelChapter: "Capítulo",
+            labelVerseStart: "Versículo (inicio)",
+            labelVerseEnd: "Versículo (fin)",
+            labelReaderLang: "Idioma del lector",
+            readerLangNote: "Solo dos voces, fijadas para consistencia.",
+            fullChapterText: "Capítulo completo",
+            fullChapterNote: "Si Capítulo completo está activo, se ignoran los versículos.",
+            labelVersion: "Etiqueta de versión (solo inglés)",
+            versionNote: "En voz española, no se menciona la etiqueta de versión.",
+            readBtn: "Leer",
+            listenBtn: "Escuchar",
+            stopBtn: "Detener",
+            bibleBottomNote: "La voz en español lee SOLO el texto del versículo (sin etiquetas en inglés).",
+            dbStatusTitle: "Estado de la BD bíblica",
+            passageTitle: "Pasaje"
+          }
+        };
+
+        function setText(id, value) {
+          const el = $(id);
+          if (!el) return;
+          el.textContent = value;
+        }
+
+        function setPH(id, value) {
+          const el = $(id);
+          if (!el) return;
+          el.setAttribute("placeholder", value);
+        }
+
+        function applyLang(lang) {
+          const t = TEXT[lang] || TEXT.en;
+
+          setText("tagline", t.tagline);
+          setText("uiLangLabel", t.language);
+          setText("supportBtnText", t.support);
+          setText("manageBillingText", t.manageBilling);
+          setText("logoutText", t.logout);
+          setText("supportNote", t.supportNote);
+
+          setPH("loginEmail", t.loginPlaceholder);
+          setText("restoreBtnText", t.restoreAccess);
+
+          setText("tabChat", t.tabChat);
+          setText("tabBible", t.tabBible);
+          setText("tabDev", t.tabDev);
+          setText("tabPrayer", t.tabPrayer);
+
+          setText("chatTitle", t.chatTitle);
+          setText("chatSub", t.chatSub);
+          setText("chatLangLabel", t.chatLangLabel);
+          const chatLang = $("chatLangSelect");
+          if (chatLang) {
+            const optAuto = chatLang.querySelector('option[value="auto"]');
+            const optEn = chatLang.querySelector('option[value="en"]');
+            const optEs = chatLang.querySelector('option[value="es"]');
+            if (optAuto) optAuto.textContent = t.chatAuto;
+            if (optEn) optEn.textContent = "English";
+            if (optEs) optEs.textContent = "Español";
+          }
+          setPH("chatInput", t.chatInputPH);
+
+          setText("chatSendBtn", t.send);
+          setText("chatListenBtn", t.listen);
+          setText("chatStopBtn", t.stop);
+          setText("chatNewBtn", t.newChat);
+          setText("chatSaveBtn", t.save);
+
+          setText("savedChatsTitle", t.savedChatsTitle);
+          setText("savedChatsSub", t.savedChatsSub);
+          setText("noSavedChats", t.noSavedChats);
+
+          setText("devTitle", t.devTitle);
+          setText("devIntro", t.devIntro);
+          setText("devLabelTheme", t.devTheme);
+          setText("devLabelScripture", t.devScripture);
+          setText("devLabelCtxA", t.devCtxA);
+          setText("devLabelRefA", t.devRefA);
+          setText("devLabelAppA", t.devAppA);
+          setText("devLabelPrA", t.devPrA);
+          setText("devLabelNotes", t.devNotes);
+
+          setText("devNow1", t.nowWrite);
+          setText("devNow2", t.nowWrite);
+          setText("devNow3", t.nowWrite);
+          setText("devNow4", t.nowWritePrayer);
+
+          setPH("devMyContext", t.devPH_ctx);
+          setPH("devMyReflection", t.devPH_ref);
+          setPH("devMyApplication", t.devPH_app);
+          setPH("devMyPrayer", t.devPH_pr);
+          setPH("devMyNotes", t.devPH_notes);
+
+          setText("devReqNote", t.devReq);
+
+          setText("devSavedTitle", t.devSavedTitle);
+          setText("devSavedSub", t.devSavedSub);
+          setText("devNone", t.devNone);
+
+          // Buttons that exist in DOM:
+          const devStreakBtn = $("devStreakBtn");
+          if (devStreakBtn) devStreakBtn.textContent = t.didToday;
+          const devBtn = $("devotionalBtn");
+          if (devBtn) devBtn.textContent = t.generate;
+          const devSaveBtn = $("devSaveBtn");
+          if (devSaveBtn) devSaveBtn.textContent = t.save;
+
+          setText("prTitle", t.prTitle);
+          setText("prIntro", t.prIntro);
+
+          setText("prLabelA", t.prA);
+          setText("prLabelC", t.prC);
+          setText("prLabelT", t.prT);
+          setText("prLabelS", t.prS);
+          setText("prLabelN", t.prN);
+
+          setText("prNow1", t.prNow);
+          setText("prNow2", t.prNow);
+          setText("prNow3", t.prNow);
+          setText("prNow4", t.prNow);
+
+          setPH("myAdoration", t.prPH_A);
+          setPH("myConfession", t.prPH_C);
+          setPH("myThanksgiving", t.prPH_T);
+          setPH("mySupplication", t.prPH_S);
+          setPH("prayerNotes", t.prPH_N);
+
+          const prStreakBtn = $("prStreakBtn");
+          if (prStreakBtn) prStreakBtn.textContent = t.didToday;
+
+          const prayerBtn = $("prayerBtn");
+          if (prayerBtn) prayerBtn.textContent = t.generateStarters;
+
+          const prSaveBtn = $("prSaveBtn");
+          if (prSaveBtn) prSaveBtn.textContent = t.save;
+
+          setText("prSavedTitle", t.prSavedTitle);
+          setText("prSavedSub", t.prSavedSub);
+          setText("prNone", t.prNone);
+
+          setText("bibleTitle", t.bibleTitle);
+          setText("bibleSub", t.bibleSub);
+          setText("labelBook", t.labelBook);
+          setText("labelChapter", t.labelChapter);
+          setText("labelVerseStart", t.labelVerseStart);
+          setText("labelVerseEnd", t.labelVerseEnd);
+          setText("labelReaderLang", t.labelReaderLang);
+          setText("readerLangNote", t.readerLangNote);
+          setText("fullChapterText", t.fullChapterText);
+          setText("fullChapterNote", t.fullChapterNote);
+          setText("labelVersion", t.labelVersion);
+          setText("versionNote", t.versionNote);
+
+          setText("readBtnText", t.readBtn);
+          const listenBible = $("listenBible");
+          if (listenBible) listenBible.textContent = t.listenBtn;
+          const stopBible = $("stopBible");
+          if (stopBible) stopBible.textContent = t.stopBtn;
+
+          setText("bibleBottomNote", t.bibleBottomNote);
+          setText("dbStatusTitle", t.dbStatusTitle);
+          setText("passageTitle", t.passageTitle);
+        }
+
+        function init() {
+          const uiSelect = $("uiLangSelect");
+          if (!uiSelect) return;
+
+          // If app.js sets it, we respect that; otherwise default en.
+          const lang = (uiSelect.value || "en").toLowerCase();
+          applyLang(lang);
+
+          uiSelect.addEventListener("change", () => {
+            applyLang((uiSelect.value || "en").toLowerCase());
+          });
+        }
+
+        document.addEventListener("DOMContentLoaded", init);
+      })();
+    </script>
   </body>
 </html>
+
 
