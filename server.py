@@ -1,654 +1,665 @@
-/* frontend/app.js
-   Fixes Spanish/English switching for Devotional + Daily Prayer by:
-   - calling GET /devotional?lang=en|es
-   - calling GET /daily_prayer?lang=en|es
-   - mapping returned fields to the correct DOM ids
-*/
+# server.py
+from pathlib import Path
+import time
+import traceback
+import os
+import json
+import base64
+import hmac
+import hashlib
+import re
+from typing import Dict, Any, Optional
 
-(() => {
-  "use strict";
+from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 
-  // -----------------------
-  // Helpers
-  // -----------------------
-  const $ = (id) => document.getElementById(id);
-  const qs = (sel) => document.querySelector(sel);
-  const qsa = (sel) => Array.from(document.querySelectorAll(sel));
+# Bible API router
+from bible_api import router as bible_router
 
-  function setText(id, value) {
-    const el = $(id);
-    if (!el) return;
-    el.textContent = (value === undefined || value === null || value === "") ? "—" : String(value);
-  }
+# AI brain
+from agent import run_bible_ai
 
-  function setValue(id, value) {
-    const el = $(id);
-    if (!el) return;
-    el.value = (value === undefined || value === null) ? "" : String(value);
-  }
+# Stripe (requires: pip install stripe)
+try:
+    import stripe  # type: ignore
+except Exception:
+    stripe = None
 
-  function show(el, on = true) {
-    if (!el) return;
-    el.style.display = on ? "" : "none";
-  }
 
-  async function apiGet(url, opts = {}) {
-    const res = await fetch(url, { method: "GET", ...opts });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const msg = data?.detail || data?.error || `Request failed (${res.status})`;
-      throw new Error(msg);
-    }
-    return data;
-  }
+# -----------------------------
+# Paths
+# -----------------------------
+ROOT_DIR = Path(__file__).resolve().parent
+FRONTEND_DIR = ROOT_DIR / "frontend"
+ICONS_DIR = FRONTEND_DIR / "icons"
 
-  async function apiPost(url, body, opts = {}) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...(opts.headers || {}) },
-      body: JSON.stringify(body || {}),
-      ...opts,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const msg = data?.detail || data?.error || `Request failed (${res.status})`;
-      throw new Error(msg);
-    }
-    return data;
-  }
+INDEX_HTML = FRONTEND_DIR / "index.html"
+APP_JS = FRONTEND_DIR / "app.js"
+MANIFEST = FRONTEND_DIR / "manifest.webmanifest"
+SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 
-  function getBearer() {
-    return localStorage.getItem("alyana_token") || "";
-  }
 
-  function setBearer(tok) {
-    if (tok) localStorage.setItem("alyana_token", tok);
-    else localStorage.removeItem("alyana_token");
-  }
+# -----------------------------
+# Env
+# -----------------------------
+APP_BASE_URL = (os.getenv("APP_BASE_URL") or "").strip().rstrip("/")
+STRIPE_SECRET_KEY = (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
+STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()  # used for signed session tokens
 
-  function authHeaders() {
-    const tok = getBearer();
-    return tok ? { authorization: `Bearer ${tok}` } : {};
-  }
+# ✅ 7-day trial length (override in Render if you want)
+TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "7")
 
-  function detectLangForDevPrayer() {
-    // Your HTML has been in two variants:
-    // Variant A: devotional has #devUiLang and prayer has #prUiLang
-    // Variant B: only top has #uiLangSelect
-    const dev = $("devUiLang");
-    const pr = $("prUiLang");
-    const ui = $("uiLangSelect");
-    // If you are on Devotional tab, prefer devUiLang if exists
-    // If you are on Prayer tab, prefer prUiLang if exists
-    // Otherwise use uiLangSelect
-    // We'll return a function so each click resolves correctly.
+if STRIPE_SECRET_KEY and stripe:
+    stripe.api_key = STRIPE_SECRET_KEY
+
+
+# -----------------------------
+# App
+# -----------------------------
+app = FastAPI()
+app.include_router(bible_router)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# -----------------------------
+# Simple in-memory chat memory
+# -----------------------------
+CHAT_SESSIONS = {}
+SESSION_TTL_SECONDS = 60 * 60 * 6  # 6 hours
+MAX_HISTORY = 30
+
+
+def _session_key(req: Request) -> str:
+    ip = (req.client.host if req.client else "unknown").strip()
+    ua = (req.headers.get("user-agent") or "unknown").strip()
+    return f"{ip}::{ua}"
+
+
+def _cleanup_sessions():
+    now = time.time()
+    dead = []
+    for k, v in CHAT_SESSIONS.items():
+        last = v.get("ts") or 0
+        if now - last > SESSION_TTL_SECONDS:
+            dead.append(k)
+    for k in dead:
+        CHAT_SESSIONS.pop(k, None)
+
+
+def _get_history(req: Request) -> list:
+    _cleanup_sessions()
+    key = _session_key(req)
+    sess = CHAT_SESSIONS.get(key)
+    if not sess:
+        sess = {"ts": time.time(), "history": []}
+        CHAT_SESSIONS[key] = sess
+    sess["ts"] = time.time()
+    return sess["history"]
+
+
+def _push_history(req: Request, role: str, content: str):
+    h = _get_history(req)
+    h.append({"role": role, "content": content})
+    if len(h) > MAX_HISTORY:
+        del h[:-MAX_HISTORY]
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def _safe_path_under(base: Path, requested_path: str) -> Path:
+    base = base.resolve()
+    clean = (requested_path or "").lstrip("/\\")
+    target = (base / clean).resolve()
+    if base not in target.parents and target != base:
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+
+def _require_stripe_ready():
+    if stripe is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Stripe library is not installed. Add `stripe` to requirements.txt and redeploy.",
+        )
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Missing STRIPE_SECRET_KEY in environment.")
+    if not STRIPE_PRICE_ID:
+        raise HTTPException(status_code=500, detail="Missing STRIPE_PRICE_ID in environment.")
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Missing JWT_SECRET in environment.")
+    if not APP_BASE_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="Missing APP_BASE_URL in environment (e.g. https://alyana-luz-ai.onrender.com).",
+        )
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+
+def _sign_token(payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
+    return f"{_b64url_encode(raw)}.{_b64url_encode(sig)}"
+
+
+def _verify_token(token: str) -> dict | None:
+    try:
+        parts = (token or "").split(".")
+        if len(parts) != 2:
+            return None
+        raw = _b64url_decode(parts[0])
+        sig = _b64url_decode(parts[1])
+        exp_sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, exp_sig):
+            return None
+        payload = json.loads(raw.decode("utf-8"))
+        iat = int(payload.get("iat") or 0)
+        if not iat:
+            return None
+        # token valid for 30 days
+        if time.time() - iat > 60 * 60 * 24 * 30:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _get_bearer(req: Request) -> str:
+    auth = (req.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return ""
+
+
+def _require_auth(req: Request) -> dict:
+    tok = _get_bearer(req)
+    payload = _verify_token(tok)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return payload
+
+
+def _stripe_customer_by_email(email: str):
+    _require_stripe_ready()
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    customers = stripe.Customer.list(email=email, limit=1)
+    if not customers or not customers.data:
+        return None
+    return customers.data[0]
+
+
+# ✅ IMPORTANT: treat trialing as subscribed too
+def _stripe_has_active_or_trialing_subscription(customer_id: str) -> bool:
+    _require_stripe_ready()
+    if not customer_id:
+        return False
+
+    subs = stripe.Subscription.list(customer=customer_id, status="all", limit=20)
+    if not subs or not subs.data:
+        return False
+
+    for s in subs.data:
+        st = str(getattr(s, "status", "") or "")
+        if st in ("active", "trialing"):
+            return True
+    return False
+
+
+def _norm_lang(lang: Optional[str]) -> str:
+    v = (lang or "en").strip().lower()
+    if v not in ("en", "es"):
+        v = "en"
+    return v
+
+
+def _parse_labeled(text: str, labels: list[str]) -> Dict[str, str]:
+    """
+    Parse blocks like:
+      THEME: ...
+      SCRIPTURE_REF: ...
+    Supports multi-line values until next LABEL:
+    """
+    if not text:
+        return {}
+
+    # Build regex like: ^(LABEL1|LABEL2|...):\s*
+    label_alt = "|".join(re.escape(x) for x in labels)
+    pat = re.compile(rf"^(?P<label>{label_alt})\s*:\s*(?P<val>.*)$", re.IGNORECASE)
+
+    out: Dict[str, str] = {}
+    cur_label: Optional[str] = None
+    cur_lines: list[str] = []
+
+    def flush():
+        nonlocal cur_label, cur_lines
+        if cur_label:
+            out[cur_label] = ("\n".join(cur_lines).strip() if cur_lines else "").strip()
+        cur_label = None
+        cur_lines = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        m = pat.match(line.strip())
+        if m:
+            flush()
+            cur_label = m.group("label").upper()
+            first_val = (m.group("val") or "").strip()
+            cur_lines = [first_val] if first_val else []
+        else:
+            if cur_label is not None:
+                cur_lines.append(line)
+
+    flush()
+    return out
+
+
+# -----------------------------
+# API endpoints
+# -----------------------------
+@app.get("/me")
+def me(req: Request):
+    if not JWT_SECRET:
+        return {"ok": True, "authed": False}
+
+    tok = _get_bearer(req)
+    payload = _verify_token(tok)
+    if not payload:
+        return {"ok": True, "authed": False}
+
+    customer_id = str(payload.get("customer_id") or "")
+    email = str(payload.get("email") or "")
+
+    subscribed = False
+    try:
+        if customer_id and STRIPE_SECRET_KEY and stripe:
+            subscribed = _stripe_has_active_or_trialing_subscription(customer_id)
+    except Exception:
+        subscribed = False
+
     return {
-      getDev: () => (dev?.value || ui?.value || "en"),
-      getPr:  () => (pr?.value  || ui?.value || "en"),
-    };
-  }
-
-  // -----------------------
-  // Tabs
-  // -----------------------
-  function initTabs() {
-    const buttons = qsa(".menu-btn[data-target]");
-    const sections = qsa(".app-section");
-
-    function activate(targetId) {
-      sections.forEach((s) => s.classList.toggle("active", s.id === targetId));
-      buttons.forEach((b) => b.classList.toggle("active", b.getAttribute("data-target") === targetId));
+        "ok": True,
+        "authed": True,
+        "email": email,
+        "customer_id": customer_id,
+        "subscribed": subscribed,
+        "status": "active" if subscribed else "inactive",
     }
 
-    buttons.forEach((btn) => {
-      btn.addEventListener("click", () => activate(btn.getAttribute("data-target")));
-    });
-  }
 
-  // -----------------------
-  // JS status pill
-  // -----------------------
-  function setJsReady() {
-    const pill = $("jsStatus");
-    if (pill) pill.textContent = "JS: ready";
-  }
+@app.get("/devotional")
+def devotional(lang: str = Query(default="en")):
+    """
+    Returns structured devotional starter content.
+    Frontend expects:
+      theme, scripture_ref, scripture_text,
+      starter_context, starter_reflection, starter_application, starter_prayer
+    """
+    l = _norm_lang(lang)
 
-  // -----------------------
-  // Stripe/Auth UI basics
-  // -----------------------
-  async function refreshMe() {
-    const authPill = $("authPill");
-    const manageBillingBtn = $("manageBillingBtn");
-    const logoutBtn = $("logoutBtn");
+    prompt_en = (
+        "Create a SHORT devotional starter.\n"
+        "Return EXACTLY these labels, each on its own line, values may be multi-line:\n"
+        "THEME:\n"
+        "SCRIPTURE_REF:\n"
+        "SCRIPTURE_TEXT:\n"
+        "CONTEXT:\n"
+        "REFLECTION:\n"
+        "APPLICATION:\n"
+        "PRAYER:\n"
+        "Keep it gentle and encouraging. Use 1 Bible reference."
+    )
+    prompt_es = (
+        "Crea un devocional CORTO (ejemplo inicial).\n"
+        "Devuelve EXACTAMENTE estas etiquetas, cada una en su propia línea; los valores pueden tener varias líneas:\n"
+        "THEME:\n"
+        "SCRIPTURE_REF:\n"
+        "SCRIPTURE_TEXT:\n"
+        "CONTEXT:\n"
+        "REFLECTION:\n"
+        "APPLICATION:\n"
+        "PRAYER:\n"
+        "Escribe TODO en español y usa 1 referencia bíblica."
+    )
 
-    try {
-      const me = await apiGet("/me", { headers: authHeaders() });
+    try:
+        raw = run_bible_ai(prompt_es if l == "es" else prompt_en, lang=l, history=None)
 
-      if (!me?.authed) {
-        if (authPill) {
-          authPill.textContent = "Account: inactive";
-          authPill.classList.remove("ok", "bad");
-          authPill.classList.add("warn");
+        parts = _parse_labeled(
+            raw,
+            labels=[
+                "THEME",
+                "SCRIPTURE_REF",
+                "SCRIPTURE_TEXT",
+                "CONTEXT",
+                "REFLECTION",
+                "APPLICATION",
+                "PRAYER",
+            ],
+        )
+
+        # Fallbacks if model misses something
+        theme = parts.get("THEME", "").strip() or ("—")
+        scripture_ref = parts.get("SCRIPTURE_REF", "").strip() or ("—")
+        scripture_text = parts.get("SCRIPTURE_TEXT", "").strip() or ("—")
+        starter_context = parts.get("CONTEXT", "").strip() or ("—")
+        starter_reflection = parts.get("REFLECTION", "").strip() or ("—")
+        starter_application = parts.get("APPLICATION", "").strip() or ("—")
+        starter_prayer = parts.get("PRAYER", "").strip() or ("—")
+
+        return {
+            "ok": True,
+            "lang": l,
+            "theme": theme,
+            "scripture_ref": scripture_ref,
+            "scripture_text": scripture_text,
+            "starter_context": starter_context,
+            "starter_reflection": starter_reflection,
+            "starter_application": starter_application,
+            "starter_prayer": starter_prayer,
+            "raw": raw,  # helpful for debugging; frontend can ignore
         }
-        if (manageBillingBtn) manageBillingBtn.disabled = true;
-        if (logoutBtn) show(logoutBtn, false);
-        return;
-      }
 
-      const active = !!me?.subscribed;
-      if (authPill) {
-        authPill.textContent = active ? "Account: active" : "Account: inactive";
-        authPill.classList.remove("ok", "warn", "bad");
-        authPill.classList.add(active ? "ok" : "warn");
-      }
-      if (manageBillingBtn) manageBillingBtn.disabled = false;
-      if (logoutBtn) show(logoutBtn, true);
-    } catch (e) {
-      // if /me fails, do not break app
-      if (authPill) {
-        authPill.textContent = "Account: inactive";
-        authPill.classList.remove("ok", "bad");
-        authPill.classList.add("warn");
-      }
-      if ($("manageBillingBtn")) $("manageBillingBtn").disabled = true;
-      if ($("logoutBtn")) show($("logoutBtn"), false);
-    }
-  }
+    except Exception as e:
+        print("ERROR in /devotional:", repr(e))
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Devotional generation failed. Check logs / API key.")
 
-  function initStripeButtons() {
-    const supportBtn = $("supportBtn");
-    const loginBtn = $("loginBtn");
-    const loginEmail = $("loginEmail");
-    const manageBillingBtn = $("manageBillingBtn");
-    const logoutBtn = $("logoutBtn");
-    const authHint = $("authHint");
 
-    if (supportBtn) {
-      supportBtn.addEventListener("click", async () => {
-        try {
-          const email = (loginEmail?.value || "").trim().toLowerCase();
-          const data = await apiPost("/stripe/checkout", { email });
-          if (data?.url) window.location.href = data.url;
-        } catch (e) {
-          if (authHint) {
-            authHint.textContent = String(e?.message || e);
-            show(authHint, true);
-          }
+@app.get("/daily_prayer")
+def daily_prayer(lang: str = Query(default="en")):
+    """
+    Returns structured ACTS prayer starter content.
+    Frontend expects:
+      adoration, confession, thanksgiving, supplication
+    """
+    l = _norm_lang(lang)
+
+    prompt_en = (
+        "Create a SHORT daily prayer starter in the ACTS format.\n"
+        "Return EXACTLY these labels, each on its own line; values may be multi-line:\n"
+        "ADORATION:\n"
+        "CONFESSION:\n"
+        "THANKSGIVING:\n"
+        "SUPPLICATION:\n"
+        "Keep it gentle and encouraging."
+    )
+    prompt_es = (
+        "Crea una oración diaria CORTA en formato ACTS.\n"
+        "Devuelve EXACTAMENTE estas etiquetas, cada una en su propia línea; los valores pueden tener varias líneas:\n"
+        "ADORATION:\n"
+        "CONFESSION:\n"
+        "THANKSGIVING:\n"
+        "SUPPLICATION:\n"
+        "Escribe TODO en español, con un tono tierno y alentador."
+    )
+
+    try:
+        raw = run_bible_ai(prompt_es if l == "es" else prompt_en, lang=l, history=None)
+
+        parts = _parse_labeled(
+            raw,
+            labels=["ADORATION", "CONFESSION", "THANKSGIVING", "SUPPLICATION"],
+        )
+
+        adoration = parts.get("ADORATION", "").strip() or ("—")
+        confession = parts.get("CONFESSION", "").strip() or ("—")
+        thanksgiving = parts.get("THANKSGIVING", "").strip() or ("—")
+        supplication = parts.get("SUPPLICATION", "").strip() or ("—")
+
+        return {
+            "ok": True,
+            "lang": l,
+            "adoration": adoration,
+            "confession": confession,
+            "thanksgiving": thanksgiving,
+            "supplication": supplication,
+            "raw": raw,  # helpful for debugging; frontend can ignore
         }
-      });
-    }
 
-    if (loginBtn) {
-      loginBtn.addEventListener("click", async () => {
-        try {
-          const email = (loginEmail?.value || "").trim().toLowerCase();
-          const data = await apiPost("/stripe/restore", { email });
-          if (data?.token) setBearer(data.token);
-          if (authHint) {
-            authHint.textContent = "Restored. You can manage billing now.";
-            show(authHint, true);
-          }
-          await refreshMe();
-          if (data?.portal_url) window.location.href = data.portal_url;
-        } catch (e) {
-          if (authHint) {
-            authHint.textContent = String(e?.message || e);
-            show(authHint, true);
-          }
+    except Exception as e:
+        print("ERROR in /daily_prayer:", repr(e))
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Daily prayer generation failed. Check logs / API key.")
+
+
+@app.post("/chat")
+async def chat(req: Request):
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    user_message = (body.get("message") or "").strip()
+    if not user_message:
+        return {"ok": True, "reply": "Please type a message."}
+
+    lang = (body.get("lang") or "auto").strip().lower()
+    if lang not in ("auto", "en", "es"):
+        lang = "auto"
+
+    try:
+        _push_history(req, "user", user_message)
+        history = _get_history(req)
+
+        reply = run_bible_ai(user_message, lang=lang, history=history)
+        if not reply:
+            reply = "I’m here. Please try again."
+
+        _push_history(req, "assistant", str(reply))
+        return {"ok": True, "reply": str(reply)}
+
+    except Exception as e:
+        print("ERROR in /chat:", repr(e))
+        print(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="Chat engine failed. Check server logs / API key.",
+        )
+
+
+# -----------------------------
+# Stripe endpoints
+# -----------------------------
+@app.post("/stripe/checkout")
+async def stripe_checkout(req: Request):
+    _require_stripe_ready()
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    email = (body.get("email") or "").strip().lower() if isinstance(body, dict) else ""
+
+    try:
+        success_url = f"{APP_BASE_URL}/?success=1"
+        cancel_url = f"{APP_BASE_URL}/?canceled=1"
+
+        params = {
+            "mode": "subscription",
+            "line_items": [{"price": STRIPE_PRICE_ID, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "subscription_data": {"trial_period_days": TRIAL_DAYS},
         }
-      });
-    }
 
-    if (manageBillingBtn) {
-      manageBillingBtn.addEventListener("click", async () => {
-        try {
-          const data = await apiPost("/stripe/portal", {}, { headers: authHeaders() });
-          if (data?.url) window.location.href = data.url;
-        } catch (e) {
-          if (authHint) {
-            authHint.textContent = String(e?.message || e);
-            show(authHint, true);
-          }
+        if email and "@" in email:
+            params["customer_email"] = email
+
+        session = stripe.checkout.Session.create(**params)
+        return {"ok": True, "url": session.url}
+
+    except Exception as e:
+        print("ERROR stripe_checkout:", repr(e))
+        raise HTTPException(status_code=500, detail=f"Stripe checkout failed: {repr(e)}")
+
+
+@app.post("/stripe/restore")
+async def stripe_restore(req: Request):
+    _require_stripe_ready()
+
+    try:
+        body = await req.json()
+    except Exception:
+        body = {}
+
+    email = (body.get("email") or "").strip().lower() if isinstance(body, dict) else ""
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Please provide a valid email.")
+
+    try:
+        cust = _stripe_customer_by_email(email)
+        if not cust:
+            raise HTTPException(status_code=404, detail="No Stripe customer found for that email.")
+
+        token = _sign_token({"iat": int(time.time()), "email": email, "customer_id": cust.id})
+
+        subscribed = False
+        try:
+            subscribed = _stripe_has_active_or_trialing_subscription(cust.id)
+        except Exception:
+            subscribed = False
+
+        portal = stripe.billing_portal.Session.create(
+            customer=cust.id,
+            return_url=f"{APP_BASE_URL}/",
+        )
+
+        status = "active" if subscribed else "inactive"
+        return {
+            "ok": True,
+            "url": portal.url,
+            "portal_url": portal.url,
+            "token": token,
+            "subscribed": subscribed,
+            "status": status,
+            "customer_email": email,
         }
-      });
-    }
 
-    if (logoutBtn) {
-      logoutBtn.addEventListener("click", async () => {
-        setBearer("");
-        await refreshMe();
-      });
-    }
-  }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("ERROR stripe_restore:", repr(e))
+        raise HTTPException(status_code=500, detail=f"Stripe restore failed: {repr(e)}")
 
-  // -----------------------
-  // Chat
-  // -----------------------
-  function initChat() {
-    const chatEl = $("chat");
-    const chatForm = $("chatForm");
-    const chatInput = $("chatInput");
-    const chatLangSelect = $("chatLangSelect");
-    const chatSaveBtn = $("chatSaveBtn");
-    const chatNewBtn = $("chatNewBtn");
-    const chatSavedList = $("chatSavedList");
 
-    if (!chatEl || !chatForm || !chatInput) return;
+@app.post("/stripe/portal")
+async def stripe_portal(req: Request):
+    _require_stripe_ready()
+    payload = _require_auth(req)
 
-    const STORAGE_KEY = "alyana_chat_saves_v1";
-    const SESSION_KEY = "alyana_chat_session_v1";
+    customer_id = str(payload.get("customer_id") or "")
+    if not customer_id:
+        raise HTTPException(status_code=401, detail="Missing customer_id")
 
-    function addBubble(role, text) {
-      const row = document.createElement("div");
-      row.className = `bubble-row ${role}`;
+    try:
+        portal = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{APP_BASE_URL}/",
+        )
+        return {"ok": True, "url": portal.url}
+    except Exception as e:
+        print("ERROR stripe_portal:", repr(e))
+        raise HTTPException(status_code=500, detail=f"Stripe portal failed: {repr(e)}")
 
-      const bubble = document.createElement("div");
-      bubble.className = `bubble ${role}`;
-      bubble.textContent = text;
 
-      row.appendChild(bubble);
-      chatEl.appendChild(row);
-      chatEl.scrollTop = chatEl.scrollHeight;
-    }
+@app.post("/stripe/webhook")
+async def stripe_webhook(req: Request):
+    if stripe is None or not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Webhook not configured on server.")
 
-    function getSession() {
-      try {
-        return JSON.parse(localStorage.getItem(SESSION_KEY) || "[]");
-      } catch {
-        return [];
-      }
-    }
+    payload = await req.body()
+    sig = req.headers.get("stripe-signature") or ""
 
-    function setSession(items) {
-      localStorage.setItem(SESSION_KEY, JSON.stringify(items || []));
-    }
+    try:
+        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig, secret=STRIPE_WEBHOOK_SECRET)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook: {repr(e)}")
 
-    function renderSession() {
-      chatEl.innerHTML = "";
-      const items = getSession();
-      for (const m of items) addBubble(m.role, m.text);
-    }
+    etype = event.get("type")
+    print("Stripe webhook event:", etype)
+    return {"ok": True}
 
-    function loadSaves() {
-      try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-      } catch {
-        return [];
-      }
-    }
 
-    function saveSaves(list) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(list || []));
-    }
+# -----------------------------
+# Frontend / Static serving
+# -----------------------------
+@app.get("/", include_in_schema=False)
+def serve_index():
+    if not INDEX_HTML.exists():
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"frontend/index.html not found at {str(INDEX_HTML)}"},
+        )
+    return FileResponse(str(INDEX_HTML))
 
-    function renderSavedList() {
-      if (!chatSavedList) return;
-      const saves = loadSaves();
-      if (!saves.length) {
-        chatSavedList.innerHTML = `<small style="opacity:0.75;">No saved chats yet.</small>`;
-        return;
-      }
-      chatSavedList.innerHTML = "";
-      saves.forEach((s, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.textContent = s.title || `Chat ${idx + 1}`;
-        btn.addEventListener("click", () => {
-          setSession(s.items || []);
-          renderSession();
-        });
 
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.textContent = "Delete";
-        del.style.marginTop = "6px";
-        del.addEventListener("click", () => {
-          const next = loadSaves().filter((_, i) => i !== idx);
-          saveSaves(next);
-          renderSavedList();
-        });
+@app.get("/app.js", include_in_schema=False)
+def serve_app_js():
+    if not APP_JS.exists():
+        raise HTTPException(status_code=404, detail=f"app.js not found at {str(APP_JS)}")
+    return FileResponse(str(APP_JS))
 
-        const wrap = document.createElement("div");
-        wrap.style.marginTop = "8px";
-        wrap.appendChild(btn);
-        wrap.appendChild(del);
-        chatSavedList.appendChild(wrap);
-      });
-    }
 
-    // initial
-    renderSession();
-    renderSavedList();
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def serve_manifest():
+    if not MANIFEST.exists():
+        raise HTTPException(status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}")
+    return FileResponse(str(MANIFEST))
 
-    chatForm.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const msg = (chatInput.value || "").trim();
-      if (!msg) return;
 
-      chatInput.value = "";
-      addBubble("user", msg);
+@app.get("/service-worker.js", include_in_schema=False)
+def serve_service_worker():
+    if not SERVICE_WORKER.exists():
+        raise HTTPException(status_code=404, detail=f"service-worker.js not found at {str(SERVICE_WORKER)}")
+    return FileResponse(str(SERVICE_WORKER))
 
-      const session = getSession();
-      session.push({ role: "user", text: msg });
-      setSession(session);
 
-      const lang = (chatLangSelect?.value || "auto").trim();
+@app.get("/icons/{icon_name}", include_in_schema=False)
+def serve_icons(icon_name: str):
+    p = _safe_path_under(ICONS_DIR, icon_name)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Icon not found")
+    return FileResponse(str(p))
 
-      try {
-        const data = await apiPost("/chat", { message: msg, lang });
-        const reply = data?.reply || "—";
-        addBubble("bot", reply);
 
-        const next = getSession();
-        next.push({ role: "bot", text: reply });
-        setSession(next);
-      } catch (err) {
-        addBubble("system", `Error: ${String(err?.message || err)}`);
-      }
-    });
+# -----------------------------
+# Catch-all fallback (SPA)
+# -----------------------------
+@app.get("/{path:path}", include_in_schema=False)
+def serve_frontend_fallback(path: str):
+    blocked_prefixes = ("bible", "me", "chat", "devotional", "daily_prayer", "stripe")
 
-    if (chatNewBtn) {
-      chatNewBtn.addEventListener("click", () => {
-        setSession([]);
-        renderSession();
-      });
-    }
+    first_segment = (path.split("/", 1)[0] or "").strip().lower()
+    if first_segment in blocked_prefixes:
+        raise HTTPException(status_code=404, detail="Not Found")
 
-    if (chatSaveBtn) {
-      chatSaveBtn.addEventListener("click", () => {
-        const items = getSession();
-        if (!items.length) return;
+    candidate = _safe_path_under(FRONTEND_DIR, path)
+    if candidate.exists() and candidate.is_file():
+        return FileResponse(str(candidate))
 
-        const title = `Chat • ${new Date().toLocaleString()}`;
-        const saves = loadSaves();
-        saves.unshift({ title, items });
-        saveSaves(saves);
-        renderSavedList();
-        addBubble("system", "Saved.");
-      });
-    }
-  }
+    if INDEX_HTML.exists():
+        return FileResponse(str(INDEX_HTML))
 
-  // -----------------------
-  // Bible Reader
-  // -----------------------
-  async function initBible() {
-    const bibleDbStatus = $("bibleDbStatus");
-    const bookSelect = $("bookSelect");
-    const chapterSelect = $("chapterSelect");
-    const verseStartSelect = $("verseStartSelect");
-    const verseEndSelect = $("verseEndSelect");
-    const fullChapter = $("fullChapter");
-    const readBibleBtn = $("readBibleBtn");
-    const passageRef = $("passageRef");
-    const passageText = $("passageText");
-    const readingVoice = $("readingVoice");
+    raise HTTPException(status_code=404, detail="Not Found")
 
-    if (!bookSelect || !chapterSelect || !verseStartSelect || !readBibleBtn) return;
-
-    // Use Spanish DB if voice is Spanish
-    function versionForVoice() {
-      const v = (readingVoice?.value || "en").toLowerCase();
-      return v === "es" ? "es" : "en_default";
-    }
-
-    async function refreshStatusAndBooks() {
-      const version = versionForVoice();
-      try {
-        const st = await apiGet(`/bible/status?version=${encodeURIComponent(version)}`);
-        if (bibleDbStatus) {
-          bibleDbStatus.textContent = `OK • ${st.version} • verses: ${st.verse_count}`;
-        }
-      } catch (e) {
-        if (bibleDbStatus) bibleDbStatus.textContent = `Error: ${String(e?.message || e)}`;
-      }
-
-      try {
-        const data = await apiGet(`/bible/books?version=${encodeURIComponent(version)}`);
-        const books = data?.books || [];
-        bookSelect.innerHTML = `<option value="">Select…</option>`;
-        books.forEach((b) => {
-          const opt = document.createElement("option");
-          opt.value = String(b.id);
-          opt.textContent = String(b.name);
-          bookSelect.appendChild(opt);
-        });
-      } catch (e) {
-        bookSelect.innerHTML = `<option value="">(Error loading books)</option>`;
-      }
-    }
-
-    async function refreshChapters() {
-      const version = versionForVoice();
-      const bid = Number(bookSelect.value || 0);
-      chapterSelect.innerHTML = `<option value="">—</option>`;
-      verseStartSelect.innerHTML = `<option value="">—</option>`;
-      verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
-      if (!bid) return;
-
-      const data = await apiGet(`/bible/chapters?version=${encodeURIComponent(version)}&book_id=${bid}`);
-      const chapters = data?.chapters || [];
-      chapterSelect.innerHTML = `<option value="">Select…</option>`;
-      chapters.forEach((c) => {
-        const opt = document.createElement("option");
-        opt.value = String(c);
-        opt.textContent = String(c);
-        chapterSelect.appendChild(opt);
-      });
-    }
-
-    async function refreshVerses() {
-      const version = versionForVoice();
-      const bid = Number(bookSelect.value || 0);
-      const ch = Number(chapterSelect.value || 0);
-      verseStartSelect.innerHTML = `<option value="">—</option>`;
-      verseEndSelect.innerHTML = `<option value="">(optional)</option>`;
-      if (!bid || !ch) return;
-
-      const data = await apiGet(`/bible/verses_max?version=${encodeURIComponent(version)}&book_id=${bid}&chapter=${ch}`);
-      const max = Number(data?.max_verse || 0);
-      if (!max) return;
-
-      verseStartSelect.innerHTML = `<option value="">1</option>`;
-      for (let i = 1; i <= max; i++) {
-        const o1 = document.createElement("option");
-        o1.value = String(i);
-        o1.textContent = String(i);
-        verseStartSelect.appendChild(o1);
-
-        const o2 = document.createElement("option");
-        o2.value = String(i);
-        o2.textContent = String(i);
-        verseEndSelect.appendChild(o2);
-      }
-    }
-
-    async function readPassage() {
-      const version = versionForVoice();
-      const bid = Number(bookSelect.value || 0);
-      const ch = Number(chapterSelect.value || 0);
-      const vs = verseStartSelect.value ? Number(verseStartSelect.value) : null;
-      const ve = verseEndSelect.value ? Number(verseEndSelect.value) : null;
-      const whole = !!fullChapter?.checked;
-
-      if (!bid || !ch) return;
-
-      const params = new URLSearchParams();
-      params.set("version", version);
-      params.set("book_id", String(bid));
-      params.set("chapter", String(ch));
-      if (whole) params.set("whole_chapter", "true");
-      if (!whole && vs) params.set("verse_start", String(vs));
-      if (!whole && ve) params.set("verse_end", String(ve));
-
-      const data = await apiGet(`/bible/text?${params.toString()}`);
-      setText("passageRef", `${data.book} ${data.chapter}`);
-      setText("passageText", data.text || "—");
-    }
-
-    if (readingVoice) {
-      readingVoice.addEventListener("change", async () => {
-        await refreshStatusAndBooks();
-      });
-    }
-
-    bookSelect.addEventListener("change", refreshChapters);
-    chapterSelect.addEventListener("change", refreshVerses);
-    readBibleBtn.addEventListener("click", readPassage);
-
-    await refreshStatusAndBooks();
-  }
-
-  // -----------------------
-  // Devotional + Daily Prayer (THE FIX)
-  // -----------------------
-  function initDevAndPrayer() {
-    const devotionalBtn = $("devotionalBtn");
-    const prayerBtn = $("prayerBtn");
-
-    const devSaveBtn = $("devSaveBtn");
-    const prSaveBtn = $("prSaveBtn");
-
-    const { getDev, getPr } = detectLangForDevPrayer();
-
-    async function generateDevotional() {
-      // language comes from devUiLang if present, else uiLangSelect
-      const lang = (getDev() || "en").toLowerCase() === "es" ? "es" : "en";
-
-      // show immediate feedback
-      setText("devTheme", "Loading…");
-      setText("devScriptureRef", "Loading…");
-      setText("devScriptureText", "Loading…");
-      setText("devStarterContext", "Loading…");
-      setText("devStarterReflection", "Loading…");
-      setText("devStarterApplication", "Loading…");
-      setText("devStarterPrayer", "Loading…");
-
-      const data = await apiGet(`/devotional?lang=${encodeURIComponent(lang)}`);
-
-      // IMPORTANT: these are the fields returned by the updated backend
-      setText("devTheme", data.theme);
-      setText("devScriptureRef", data.scripture_ref);
-      setText("devScriptureText", data.scripture_text);
-      setText("devStarterContext", data.starter_context);
-      setText("devStarterReflection", data.starter_reflection);
-      setText("devStarterApplication", data.starter_application);
-      setText("devStarterPrayer", data.starter_prayer);
-    }
-
-    async function generateDailyPrayer() {
-      // language comes from prUiLang if present, else uiLangSelect
-      const lang = (getPr() || "en").toLowerCase() === "es" ? "es" : "en";
-
-      setText("pA", "Loading…");
-      setText("pC", "Loading…");
-      setText("pT", "Loading…");
-      setText("pS", "Loading…");
-
-      const data = await apiGet(`/daily_prayer?lang=${encodeURIComponent(lang)}`);
-
-      // IMPORTANT: these are the fields returned by the updated backend
-      setText("pA", data.adoration);
-      setText("pC", data.confession);
-      setText("pT", data.thanksgiving);
-      setText("pS", data.supplication);
-    }
-
-    if (devotionalBtn) {
-      devotionalBtn.addEventListener("click", async () => {
-        try {
-          await generateDevotional();
-        } catch (e) {
-          setText("devTheme", `Error: ${String(e?.message || e)}`);
-        }
-      });
-    }
-
-    if (prayerBtn) {
-      prayerBtn.addEventListener("click", async () => {
-        try {
-          await generateDailyPrayer();
-        } catch (e) {
-          setText("pA", `Error: ${String(e?.message || e)}`);
-        }
-      });
-    }
-
-    // Local saves (optional but keeps your UI working)
-    if (devSaveBtn) {
-      devSaveBtn.addEventListener("click", () => {
-        try {
-          const key = "alyana_devotionals_v1";
-          const list = JSON.parse(localStorage.getItem(key) || "[]");
-          const item = {
-            ts: Date.now(),
-            lang: (getDev() || "en"),
-            theme: $("devTheme")?.textContent || "",
-            scripture_ref: $("devScriptureRef")?.textContent || "",
-            scripture_text: $("devScriptureText")?.textContent || "",
-            starter_context: $("devStarterContext")?.textContent || "",
-            starter_reflection: $("devStarterReflection")?.textContent || "",
-            starter_application: $("devStarterApplication")?.textContent || "",
-            starter_prayer: $("devStarterPrayer")?.textContent || "",
-            my_context: $("devMyContext")?.value || "",
-            my_reflection: $("devMyReflection")?.value || "",
-            my_application: $("devMyApplication")?.value || "",
-            my_prayer: $("devMyPrayer")?.value || "",
-            my_notes: $("devMyNotes")?.value || "",
-          };
-          list.unshift(item);
-          localStorage.setItem(key, JSON.stringify(list));
-        } catch {}
-      });
-    }
-
-    if (prSaveBtn) {
-      prSaveBtn.addEventListener("click", () => {
-        try {
-          const key = "alyana_prayers_v1";
-          const list = JSON.parse(localStorage.getItem(key) || "[]");
-          const item = {
-            ts: Date.now(),
-            lang: (getPr() || "en"),
-            adoration: $("pA")?.textContent || "",
-            confession: $("pC")?.textContent || "",
-            thanksgiving: $("pT")?.textContent || "",
-            supplication: $("pS")?.textContent || "",
-            my_adoration: $("myAdoration")?.value || "",
-            my_confession: $("myConfession")?.value || "",
-            my_thanksgiving: $("myThanksgiving")?.value || "",
-            my_supplication: $("mySupplication")?.value || "",
-            notes: $("prayerNotes")?.value || "",
-          };
-          list.unshift(item);
-          localStorage.setItem(key, JSON.stringify(list));
-        } catch {}
-      });
-    }
-  }
-
-  // -----------------------
-  // Boot
-  // -----------------------
-  async function boot() {
-    setJsReady();
-    initTabs();
-    initStripeButtons();
-    initChat();
-    initDevAndPrayer();
-    await initBible();
-    await refreshMe();
-
-    // If you came back from Stripe with success/canceled, show hint
-    const authHint = $("authHint");
-    const url = new URL(window.location.href);
-    if (authHint && (url.searchParams.get("success") || url.searchParams.get("canceled"))) {
-      authHint.textContent = url.searchParams.get("success")
-        ? "Thank you. If you subscribed, tap Restore access to link your email, then Manage billing will work."
-        : "Checkout canceled.";
-      show(authHint, true);
-    }
-  }
-
-  window.addEventListener("load", boot);
-})();
