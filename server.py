@@ -1,4 +1,3 @@
-# server.py
 from pathlib import Path
 import time
 import traceback
@@ -7,10 +6,8 @@ import json
 import base64
 import hmac
 import hashlib
-import re
-from typing import Dict, Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -26,7 +23,6 @@ try:
 except Exception:
     stripe = None
 
-
 # -----------------------------
 # Paths
 # -----------------------------
@@ -39,7 +35,6 @@ APP_JS = FRONTEND_DIR / "app.js"
 MANIFEST = FRONTEND_DIR / "manifest.webmanifest"
 SERVICE_WORKER = FRONTEND_DIR / "service-worker.js"
 
-
 # -----------------------------
 # Env
 # -----------------------------
@@ -49,12 +44,10 @@ STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()  # used for signed session tokens
 
-# ✅ 7-day trial length (override in Render if you want)
 TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "7")
 
 if STRIPE_SECRET_KEY and stripe:
     stripe.api_key = STRIPE_SECRET_KEY
-
 
 # -----------------------------
 # App
@@ -69,7 +62,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # -----------------------------
 # Simple in-memory chat memory
@@ -208,7 +200,6 @@ def _stripe_customer_by_email(email: str):
     return customers.data[0]
 
 
-# ✅ IMPORTANT: treat trialing as subscribed too
 def _stripe_has_active_or_trialing_subscription(customer_id: str) -> bool:
     _require_stripe_ready()
     if not customer_id:
@@ -223,54 +214,6 @@ def _stripe_has_active_or_trialing_subscription(customer_id: str) -> bool:
         if st in ("active", "trialing"):
             return True
     return False
-
-
-def _norm_lang(lang: Optional[str]) -> str:
-    v = (lang or "en").strip().lower()
-    if v not in ("en", "es"):
-        v = "en"
-    return v
-
-
-def _parse_labeled(text: str, labels: list[str]) -> Dict[str, str]:
-    """
-    Parse blocks like:
-      THEME: ...
-      SCRIPTURE_REF: ...
-    Supports multi-line values until next LABEL:
-    """
-    if not text:
-        return {}
-
-    # Build regex like: ^(LABEL1|LABEL2|...):\s*
-    label_alt = "|".join(re.escape(x) for x in labels)
-    pat = re.compile(rf"^(?P<label>{label_alt})\s*:\s*(?P<val>.*)$", re.IGNORECASE)
-
-    out: Dict[str, str] = {}
-    cur_label: Optional[str] = None
-    cur_lines: list[str] = []
-
-    def flush():
-        nonlocal cur_label, cur_lines
-        if cur_label:
-            out[cur_label] = ("\n".join(cur_lines).strip() if cur_lines else "").strip()
-        cur_label = None
-        cur_lines = []
-
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        m = pat.match(line.strip())
-        if m:
-            flush()
-            cur_label = m.group("label").upper()
-            first_val = (m.group("val") or "").strip()
-            cur_lines = [first_val] if first_val else []
-        else:
-            if cur_label is not None:
-                cur_lines.append(line)
-
-    flush()
-    return out
 
 
 # -----------------------------
@@ -307,139 +250,13 @@ def me(req: Request):
 
 
 @app.get("/devotional")
-def devotional(lang: str = Query(default="en")):
-    """
-    Returns structured devotional starter content.
-    Frontend expects:
-      theme, scripture_ref, scripture_text,
-      starter_context, starter_reflection, starter_application, starter_prayer
-    """
-    l = _norm_lang(lang)
-
-    prompt_en = (
-        "Create a SHORT devotional starter.\n"
-        "Return EXACTLY these labels, each on its own line, values may be multi-line:\n"
-        "THEME:\n"
-        "SCRIPTURE_REF:\n"
-        "SCRIPTURE_TEXT:\n"
-        "CONTEXT:\n"
-        "REFLECTION:\n"
-        "APPLICATION:\n"
-        "PRAYER:\n"
-        "Keep it gentle and encouraging. Use 1 Bible reference."
-    )
-    prompt_es = (
-        "Crea un devocional CORTO (ejemplo inicial).\n"
-        "Devuelve EXACTAMENTE estas etiquetas, cada una en su propia línea; los valores pueden tener varias líneas:\n"
-        "THEME:\n"
-        "SCRIPTURE_REF:\n"
-        "SCRIPTURE_TEXT:\n"
-        "CONTEXT:\n"
-        "REFLECTION:\n"
-        "APPLICATION:\n"
-        "PRAYER:\n"
-        "Escribe TODO en español y usa 1 referencia bíblica."
-    )
-
-    try:
-        raw = run_bible_ai(prompt_es if l == "es" else prompt_en, lang=l, history=None)
-
-        parts = _parse_labeled(
-            raw,
-            labels=[
-                "THEME",
-                "SCRIPTURE_REF",
-                "SCRIPTURE_TEXT",
-                "CONTEXT",
-                "REFLECTION",
-                "APPLICATION",
-                "PRAYER",
-            ],
-        )
-
-        # Fallbacks if model misses something
-        theme = parts.get("THEME", "").strip() or ("—")
-        scripture_ref = parts.get("SCRIPTURE_REF", "").strip() or ("—")
-        scripture_text = parts.get("SCRIPTURE_TEXT", "").strip() or ("—")
-        starter_context = parts.get("CONTEXT", "").strip() or ("—")
-        starter_reflection = parts.get("REFLECTION", "").strip() or ("—")
-        starter_application = parts.get("APPLICATION", "").strip() or ("—")
-        starter_prayer = parts.get("PRAYER", "").strip() or ("—")
-
-        return {
-            "ok": True,
-            "lang": l,
-            "theme": theme,
-            "scripture_ref": scripture_ref,
-            "scripture_text": scripture_text,
-            "starter_context": starter_context,
-            "starter_reflection": starter_reflection,
-            "starter_application": starter_application,
-            "starter_prayer": starter_prayer,
-            "raw": raw,  # helpful for debugging; frontend can ignore
-        }
-
-    except Exception as e:
-        print("ERROR in /devotional:", repr(e))
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Devotional generation failed. Check logs / API key.")
+def devotional():
+    return {"ok": True, "devotional": "Coming soon."}
 
 
 @app.get("/daily_prayer")
-def daily_prayer(lang: str = Query(default="en")):
-    """
-    Returns structured ACTS prayer starter content.
-    Frontend expects:
-      adoration, confession, thanksgiving, supplication
-    """
-    l = _norm_lang(lang)
-
-    prompt_en = (
-        "Create a SHORT daily prayer starter in the ACTS format.\n"
-        "Return EXACTLY these labels, each on its own line; values may be multi-line:\n"
-        "ADORATION:\n"
-        "CONFESSION:\n"
-        "THANKSGIVING:\n"
-        "SUPPLICATION:\n"
-        "Keep it gentle and encouraging."
-    )
-    prompt_es = (
-        "Crea una oración diaria CORTA en formato ACTS.\n"
-        "Devuelve EXACTAMENTE estas etiquetas, cada una en su propia línea; los valores pueden tener varias líneas:\n"
-        "ADORATION:\n"
-        "CONFESSION:\n"
-        "THANKSGIVING:\n"
-        "SUPPLICATION:\n"
-        "Escribe TODO en español, con un tono tierno y alentador."
-    )
-
-    try:
-        raw = run_bible_ai(prompt_es if l == "es" else prompt_en, lang=l, history=None)
-
-        parts = _parse_labeled(
-            raw,
-            labels=["ADORATION", "CONFESSION", "THANKSGIVING", "SUPPLICATION"],
-        )
-
-        adoration = parts.get("ADORATION", "").strip() or ("—")
-        confession = parts.get("CONFESSION", "").strip() or ("—")
-        thanksgiving = parts.get("THANKSGIVING", "").strip() or ("—")
-        supplication = parts.get("SUPPLICATION", "").strip() or ("—")
-
-        return {
-            "ok": True,
-            "lang": l,
-            "adoration": adoration,
-            "confession": confession,
-            "thanksgiving": thanksgiving,
-            "supplication": supplication,
-            "raw": raw,  # helpful for debugging; frontend can ignore
-        }
-
-    except Exception as e:
-        print("ERROR in /daily_prayer:", repr(e))
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Daily prayer generation failed. Check logs / API key.")
+def daily_prayer():
+    return {"ok": True, "prayer": "Coming soon."}
 
 
 @app.post("/chat")
@@ -532,7 +349,9 @@ async def stripe_restore(req: Request):
         if not cust:
             raise HTTPException(status_code=404, detail="No Stripe customer found for that email.")
 
-        token = _sign_token({"iat": int(time.time()), "email": email, "customer_id": cust.id})
+        token = _sign_token(
+            {"iat": int(time.time()), "email": email, "customer_id": cust.id}
+        )
 
         subscribed = False
         try:
@@ -592,7 +411,9 @@ async def stripe_webhook(req: Request):
     sig = req.headers.get("stripe-signature") or ""
 
     try:
-        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig, secret=STRIPE_WEBHOOK_SECRET)
+        event = stripe.Webhook.construct_event(
+            payload=payload, sig_header=sig, secret=STRIPE_WEBHOOK_SECRET
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid webhook: {repr(e)}")
 
@@ -649,7 +470,6 @@ def serve_icons(icon_name: str):
 @app.get("/{path:path}", include_in_schema=False)
 def serve_frontend_fallback(path: str):
     blocked_prefixes = ("bible", "me", "chat", "devotional", "daily_prayer", "stripe")
-
     first_segment = (path.split("/", 1)[0] or "").strip().lower()
     if first_segment in blocked_prefixes:
         raise HTTPException(status_code=404, detail="Not Found")
@@ -662,4 +482,5 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
