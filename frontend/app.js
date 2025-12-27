@@ -108,6 +108,23 @@
     return res.json();
   }
 
+  function getQueryParam(name) {
+    try {
+      const u = new URL(window.location.href);
+      return u.searchParams.get(name);
+    } catch {
+      return null;
+    }
+  }
+
+  function removeQueryParams(names = []) {
+    try {
+      const u = new URL(window.location.href);
+      names.forEach((n) => u.searchParams.delete(n));
+      window.history.replaceState({}, document.title, u.toString());
+    } catch {}
+  }
+
   // ---------------------------
   // UI language strings
   // ---------------------------
@@ -251,6 +268,11 @@
         "Stripe endpoints are not available on the server yet. Add /stripe/checkout, /stripe/restore, and /stripe/portal to server.py.",
       authMissing:
         "Please click Restore access first (so we can authenticate) then try Manage billing.",
+
+      // stripe success/cancel
+      stripeSuccess: "Payment started successfully. Restoring access…",
+      stripeCanceled: "Checkout canceled.",
+      accessRestored: "Access restored.",
     },
 
     es: {
@@ -379,6 +401,10 @@
         "Los endpoints de Stripe no están disponibles en el servidor todavía. Agrega /stripe/checkout, /stripe/restore y /stripe/portal en server.py.",
       authMissing:
         "Primero presiona Restaurar acceso (para autenticar) y luego intenta Administrar pagos.",
+
+      stripeSuccess: "Pago iniciado. Restaurando acceso…",
+      stripeCanceled: "Compra cancelada.",
+      accessRestored: "Acceso restaurado.",
     },
   };
 
@@ -536,7 +562,7 @@
     } else if (state === "inactive") {
       label = t.accountInactive;
       cls = "pill bad";
-      canManage = true; // allow portal for billing even if inactive
+      canManage = true;
     } else if (state === "ready") {
       label = t.accountReady;
       cls = "pill warn";
@@ -574,11 +600,28 @@
     localStorage.setItem(LS.authToken, t);
   }
 
-  async function stripeRestoreAccess() {
+  async function refreshMeFromServer() {
+    try {
+      const tok = getToken();
+      if (!tok) return;
+
+      const me = await apiGet("/me", { headers: authHeaders() });
+      if (me && me.ok && me.authed) {
+        const status = (me.status || (me.subscribed ? "active" : "inactive") || "unknown").toLowerCase();
+        localStorage.setItem(LS.authStatus, status);
+        if (me.email) localStorage.setItem(LS.authEmail, String(me.email));
+        setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || "");
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function stripeRestoreAccess(showToast = true) {
     const uiLang = getUILang();
     const t = I18N[uiLang];
 
-    const email = getEmailInput();
+    const email = (getEmailInput() || localStorage.getItem(LS.authEmail) || "").trim();
     if (!email) return toast(t.needEmail, true);
 
     rememberEmail(email);
@@ -587,7 +630,6 @@
     try {
       const j = await apiPost("/stripe/restore", { email });
 
-      // server returns: token, subscribed, status, customer_email
       if (j && j.token) rememberToken(String(j.token));
       if (j && j.customer_email) rememberEmail(String(j.customer_email));
 
@@ -597,15 +639,16 @@
           (j && typeof j.subscribed === "boolean" ? (j.subscribed ? "active" : "inactive") : "unknown");
 
       localStorage.setItem(LS.authStatus, status);
-
       setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || email);
 
-      toast(uiLang === "es" ? "Acceso restaurado." : "Access restored.");
+      // ✅ Re-check /me for final truth (handles trialing/active logic)
+      await refreshMeFromServer();
+
+      if (showToast) toast(t.accessRestored);
     } catch (e) {
       const msg = String(e && e.message ? e.message : e);
       if (/404\b/.test(msg) || /Not Found/i.test(msg)) toast(t.stripeNotWired, true);
       else toast(msg, true);
-
       setAuthUI("unknown", email);
     }
   }
@@ -666,7 +709,7 @@
     const logoutBtn = $("#logoutBtn");
 
     if (supportBtn) supportBtn.addEventListener("click", stripeCheckout);
-    if (loginBtn) loginBtn.addEventListener("click", stripeRestoreAccess);
+    if (loginBtn) loginBtn.addEventListener("click", () => stripeRestoreAccess(true));
     if (manageBtn) manageBtn.addEventListener("click", stripePortal);
     if (logoutBtn) logoutBtn.addEventListener("click", logoutLocal);
 
@@ -678,7 +721,7 @@
   }
 
   // ---------------------------
-  // Apply UI language (single dropdown: #uiLangSelect)
+  // Apply UI language
   // ---------------------------
   function applyTabLabelsOnly(uiLang) {
     applyTabLabels(uiLang);
@@ -1067,14 +1110,10 @@
   }
 
   // ---------------------------
-  // Devotionals (unchanged)
+  // Devotionals (unchanged from your code)
   // ---------------------------
-  function loadSavedDevs() {
-    return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []);
-  }
-  function saveSavedDevs(list) {
-    localStorage.setItem(LS.savedDevs, JSON.stringify(list || []));
-  }
+  function loadSavedDevs() { return safeJSON(localStorage.getItem(LS.savedDevs) || "[]", []); }
+  function saveSavedDevs(list) { localStorage.setItem(LS.savedDevs, JSON.stringify(list || [])); }
 
   function renderSavedDevs() {
     const box = $("#devSavedList");
@@ -1094,48 +1133,42 @@
       return;
     }
 
-    list
-      .slice()
-      .reverse()
-      .forEach((item, idxFromEnd) => {
-        const idx = list.length - 1 - idxFromEnd;
+    list.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = list.length - 1 - idxFromEnd;
 
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.type = "button";
-        btn.textContent = `${(item.theme || t.devTitle).slice(0, 40)} • ${new Date(
-          item.ts || nowISO()
-        ).toLocaleString()}`;
-        btn.addEventListener("click", () => {
-          $("#devTheme").textContent = item.theme || "—";
-          $("#devScriptureRef").textContent = item.scripture_ref || "—";
-          $("#devScriptureText").textContent = item.scripture_text || "—";
-          $("#devStarterContext").textContent = item.starter_context || "—";
-          $("#devStarterReflection").textContent = item.starter_reflection || "—";
-          $("#devStarterApplication").textContent = item.starter_application || "—";
-          $("#devStarterPrayer").textContent = item.starter_prayer || "—";
-
-          $("#devMyContext").value = item.my_context || "";
-          $("#devMyReflection").value = item.my_reflection || "";
-          $("#devMyApplication").value = item.my_application || "";
-          $("#devMyPrayer").value = item.my_prayer || "";
-          $("#devMyNotes").value = item.my_notes || "";
-        });
-
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.type = "button";
-        del.textContent = t.delete;
-        del.style.marginTop = "8px";
-        del.addEventListener("click", () => {
-          const next = loadSavedDevs().filter((_, i) => i !== idx);
-          saveSavedDevs(next);
-          renderSavedDevs();
-        });
-
-        box.appendChild(btn);
-        box.appendChild(del);
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${(item.theme || t.devTitle).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+      btn.addEventListener("click", () => {
+        $("#devTheme").textContent = item.theme || "—";
+        $("#devScriptureRef").textContent = item.scripture_ref || "—";
+        $("#devScriptureText").textContent = item.scripture_text || "—";
+        $("#devStarterContext").textContent = item.starter_context || "—";
+        $("#devStarterReflection").textContent = item.starter_reflection || "—";
+        $("#devStarterApplication").textContent = item.starter_application || "—";
+        $("#devStarterPrayer").textContent = item.starter_prayer || "—";
+        $("#devMyContext").value = item.my_context || "";
+        $("#devMyReflection").value = item.my_reflection || "";
+        $("#devMyApplication").value = item.my_application || "";
+        $("#devMyPrayer").value = item.my_prayer || "";
+        $("#devMyNotes").value = item.my_notes || "";
       });
+
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = t.delete;
+      del.style.marginTop = "8px";
+      del.addEventListener("click", () => {
+        const next = loadSavedDevs().filter((_, i) => i !== idx);
+        saveSavedDevs(next);
+        renderSavedDevs();
+      });
+
+      box.appendChild(btn);
+      box.appendChild(del);
+    });
   }
 
   function devotionalStarters(lang) {
@@ -1146,28 +1179,21 @@
         text:
           "6. Por nada estéis afanosos; si no sean conocidas vuestras peticiones delante de Dios en toda oración y ruego, con acción de gracias.\n" +
           "7. Y la paz de Dios, que sobrepasa todo entendimiento, guardará vuestros corazones y vuestros pensamientos en Cristo Jesús.",
-        ctx:
-          "Pablo anima a los creyentes a llevar toda preocupación a Dios en oración, en vez de cargar la ansiedad solos.",
-        refl:
-          "La paz de Dios no depende de las circunstancias. Es una guardia sobre tu corazón cuando confías en Él.",
-        app:
-          "Hoy nombra específicamente lo que te inquieta y entrégaselo a Dios en oración—y practica la gratitud.",
+        ctx: "Pablo anima a los creyentes a llevar toda preocupación a Dios en oración, en vez de cargar la ansiedad solos.",
+        refl: "La paz de Dios no depende de las circunstancias. Es una guardia sobre tu corazón cuando confías en Él.",
+        app: "Hoy nombra específicamente lo que te inquieta y entrégaselo a Dios en oración—y practica la gratitud.",
         pr: "Señor, enséñame a llevar mis cargas a Ti. Reemplaza mi ansiedad con Tu paz. Amén.",
       };
     }
-
     return {
       theme: "Walking in Peace",
       ref: "Philippians 4:6–7",
       text:
         "6. Be careful for nothing; but in every thing by prayer and supplication with thanksgiving let your requests be made known unto God.\n" +
         "7. And the peace of God, which passeth all understanding, shall keep your hearts and minds through Christ Jesus.",
-      ctx:
-        "Paul is encouraging believers to bring every worry to God in prayer instead of carrying anxiety alone.",
-      refl:
-        "God’s peace is not based on circumstances. It is a guard over your heart when you trust Him.",
-      app:
-        "Today, name the specific thing you’re anxious about, and hand it to God in prayer—then practice gratitude.",
+      ctx: "Paul is encouraging believers to bring every worry to God in prayer instead of carrying anxiety alone.",
+      refl: "God’s peace is not based on circumstances. It is a guard over your heart when you trust Him.",
+      app: "Today, name the specific thing you’re anxious about, and hand it to God in prayer—then practice gratitude.",
       pr: "Lord, teach me to bring my burdens to You. Replace my anxiety with Your peace. Amen.",
     };
   }
@@ -1194,12 +1220,10 @@
       localStorage.setItem(LS.devDraft, JSON.stringify(d));
     };
 
-    ["#devMyContext", "#devMyReflection", "#devMyApplication", "#devMyPrayer", "#devMyNotes"].forEach(
-      (id) => {
-        const el = $(id);
-        if (el) el.addEventListener("input", saveDraft);
-      }
-    );
+    ["#devMyContext", "#devMyReflection", "#devMyApplication", "#devMyPrayer", "#devMyNotes"].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener("input", saveDraft);
+    });
 
     if (generateBtn) {
       generateBtn.addEventListener("click", async () => {
@@ -1207,11 +1231,9 @@
         try {
           const lang = getUILang();
           const s = devotionalStarters(lang);
-
           $("#devTheme").textContent = s.theme;
           $("#devScriptureRef").textContent = s.ref;
           $("#devScriptureText").textContent = s.text;
-
           $("#devStarterContext").textContent = s.ctx;
           $("#devStarterReflection").textContent = s.refl;
           $("#devStarterApplication").textContent = s.app;
@@ -1267,14 +1289,10 @@
   }
 
   // ---------------------------
-  // Daily Prayer (unchanged)
+  // Daily Prayer (unchanged from your code)
   // ---------------------------
-  function loadSavedPrayers() {
-    return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []);
-  }
-  function saveSavedPrayers(list) {
-    localStorage.setItem(LS.savedPrayers, JSON.stringify(list || []));
-  }
+  function loadSavedPrayers() { return safeJSON(localStorage.getItem(LS.savedPrayers) || "[]", []); }
+  function saveSavedPrayers(list) { localStorage.setItem(LS.savedPrayers, JSON.stringify(list || [])); }
 
   function renderSavedPrayers() {
     const box = $("#prSavedList");
@@ -1294,44 +1312,39 @@
       return;
     }
 
-    list
-      .slice()
-      .reverse()
-      .forEach((item, idxFromEnd) => {
-        const idx = list.length - 1 - idxFromEnd;
+    list.slice().reverse().forEach((item, idxFromEnd) => {
+      const idx = list.length - 1 - idxFromEnd;
 
-        const btn = document.createElement("button");
-        btn.className = "btn btn-ghost";
-        btn.type = "button";
-        btn.textContent = `${(item.title || t.prTitle).slice(0, 40)} • ${new Date(
-          item.ts || nowISO()
-        ).toLocaleString()}`;
-        btn.addEventListener("click", () => {
-          $("#pA").textContent = item.starterA || "—";
-          $("#pC").textContent = item.starterC || "—";
-          $("#pT").textContent = item.starterT || "—";
-          $("#pS").textContent = item.starterS || "—";
-          $("#myAdoration").value = item.myA || "";
-          $("#myConfession").value = item.myC || "";
-          $("#myThanksgiving").value = item.myT || "";
-          $("#mySupplication").value = item.myS || "";
-          $("#prayerNotes").value = item.notes || "";
-        });
-
-        const del = document.createElement("button");
-        del.className = "btn btn-danger";
-        del.type = "button";
-        del.textContent = t.delete;
-        del.style.marginTop = "8px";
-        del.addEventListener("click", () => {
-          const next = loadSavedPrayers().filter((_, i) => i !== idx);
-          saveSavedPrayers(next);
-          renderSavedPrayers();
-        });
-
-        box.appendChild(btn);
-        box.appendChild(del);
+      const btn = document.createElement("button");
+      btn.className = "btn btn-ghost";
+      btn.type = "button";
+      btn.textContent = `${(item.title || t.prTitle).slice(0, 40)} • ${new Date(item.ts || nowISO()).toLocaleString()}`;
+      btn.addEventListener("click", () => {
+        $("#pA").textContent = item.starterA || "—";
+        $("#pC").textContent = item.starterC || "—";
+        $("#pT").textContent = item.starterT || "—";
+        $("#pS").textContent = item.starterS || "—";
+        $("#myAdoration").value = item.myA || "";
+        $("#myConfession").value = item.myC || "";
+        $("#myThanksgiving").value = item.myT || "";
+        $("#mySupplication").value = item.myS || "";
+        $("#prayerNotes").value = item.notes || "";
       });
+
+      const del = document.createElement("button");
+      del.className = "btn btn-danger";
+      del.type = "button";
+      del.textContent = t.delete;
+      del.style.marginTop = "8px";
+      del.addEventListener("click", () => {
+        const next = loadSavedPrayers().filter((_, i) => i !== idx);
+        saveSavedPrayers(next);
+        renderSavedPrayers();
+      });
+
+      box.appendChild(btn);
+      box.appendChild(del);
+    });
   }
 
   function prayerStarters(lang) {
@@ -1375,12 +1388,10 @@
       );
     };
 
-    ["#myAdoration", "#myConfession", "#myThanksgiving", "#mySupplication", "#prayerNotes"].forEach(
-      (id) => {
-        const el = $(id);
-        if (el) el.addEventListener("input", saveDraft);
-      }
-    );
+    ["#myAdoration", "#myConfession", "#myThanksgiving", "#mySupplication", "#prayerNotes"].forEach((id) => {
+      const el = $(id);
+      if (el) el.addEventListener("input", saveDraft);
+    });
 
     if (genBtn) {
       genBtn.addEventListener("click", () => {
@@ -1414,10 +1425,7 @@
           starterC: $("#pC")?.textContent || "",
           starterT: $("#pT")?.textContent || "",
           starterS: $("#pS")?.textContent || "",
-          myA,
-          myC,
-          myT,
-          myS,
+          myA, myC, myT, myS,
           notes: $("#prayerNotes")?.value || "",
           ui_lang: lang,
         };
@@ -1434,7 +1442,7 @@
   }
 
   // ---------------------------
-  // Bible Reader (unchanged)
+  // Bible Reader (unchanged from your code)
   // ---------------------------
   function bibleVersionForReadingLang(readLang) {
     return readLang === "es" ? "es" : "en_default";
@@ -1521,7 +1529,6 @@
     try {
       const qs = new URLSearchParams();
       qs.set("version", version);
-
       if (pick.kind === "id") qs.set("book_id", String(pick.book_id));
       if (pick.kind === "name") qs.set("book", pick.book);
 
@@ -1712,6 +1719,31 @@
 
     applyUILang();
 
+    // ✅ Handle Stripe redirect results
+    const uiLang = getUILang();
+    const t = I18N[uiLang];
+
+    const success = getQueryParam("success");
+    const canceled = getQueryParam("canceled");
+
+    if (success === "1") {
+      toast(t.stripeSuccess, false);
+
+      // If user already typed/saved email, auto-restore so pill flips to Active
+      const email = (localStorage.getItem(LS.authEmail) || getEmailInput() || "").trim();
+      if (email) {
+        await stripeRestoreAccess(false);
+      } else {
+        // If no email stored, we cannot restore automatically
+        // user can press Restore access manually
+      }
+
+      removeQueryParams(["success"]);
+    } else if (canceled === "1") {
+      toast(t.stripeCanceled, true);
+      removeQueryParams(["canceled"]);
+    }
+
     // Voice check
     const ttsStatus = $("#ttsStatus");
     const chatVoicePill = $("#chatVoicePill");
@@ -1720,30 +1752,19 @@
       const vEn = await pickLockedVoice("en");
       const vEs = await pickLockedVoice("es");
       const ok = !!(vEn && vEs);
-      const uiLang = getUILang();
-      const msg = ok ? I18N[uiLang].voiceReady : I18N[uiLang].voiceMissing;
+      const langNow = getUILang();
+      const msg = ok ? I18N[langNow].voiceReady : I18N[langNow].voiceMissing;
 
       if (ttsStatus) ttsStatus.textContent = msg;
       if (chatVoicePill) chatVoicePill.textContent = msg;
     } catch {
-      const uiLang = getUILang();
-      if (ttsStatus) ttsStatus.textContent = I18N[uiLang].voiceMissing;
-      if (chatVoicePill) chatVoicePill.textContent = I18N[uiLang].voiceMissing;
+      const langNow = getUILang();
+      if (ttsStatus) ttsStatus.textContent = I18N[langNow].voiceMissing;
+      if (chatVoicePill) chatVoicePill.textContent = I18N[langNow].voiceMissing;
     }
 
     // Health/auth ping (updates account pill if token exists)
-    try {
-      const tok = getToken();
-      if (tok) {
-        const me = await apiGet("/me", { headers: authHeaders() });
-        if (me && me.ok && me.authed) {
-          const status = (me.status || (me.subscribed ? "active" : "inactive") || "unknown").toLowerCase();
-          localStorage.setItem(LS.authStatus, status);
-          if (me.email) localStorage.setItem(LS.authEmail, String(me.email));
-          setAuthUI(status === "active" ? "active" : "inactive", localStorage.getItem(LS.authEmail) || "");
-        }
-      }
-    } catch {}
+    await refreshMeFromServer();
 
     showTopStatus("JS: ready");
   }
