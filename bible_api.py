@@ -18,6 +18,7 @@ DB_MAP = {
     "en": "bible.db",
 }
 
+
 def _candidate_data_dirs() -> List[Path]:
     """
     Be robust on Render/local:
@@ -34,6 +35,7 @@ def _candidate_data_dirs() -> List[Path]:
         cwd / "data",
     ]
 
+
 def _data_dir() -> Path:
     # Choose the first existing data dir; otherwise default to "here/data"
     for d in _candidate_data_dirs():
@@ -41,9 +43,11 @@ def _data_dir() -> Path:
             return d
     return Path(__file__).resolve().parent / "data"
 
+
 def resolve_version(version: Optional[str]) -> str:
     v = (version or "en_default").strip()
     return v or "en_default"
+
 
 def resolve_db_path(version: Optional[str]) -> Path:
     v = resolve_version(version)
@@ -53,9 +57,8 @@ def resolve_db_path(version: Optional[str]) -> Path:
             status_code=400,
             detail=f"Unknown version '{v}'. Allowed: {sorted(DB_MAP.keys())}",
         )
+    return _data_dir() / filename
 
-    p = _data_dir() / filename
-    return p
 
 def open_db(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
@@ -67,13 +70,16 @@ def open_db(db_path: Path) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     return con
 
+
 def verse_count(con: sqlite3.Connection) -> int:
     row = con.execute("SELECT COUNT(*) AS c FROM verses").fetchone()
     return int(row["c"]) if row else 0
 
+
 def get_books(con: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = con.execute("SELECT id, name FROM books ORDER BY id").fetchall()
     return [{"id": int(r["id"]), "name": str(r["name"])} for r in rows]
+
 
 def get_book_id_by_name(con: sqlite3.Connection, book_name: str) -> Optional[int]:
     name = (book_name or "").strip()
@@ -96,6 +102,7 @@ def get_book_id_by_name(con: sqlite3.Connection, book_name: str) -> Optional[int
 
     return None
 
+
 def get_max_chapter(con: sqlite3.Connection, book_id: int) -> int:
     row = con.execute(
         "SELECT MAX(chapter) AS m FROM verses WHERE book_id=?",
@@ -104,6 +111,7 @@ def get_max_chapter(con: sqlite3.Connection, book_id: int) -> int:
     m = row["m"] if row else None
     return int(m) if m is not None else 0
 
+
 def get_max_verse(con: sqlite3.Connection, book_id: int, chapter: int) -> int:
     row = con.execute(
         "SELECT MAX(verse) AS m FROM verses WHERE book_id=? AND chapter=?",
@@ -111,6 +119,7 @@ def get_max_verse(con: sqlite3.Connection, book_id: int, chapter: int) -> int:
     ).fetchone()
     m = row["m"] if row else None
     return int(m) if m is not None else 0
+
 
 @router.get("/status")
 def bible_status(version: Optional[str] = Query(default="en_default")) -> Dict[str, Any]:
@@ -127,6 +136,7 @@ def bible_status(version: Optional[str] = Query(default="en_default")) -> Dict[s
     finally:
         con.close()
 
+
 @router.get("/books")
 def bible_books(version: Optional[str] = Query(default="en_default")) -> Dict[str, Any]:
     db_path = resolve_db_path(version)
@@ -136,6 +146,7 @@ def bible_books(version: Optional[str] = Query(default="en_default")) -> Dict[st
         return {"version": resolve_version(version), "books": books}
     finally:
         con.close()
+
 
 @router.get("/chapters")
 def bible_chapters(
@@ -164,6 +175,7 @@ def bible_chapters(
     finally:
         con.close()
 
+
 @router.get("/verses_max")
 def bible_verses_max(
     version: Optional[str] = Query(default="en_default"),
@@ -179,6 +191,7 @@ def bible_verses_max(
         return {"version": resolve_version(version), "book_id": int(book_id), "chapter": int(chapter), "max_verse": m}
     finally:
         con.close()
+
 
 @router.get("/text")
 def bible_text(
@@ -246,5 +259,6 @@ def bible_text(
         }
     finally:
         con.close()
+
 
 
