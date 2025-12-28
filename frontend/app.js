@@ -1,4 +1,4 @@
-
+// frontend/app.js
 (() => {
   "use strict";
 
@@ -64,7 +64,6 @@
 
   // ---------------------------
   // Spanish Bible book display names (UI only)
-  // NOTE: We keep <option value> as the backend id, and only swap the visible label.
   // ---------------------------
   const BOOK_NAME_ES = {
     "Genesis": "Génesis",
@@ -135,7 +134,10 @@
     "Revelation": "Apocalipsis"
   };
 
-  // Store the English book name on each <option> so we can re-render labels on UI language switch.
+  function getUILang() {
+    return normLang(localStorage.getItem(LS.uiLang) || "en", "en");
+  }
+
   function displayBookName(bookEn) {
     const ui = getUILang();
     if (ui === "es") return BOOK_NAME_ES[bookEn] || bookEn;
@@ -146,7 +148,6 @@
     const bookSel = $("#bookSelect");
     if (!bookSel) return;
     Array.from(bookSel.options).forEach((opt) => {
-      // Skip placeholder option
       if (!opt.value) return;
       const en = opt.dataset.enName || opt.textContent || "";
       if (en) opt.textContent = displayBookName(en);
@@ -334,10 +335,6 @@
     },
   };
 
-  function getUILang() {
-    return normLang(localStorage.getItem(LS.uiLang) || "en", "en");
-  }
-
   function applyUILang() {
     const ui = getUILang();
     const t = I18N[ui];
@@ -443,84 +440,10 @@
     if (passageListenBtn) passageListenBtn.textContent = t.listen;
     if (passageStopBtn) passageStopBtn.textContent = t.stop;
 
-    // devotional
-    const devTitle = $("#devTitle");
-    const devIntro = $("#devIntro");
-    const devLangLabel = $("#devLangLabel");
-    const devLabelTheme = $("#devLabelTheme");
-    const devLabelScripture = $("#devLabelScripture");
-    const devLabelCtxA = $("#devLabelCtxA");
-    const devLabelRefA = $("#devLabelRefA");
-    const devLabelAppA = $("#devLabelAppA");
-    const devLabelPrA = $("#devLabelPrA");
-    const devLabelNotes = $("#devLabelNotes");
-    const devNow1 = $("#devNow1");
-    const devNow2 = $("#devNow2");
-    const devNow3 = $("#devNow3");
-    const devNow4 = $("#devNow4");
-    const devReqNote = $("#devReqNote");
-    const devSavedTitle = $("#devSavedTitle");
-    const devSavedHint = $("#devSavedHint");
-
-    if (devTitle) devTitle.textContent = t.devTitle;
-    if (devIntro) devIntro.textContent = t.devIntro;
-    if (devLangLabel) devLangLabel.textContent = t.devLangLabel;
-    if (devLabelTheme) devLabelTheme.textContent = t.devThemeLabel;
-    if (devLabelScripture) devLabelScripture.textContent = t.devScriptureLabel;
-    if (devLabelCtxA) devLabelCtxA.textContent = t.ctxObs;
-    if (devLabelRefA) devLabelRefA.textContent = t.reflection;
-    if (devLabelAppA) devLabelAppA.textContent = t.application;
-    if (devLabelPrA) devLabelPrA.textContent = t.prayer;
-    if (devLabelNotes) devLabelNotes.textContent = t.notesOptional;
-    if (devNow1) devNow1.textContent = t.nowWriteYours;
-    if (devNow2) devNow2.textContent = t.nowWriteYours;
-    if (devNow3) devNow3.textContent = t.nowWriteYours;
-    if (devNow4) devNow4.textContent = t.nowWritePrayer;
-    if (devReqNote) devReqNote.textContent = t.requiredToSave;
-    if (devSavedTitle) devSavedTitle.textContent = t.savedDevs;
-    if (devSavedHint) devSavedHint.textContent = t.savedDevsHint;
-
-    const devStreakBtn = $("#devStreakBtn");
-    const devotionalBtn = $("#devotionalBtn");
-    const devSaveBtn = $("#devSaveBtn");
-    if (devStreakBtn) devStreakBtn.textContent = t.didItToday;
-    if (devotionalBtn) devotionalBtn.textContent = t.generate;
-    if (devSaveBtn) devSaveBtn.textContent = t.save;
-
-    // prayer
-    const prTitle = $("#prTitle");
-    const prIntro = $("#prIntro");
-    const prLangLabel = $("#prLangLabel");
-    const prLabelA = $("#prLabelA");
-    const prLabelC = $("#prLabelC");
-    const prLabelT = $("#prLabelT");
-    const prLabelS = $("#prLabelS");
-    const prLabelN = $("#prLabelN");
-    const prSavedTitle = $("#prSavedTitle");
-    const prSavedHint = $("#prSavedHint");
-
-    if (prTitle) prTitle.textContent = t.prTitle;
-    if (prIntro) prIntro.textContent = t.prIntro;
-    if (prLangLabel) prLangLabel.textContent = t.prLangLabel;
-    if (prLabelA) prLabelA.textContent = t.adoration;
-    if (prLabelC) prLabelC.textContent = t.confession;
-    if (prLabelT) prLabelT.textContent = t.thanksgiving;
-    if (prLabelS) prLabelS.textContent = t.supplication;
-    if (prLabelN) prLabelN.textContent = t.notes;
-    if (prSavedTitle) prSavedTitle.textContent = t.savedPrayers;
-    if (prSavedHint) prSavedHint.textContent = t.savedPrayersHint;
-
-    const prStreakBtn = $("#prStreakBtn");
-    const prayerBtn = $("#prayerBtn");
-    const prSaveBtn = $("#prSaveBtn");
-    if (prStreakBtn) prStreakBtn.textContent = t.didItToday;
-    if (prayerBtn) prayerBtn.textContent = t.genStarters;
-    if (prSaveBtn) prSaveBtn.textContent = t.save;
-
     // Update streak pill labels
     updateStreakPills();
 
-    // ✅ IMPORTANT: Re-render Book labels when UI language changes
+    // Re-render book labels when UI language changes
     rerenderBookSelectLabels();
   }
 
@@ -586,9 +509,6 @@
   // Stripe UI
   // ---------------------------
   function setAuthUI(status, email) {
-    const ui = getUILang();
-    const t = I18N[ui];
-
     const pill = $("#authPill");
     const manage = $("#manageBillingBtn");
     const logoutBtn = $("#logoutBtn");
@@ -625,7 +545,6 @@
         const v = normLang(uiSel.value, "en");
         localStorage.setItem(LS.uiLang, v);
         applyUILang();
-        // ✅ book labels switch instantly too (applyUILang calls rerenderBookSelectLabels)
       });
     }
 
@@ -658,7 +577,6 @@
           if (out?.status) localStorage.setItem(LS.authStatus, out.status);
           setAuthUI(out.status || "inactive", out.customer_email || email);
 
-          // Portal URL: open directly
           if (out?.portal_url) window.location.href = out.portal_url;
           else if (out?.url) window.location.href = out.url;
         } catch (e) {
@@ -691,34 +609,125 @@
       });
     }
 
-    // boot auth state
     setAuthUI("checking…", "");
   }
 
   // ---------------------------
-  // Chat (local save)
+  // TTS (FIXED: chunked speech so Bible Listen works on long passages)
   // ---------------------------
   let speechUtterance = null;
   let speechActive = false;
+
+  let speechQueue = [];
+  let speechQueueIndex = 0;
 
   function stopSpeech() {
     try { window.speechSynthesis?.cancel(); } catch {}
     speechUtterance = null;
     speechActive = false;
+    speechQueue = [];
+    speechQueueIndex = 0;
+  }
+
+  function chunkTextForTTS(text, maxLen = 800) {
+    const s = String(text || "").trim();
+    if (!s) return [];
+
+    // Split by paragraph/line breaks first (Bible text is newline-heavy)
+    const parts = s.split(/\n+/).map(x => x.trim()).filter(Boolean);
+
+    const out = [];
+    let buf = "";
+
+    const pushBuf = () => {
+      const t = buf.trim();
+      if (t) out.push(t);
+      buf = "";
+    };
+
+    for (const p of parts) {
+      if (!buf) buf = p;
+      else if ((buf.length + 1 + p.length) <= maxLen) buf += "\n" + p;
+      else { pushBuf(); buf = p; }
+
+      // hard split if a single line is still huge
+      while (buf.length > maxLen) {
+        out.push(buf.slice(0, maxLen));
+        buf = buf.slice(maxLen);
+      }
+    }
+    pushBuf();
+    return out;
+  }
+
+  function speakNextInQueue(lang) {
+    if (!speechQueue.length) return;
+    const text = speechQueue[speechQueueIndex];
+    if (!text) return;
+
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = (lang === "es") ? "es-ES" : "en-US";
+
+    speechUtterance = u;
+    speechActive = true;
+
+    u.onend = () => {
+      speechActive = false;
+      speechQueueIndex += 1;
+      if (speechQueueIndex < speechQueue.length) {
+        speakNextInQueue(lang);
+      } else {
+        speechQueue = [];
+        speechQueueIndex = 0;
+      }
+    };
+
+    u.onerror = () => {
+      stopSpeech();
+    };
+
+    window.speechSynthesis.speak(u);
   }
 
   function speakText(text, lang) {
     stopSpeech();
     if (!("speechSynthesis" in window)) return;
-    const u = new SpeechSynthesisUtterance(String(text || ""));
-    u.lang = (lang === "es") ? "es-ES" : "en-US";
-    speechUtterance = u;
-    speechActive = true;
-    u.onend = () => { speechActive = false; };
-    u.onerror = () => { speechActive = false; };
-    window.speechSynthesis.speak(u);
+
+    // Warm-up / iOS quirks mitigation
+    try { window.speechSynthesis.getVoices(); } catch {}
+    try { window.speechSynthesis.cancel(); } catch {}
+
+    speechQueue = chunkTextForTTS(text, 800);
+    speechQueueIndex = 0;
+
+    if (!speechQueue.length) return;
+
+    speakNextInQueue(lang);
   }
 
+  function updateVoicePills(isReady) {
+    const ui = getUILang();
+    const msg = isReady ? I18N[ui].voiceReady : I18N[ui].voiceMissing;
+
+    const ttsStatus = $("#ttsStatus");
+    const chatVoicePill = $("#chatVoicePill");
+    if (ttsStatus) ttsStatus.textContent = msg;
+    if (chatVoicePill) chatVoicePill.textContent = msg;
+  }
+
+  function voicesAvailable() {
+    try {
+      if (!window.speechSynthesis) return false;
+      const v = window.speechSynthesis.getVoices();
+      return Array.isArray(v) && v.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  // ---------------------------
+  // Chat (local save)
+  // ---------------------------
   function addBubble(role, text) {
     const chat = $("#chat");
     if (!chat) return;
@@ -822,7 +831,6 @@
 
     if (listenBtn) {
       listenBtn.addEventListener("click", () => {
-        // speak last bot message
         const chat = $("#chat");
         if (!chat) return;
         const bubbles = Array.from(chat.querySelectorAll(".bubble.bot"));
@@ -830,7 +838,6 @@
         const text = last ? last.textContent : "";
         if (!text) return;
 
-        // choose based on UI lang (not chat lang)
         const ui = getUILang();
         speakText(text, ui);
       });
@@ -879,7 +886,6 @@
   let currentPassageLang = "en";
 
   function bibleVersionForReadingVoice(readingVoice) {
-    // IMPORTANT: Spanish must use the Spanish DB map keys (server-side DB_MAP supports "es")
     return (readingVoice === "es") ? "es" : "en_default";
   }
 
@@ -895,8 +901,7 @@
       const version = bibleVersionForReadingVoice(rv);
       const s = await apiGet(`/bible/status?version=${encodeURIComponent(version)}`);
       if (outEl) {
-        outEl.textContent =
-          `ok • version=${s.version} • verses=${s.verse_count}`;
+        outEl.textContent = `ok • version=${s.version} • verses=${s.verse_count}`;
       }
     } catch (e) {
       console.error(e);
@@ -922,19 +927,13 @@
         const opt = document.createElement("option");
         opt.value = String(b.id);
 
-        // IMPORTANT:
-        // - b.name might be English (even when UI is Spanish), depending on your backend.
-        // - We store the English name in dataset for toggling UI labels.
         const enName = String(b.name || "");
         opt.dataset.enName = enName;
-
-        // Visible label depends on UI language
         opt.textContent = displayBookName(enName);
 
         bookSel.appendChild(opt);
       }
 
-      // ensure labels are correct after load
       rerenderBookSelectLabels();
     } catch (e) {
       console.error(e);
@@ -1080,6 +1079,7 @@
       outText.textContent = text || "—";
     } catch (e) {
       console.error(e);
+      currentPassageText = "";
       outRef.textContent = "Error";
       outText.textContent = String(e.message || e);
     }
@@ -1097,15 +1097,35 @@
 
     if (listenBtn) {
       listenBtn.addEventListener("click", () => {
-        if (!currentPassageText) return;
-        speakText(currentPassageText, currentPassageLang);
+        // If user presses Listen without reading, fallback to visible text
+        let text = currentPassageText;
+        if (!text) {
+          text = String($("#passageText")?.textContent || "").trim();
+        }
+        if (!text || text === "—") return;
+
+        const lang = currentPassageLang || ( ($("#readingVoice")?.value || "en").trim().toLowerCase() === "es" ? "es" : "en" );
+        speakText(text, lang);
       });
     }
+
     if (stopBtn) stopBtn.addEventListener("click", stopSpeech);
 
     if (rvSel) {
       rvSel.addEventListener("change", async () => {
-        // When switching reading voice to Spanish/English, reload from correct DB
+        // switching Bible DB + keep passage cache clean
+        stopSpeech();
+        currentPassageText = "";
+        currentPassageLang = (rvSel.value === "es") ? "es" : "en";
+
+        // reset selects
+        const chap = $("#chapterSelect");
+        const vs = $("#verseStartSelect");
+        const ve = $("#verseEndSelect");
+        if (chap) chap.innerHTML = `<option value="">—</option>`;
+        if (vs) vs.innerHTML = `<option value="">—</option>`;
+        if (ve) ve.innerHTML = `<option value="">(optional)</option>`;
+
         await refreshBibleStatus();
         await loadBooks();
       });
@@ -1113,12 +1133,16 @@
 
     if (bookSel) {
       bookSel.addEventListener("change", async () => {
+        stopSpeech();
+        currentPassageText = "";
         await loadChaptersForBook();
       });
     }
 
     if (chapSel) {
       chapSel.addEventListener("change", async () => {
+        stopSpeech();
+        currentPassageText = "";
         await loadVersesForChapter();
       });
     }
@@ -1128,7 +1152,7 @@
   }
 
   // ---------------------------
-  // Devotional & Prayer (AI “starters” via /chat)
+  // Devotional & Prayer
   // ---------------------------
   function getDevLang() {
     const v = ($("#devUiLang")?.value || getUILang()).trim().toLowerCase();
@@ -1154,17 +1178,12 @@
     if (prPill) prPill.textContent = `${t.streak}: ${prStreak}`;
   }
 
-  function didStreakToday(keyDate) {
-    return localStorage.getItem(keyDate) === nowDateKey();
-  }
-
   function markStreakToday(keyDate, keyCount) {
     const today = nowDateKey();
     const last = localStorage.getItem(keyDate) || "";
     let count = parseInt(localStorage.getItem(keyCount) || "0", 10) || 0;
 
-    if (last === today) return count; // already counted today
-    // If you want strict “consecutive days” logic later, add it here.
+    if (last === today) return count;
     count += 1;
 
     localStorage.setItem(keyDate, today);
@@ -1172,48 +1191,7 @@
     return count;
   }
 
-  function loadSavedList(key, containerId, emptyText) {
-    const list = $(containerId);
-    if (!list) return;
-    const arr = safeJsonParse(localStorage.getItem(key) || "[]", []);
-    list.innerHTML = "";
-
-    if (!Array.isArray(arr) || arr.length === 0) {
-      const sm = document.createElement("small");
-      sm.style.opacity = "0.75";
-      sm.textContent = emptyText;
-      list.appendChild(sm);
-      return;
-    }
-
-    arr.slice().reverse().forEach((item) => {
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.type = "button";
-      btn.textContent = item.title || "Saved";
-      btn.addEventListener("click", () => item.onLoad && item.onLoad());
-
-      const del = document.createElement("button");
-      del.className = "btn btn-danger";
-      del.type = "button";
-      del.style.marginTop = "8px";
-      del.textContent = "Delete";
-      del.addEventListener("click", () => {
-        const all = safeJsonParse(localStorage.getItem(key) || "[]", []);
-        const keep = all.filter(x => x.id !== item.id);
-        localStorage.setItem(key, JSON.stringify(keep));
-        // Reload via caller
-        initDevotional();
-        initPrayer();
-      });
-
-      list.appendChild(btn);
-      list.appendChild(del);
-    });
-  }
-
   function parseByMarkers(text, markers) {
-    // markers: [{key:"THEME", id:"devTheme"}, ...]
     const out = {};
     const lines = String(text || "").split("\n");
     let cur = null;
@@ -1237,7 +1215,6 @@
 
   async function generateDevotional() {
     const lang = getDevLang();
-    const ui = getUILang();
 
     $("#devTheme").textContent = "…";
     $("#devScriptureRef").textContent = "…";
@@ -1337,16 +1314,7 @@
     const ui = getUILang();
     const t = I18N[ui];
 
-    // streak pill
     updateStreakPills();
-
-    const devLangSel = $("#devUiLang");
-    if (devLangSel && !devLangSel._bound) {
-      devLangSel._bound = true;
-      devLangSel.addEventListener("change", () => {
-        // no need to change entire UI language; this is devotional language only
-      });
-    }
 
     const devBtn = $("#devotionalBtn");
     if (devBtn && !devBtn._bound) {
@@ -1369,7 +1337,6 @@
       });
     }
 
-    // saved list
     const arr = safeJsonParse(localStorage.getItem(LS.devSaved) || "[]", []);
     const list = $("#devSavedList");
     if (list) {
@@ -1477,7 +1444,12 @@
       title,
       ts: Date.now(),
       lang: getPrLang(),
-      starter: { a: $("#pA")?.textContent || "", c: $("#pC")?.textContent || "", t: $("#pT")?.textContent || "", s: $("#pS")?.textContent || "" },
+      starter: {
+        a: $("#pA")?.textContent || "",
+        c: $("#pC")?.textContent || "",
+        t: $("#pT")?.textContent || "",
+        s: $("#pS")?.textContent || ""
+      },
       mine: { a, c, t, s, notes: ($("#prayerNotes")?.value || "").trim() },
     };
 
@@ -1517,7 +1489,6 @@
       });
     }
 
-    // saved list
     const arr = safeJsonParse(localStorage.getItem(LS.prSaved) || "[]", []);
     const list = $("#prSavedList");
     if (list) {
@@ -1567,12 +1538,30 @@
   }
 
   // ---------------------------
-  // Voices status
+  // Service Worker registration (helps ensure updates apply)
   // ---------------------------
-  async function pickLockedVoice(lang) {
-    // simple: rely on default voice availability
-    // (Your original app had more advanced selection; this avoids breaking UI.)
-    return true;
+  async function registerServiceWorker() {
+    try {
+      if (!("serviceWorker" in navigator)) return;
+      const reg = await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+
+      // If a new SW is waiting, ask it to activate
+      if (reg && reg.waiting) {
+        reg.waiting.postMessage({ type: "SKIP_WAITING" });
+      }
+
+      reg.addEventListener("updatefound", () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener("statechange", () => {
+          if (sw.state === "installed" && navigator.serviceWorker.controller) {
+            // New version installed; next reload uses it
+          }
+        });
+      });
+    } catch (e) {
+      // silent
+    }
   }
 
   // ---------------------------
@@ -1580,6 +1569,7 @@
   // ---------------------------
   async function init() {
     showTopStatus("JS: starting…");
+
     initTabs();
     initStripeUI();
     initChat();
@@ -1594,19 +1584,16 @@
 
     applyUILang();
 
-    // Voice pills
-    const ttsStatus = $("#ttsStatus");
-    const chatVoicePill = $("#chatVoicePill");
-    try {
-      const ok = await pickLockedVoice("en");
-      const ui = getUILang();
-      const msg = ok ? I18N[ui].voiceReady : I18N[ui].voiceMissing;
-      if (ttsStatus) ttsStatus.textContent = msg;
-      if (chatVoicePill) chatVoicePill.textContent = msg;
-    } catch {
-      const ui = getUILang();
-      if (ttsStatus) ttsStatus.textContent = I18N[ui].voiceMissing;
-      if (chatVoicePill) chatVoicePill.textContent = I18N[ui].voiceMissing;
+    // Voice availability: iOS sometimes loads voices async
+    updateVoicePills(voicesAvailable());
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.onvoiceschanged = () => {
+          updateVoicePills(voicesAvailable());
+        };
+      } catch {}
+      // trigger a voices fetch
+      try { window.speechSynthesis.getVoices(); } catch {}
     }
 
     // Auth ping
@@ -1626,6 +1613,8 @@
         if (st) setAuthUI(st, email);
       }
     } catch {}
+
+    await registerServiceWorker();
 
     showTopStatus("JS: ready");
   }
@@ -1647,4 +1636,5 @@
     });
   });
 })();
+
 
