@@ -44,7 +44,8 @@ STRIPE_PRICE_ID = (os.getenv("STRIPE_PRICE_ID") or "").strip()
 STRIPE_WEBHOOK_SECRET = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
 JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()  # used for signed session tokens
 
-TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "7")
+# ✅ IMPORTANT: default to 0 (no trial)
+TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "0")
 
 if STRIPE_SECRET_KEY and stripe:
     stripe.api_key = STRIPE_SECRET_KEY
@@ -312,13 +313,18 @@ async def stripe_checkout(req: Request):
         success_url = f"{APP_BASE_URL}/?success=1"
         cancel_url = f"{APP_BASE_URL}/?canceled=1"
 
+        # ✅ IMPORTANT: allow customers to enter promo codes (FOUNDER)
         params = {
             "mode": "subscription",
             "line_items": [{"price": STRIPE_PRICE_ID, "quantity": 1}],
             "success_url": success_url,
             "cancel_url": cancel_url,
-            "subscription_data": {"trial_period_days": TRIAL_DAYS},
+            "allow_promotion_codes": True,
         }
+
+        # ✅ ONLY include trial if TRIAL_DAYS > 0 (we default to 0)
+        if TRIAL_DAYS > 0:
+            params["subscription_data"] = {"trial_period_days": TRIAL_DAYS}
 
         if email and "@" in email:
             params["customer_email"] = email
@@ -482,5 +488,6 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
+
 
 
