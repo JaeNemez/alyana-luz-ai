@@ -1,10 +1,10 @@
 // frontend/service-worker.js
-const CACHE_NAME = "alyana-cache-v5";
+const CACHE_NAME = "alyana-cache-v6";
 
-// Keep precache minimal to avoid "white screen" from stale assets
+// Cache-bust app.js so new deployments load immediately
 const PRECACHE_URLS = [
   "/",
-  "/app.js",
+  "/app.js?v=6",
   "/manifest.webmanifest",
 ];
 
@@ -23,7 +23,6 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
-// Allow page to request immediate activation
 self.addEventListener("message", (event) => {
   if (event?.data?.type === "SKIP_WAITING") {
     try { self.skipWaiting(); } catch {}
@@ -35,7 +34,6 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Only handle same-origin
   if (url.origin !== self.location.origin) return;
 
   const accept = req.headers.get("accept") || "";
@@ -69,6 +67,7 @@ self.addEventListener("fetch", (event) => {
     }
   })());
 });
+
 
 
 
