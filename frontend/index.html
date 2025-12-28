@@ -181,7 +181,13 @@
       .app-section { display: none; height: 100%; overflow: hidden; min-height: 0; }
       .app-section.active { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 
-      .section-body { flex: 1; overflow-y: auto; padding: 18px; min-height: 0; -webkit-overflow-scrolling: touch; }
+      .section-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 18px;
+        min-height: 0;
+        -webkit-overflow-scrolling: touch;
+      }
 
       .card {
         background: var(--surface-1);
@@ -256,27 +262,30 @@
       }
 
       /* ===========================
-         CHAT
+         CHAT (SCROLL FIX)
          =========================== */
-      .chat-layout {
-        flex: 1;
-        overflow: hidden;
+
+      .chat-layout{
         display: grid;
         grid-template-columns: 1fr 300px;
         gap: 12px;
-        padding: 12px;
         min-height: 0;
       }
 
-      @media (max-width: 920px) {
-        .chat-layout {
-          grid-template-columns: 1fr;
-        }
+      @media (max-width: 920px){
+        .chat-layout{ grid-template-columns: 1fr; }
       }
 
-      #chat {
+      #chatCard{
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+      }
+
+      #chat{
         flex: 1;
-        min-height: 0;
+        min-height: 260px; /* key: gives chat a height so it can scroll */
         overflow-y: auto;
         padding: 12px;
         display: flex;
@@ -321,7 +330,7 @@
         text-align: center;
       }
 
-      .chat-form {
+      .chat-form{
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
@@ -349,30 +358,18 @@
       }
 
       @media (max-width: 420px){
-        .chat-form .btn{
-          flex: 1 1 48%;
-        }
-      }
-
-      #chatCard {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        min-height: 0;
+        .chat-form .btn{ flex: 1 1 48%; }
       }
 
       @media (max-width: 920px){
-        #chatCard {
-          min-height: 60vh;
-        }
-        .chat-form {
+        .chat-form{
           position: sticky;
           bottom: 0;
           z-index: 5;
         }
       }
 
-      /* ✅ Passage controls row (new) */
+      /* ✅ Passage controls row */
       .passage-controls {
         display: flex;
         gap: 10px;
@@ -396,6 +393,7 @@
           max-width: 100%;
           border-radius: 0;
         }
+        .section-body { padding: 12px; }
       }
     </style>
   </head>
@@ -461,49 +459,52 @@
       <div class="main">
         <!-- CHAT -->
         <section id="chatSection" class="app-section active">
-          <div class="chat-layout">
-            <div class="card" id="chatCard">
-              <div class="row" style="align-items:center; margin-bottom:10px;">
-                <div style="flex:2;">
-                  <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
-                  <div class="muted" id="chatSub">Saved chat logs are stored on this device.</div>
+          <!-- FIX: chat must use section-body so it can scroll like other tabs -->
+          <div class="section-body">
+            <div class="chat-layout">
+              <div class="card" id="chatCard">
+                <div class="row" style="align-items:center; margin-bottom:10px;">
+                  <div style="flex:2;">
+                    <h3 style="margin:0 0 4px 0;" id="chatTitle">Chat</h3>
+                    <div class="muted" id="chatSub">Saved chat logs are stored on this device.</div>
+                  </div>
+
+                  <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <label style="min-width:170px;">
+                      <span class="muted" id="chatLangLabel" style="display:block; margin-bottom:4px;">Chat Language</span>
+                      <select id="chatLangSelect">
+                        <option value="auto" selected>Auto (based on what they type)</option>
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                      </select>
+                    </label>
+                    <span class="pill" id="chatVoicePill">Voice: ready</span>
+                  </div>
                 </div>
 
-                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; align-items:center;">
-                  <label style="min-width:170px;">
-                    <span class="muted" id="chatLangLabel" style="display:block; margin-bottom:4px;">Chat Language</span>
-                    <select id="chatLangSelect">
-                      <option value="auto" selected>Auto (based on what they type)</option>
-                      <option value="en">English</option>
-                      <option value="es">Spanish</option>
-                    </select>
-                  </label>
-                  <span class="pill" id="chatVoicePill">Voice: ready</span>
-                </div>
+                <div id="chat"></div>
+
+                <form id="chatForm" class="chat-form">
+                  <input
+                    id="chatInput"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…"
+                  />
+                  <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
+                  <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
+                  <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
+                  <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
+                  <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
+                </form>
               </div>
 
-              <div id="chat"></div>
-
-              <form id="chatForm" class="chat-form">
-                <input
-                  id="chatInput"
-                  type="text"
-                  autocomplete="off"
-                  placeholder="Ask for a prayer, verse, or ‘verses about forgiveness’…"
-                />
-                <button class="btn btn-primary" type="submit" id="chatSendBtn">Send</button>
-                <button class="btn btn-ghost" type="button" id="chatListenBtn">Listen</button>
-                <button class="btn btn-danger" type="button" id="chatStopBtn">Stop</button>
-                <button class="btn btn-ghost" type="button" id="chatNewBtn">New</button>
-                <button class="btn btn-green" type="button" id="chatSaveBtn">Save</button>
-              </form>
-            </div>
-
-            <div class="card" style="overflow:auto;">
-              <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
-              <div class="muted" id="savedChatsSub">Load or delete any saved chat.</div>
-              <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
-                <small style="opacity:0.75;" id="noSavedChats">No saved chats yet.</small>
+              <div class="card" style="overflow:auto;">
+                <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
+                <div class="muted" id="savedChatsSub">Load or delete any saved chat.</div>
+                <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
+                  <small style="opacity:0.75;" id="noSavedChats">No saved chats yet.</small>
+                </div>
               </div>
             </div>
           </div>
@@ -617,7 +618,7 @@
               <h4 id="passageTitle">Passage</h4>
               <div class="muted" id="passageRef">—</div>
 
-              <!-- NEW: Listen/Stop moved here -->
+              <!-- Listen/Stop under Passage -->
               <div class="passage-controls" aria-label="Passage audio controls">
                 <button class="btn btn-ghost" id="listenBible" type="button">Listen</button>
                 <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
@@ -1099,7 +1100,6 @@
 
           setText("readBtnText", t.readBtn);
 
-          // These buttons were moved into Passage, but IDs stayed the same
           const listenBible = $("listenBible");
           if (listenBible) listenBible.textContent = t.listenBtn;
           const stopBible = $("stopBible");
@@ -1126,6 +1126,7 @@
     </script>
   </body>
 </html>
+
 
 
 
