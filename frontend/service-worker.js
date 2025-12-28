@@ -1,5 +1,5 @@
 // frontend/service-worker.js
-const CACHE_NAME = "alyana-cache-v4";
+const CACHE_NAME = "alyana-cache-v5";
 
 // Keep precache minimal to avoid "white screen" from stale assets
 const PRECACHE_URLS = [
@@ -21,6 +21,13 @@ self.addEventListener("activate", (event) => {
     await Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : Promise.resolve())));
     await self.clients.claim();
   })());
+});
+
+// Allow page to request immediate activation
+self.addEventListener("message", (event) => {
+  if (event?.data?.type === "SKIP_WAITING") {
+    try { self.skipWaiting(); } catch {}
+  }
 });
 
 // Network-first for HTML, cache-first for other assets
@@ -62,6 +69,7 @@ self.addEventListener("fetch", (event) => {
     }
   })());
 });
+
 
 
 
