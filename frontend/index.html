@@ -285,7 +285,7 @@
 
       #chat{
         flex: 1;
-        min-height: 260px; /* key: gives chat a height so it can scroll */
+        min-height: 260px;
         overflow-y: auto;
         padding: 12px;
         display: flex;
@@ -459,7 +459,6 @@
       <div class="main">
         <!-- CHAT -->
         <section id="chatSection" class="app-section active">
-          <!-- FIX: chat must use section-body so it can scroll like other tabs -->
           <div class="section-body">
             <div class="chat-layout">
               <div class="card" id="chatCard">
@@ -595,7 +594,6 @@
                 </div>
               </div>
 
-              <!-- Keep READ here -->
               <div class="row" style="margin-top:12px;">
                 <div style="width:100%; display:flex; gap:10px; flex-wrap:wrap;">
                   <button class="btn btn-primary" id="readBibleBtn" type="button" style="flex: 1; min-width: 220px;">
@@ -618,10 +616,10 @@
               <h4 id="passageTitle">Passage</h4>
               <div class="muted" id="passageRef">—</div>
 
-              <!-- Listen/Stop under Passage -->
+              <!-- ✅ FIXED IDS: must match app.js -->
               <div class="passage-controls" aria-label="Passage audio controls">
-                <button class="btn btn-ghost" id="listenBible" type="button">Listen</button>
-                <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
+                <button class="btn btn-ghost" id="passageListenBtn" type="button">Listen</button>
+                <button class="btn btn-danger" id="passageStopBtn" type="button">Stop</button>
               </div>
 
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
@@ -778,9 +776,10 @@
       </div>
     </div>
 
-    <script src="/app.js" defer></script>
+    <!-- ✅ CACHE-BUST so new app.js loads -->
+    <script src="/app.js?v=6" defer></script>
 
-    <!-- Language switcher (no need to edit app.js) -->
+    <!-- Keep your language script (optional; app.js also does i18n, but leaving it won't break anything) -->
     <script>
       (function () {
         const $ = (id) => document.getElementById(id);
@@ -1001,6 +1000,7 @@
           setText("chatTitle", t.chatTitle);
           setText("chatSub", t.chatSub);
           setText("chatLangLabel", t.chatLangLabel);
+
           const chatLang = $("chatLangSelect");
           if (chatLang) {
             const optAuto = chatLang.querySelector('option[value="auto"]');
@@ -1100,9 +1100,10 @@
 
           setText("readBtnText", t.readBtn);
 
-          const listenBible = $("listenBible");
+          // ✅ Now matches updated IDs
+          const listenBible = $("passageListenBtn");
           if (listenBible) listenBible.textContent = t.listenBtn;
-          const stopBible = $("stopBible");
+          const stopBible = $("passageStopBtn");
           if (stopBible) stopBible.textContent = t.stopBtn;
 
           setText("bibleBottomNote", t.bibleBottomNote);
@@ -1126,6 +1127,7 @@
     </script>
   </body>
 </html>
+
 
 
 
