@@ -259,6 +259,8 @@
          CHAT
          =========================== */
       .chat-layout {
+        flex: 1;
+        overflow: hidden;
         display: grid;
         grid-template-columns: 1fr 300px;
         gap: 12px;
@@ -272,16 +274,9 @@
         }
       }
 
-      #chatCard {
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-        min-height: 0;
-      }
-
       #chat {
         flex: 1;
-        min-height: 260px;
+        min-height: 0;
         overflow-y: auto;
         padding: 12px;
         display: flex;
@@ -334,7 +329,6 @@
         border-top: 1px solid rgba(255,255,255,0.08);
         background: rgba(10, 8, 28, 0.92);
         border-radius: 16px;
-        margin-top: 12px;
       }
 
       .chat-form input[type="text"]{
@@ -360,28 +354,48 @@
         }
       }
 
-      .saved-chats-card {
-        overflow: auto;
-        -webkit-overflow-scrolling: touch;
+      #chatCard {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        min-height: 0;
       }
 
-      /* MOBILE sizing */
+      @media (max-width: 920px){
+        #chatCard {
+          min-height: 60vh;
+        }
+        .chat-form {
+          position: sticky;
+          bottom: 0;
+          z-index: 5;
+        }
+      }
+
+      /* ✅ Passage controls row (new) */
+      .passage-controls {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      .passage-controls .btn {
+        flex: 1;
+        min-width: 160px;
+      }
+
       @media (max-width: 900px) {
         body {
           align-items: stretch;
           justify-content: flex-start;
           min-height: 100dvh;
         }
-
         .app {
           height: 100dvh;
           max-height: 100dvh;
           max-width: 100%;
           border-radius: 0;
         }
-
-        .section-body { padding: 12px; }
-        #chat { min-height: 45vh; }
       }
     </style>
   </head>
@@ -485,7 +499,7 @@
               </form>
             </div>
 
-            <div class="card saved-chats-card">
+            <div class="card" style="overflow:auto;">
               <h4 style="margin-bottom:6px;" id="savedChatsTitle">Saved Chats</h4>
               <div class="muted" id="savedChatsSub">Load or delete any saved chat.</div>
               <div class="saved-list" id="chatSavedList" style="margin-top:10px;">
@@ -580,7 +594,7 @@
                 </div>
               </div>
 
-              <!-- ✅ KEEP READ HERE (ONLY) -->
+              <!-- Keep READ here -->
               <div class="row" style="margin-top:12px;">
                 <div style="width:100%; display:flex; gap:10px; flex-wrap:wrap;">
                   <button class="btn btn-primary" id="readBibleBtn" type="button" style="flex: 1; min-width: 220px;">
@@ -599,17 +613,14 @@
               <div class="muted" id="bibleDbStatus">Checking…</div>
             </div>
 
-            <!-- ✅ PASSAGE CARD: move LISTEN + STOP here -->
             <div class="card">
-              <div class="row" style="align-items:center;">
-                <div style="flex:2;">
-                  <h4 id="passageTitle" style="margin-bottom:6px;">Passage</h4>
-                  <div class="muted" id="passageRef">—</div>
-                </div>
-                <div style="display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap;">
-                  <button class="btn btn-ghost" id="listenBible" type="button">Listen</button>
-                  <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
-                </div>
+              <h4 id="passageTitle">Passage</h4>
+              <div class="muted" id="passageRef">—</div>
+
+              <!-- NEW: Listen/Stop moved here -->
+              <div class="passage-controls" aria-label="Passage audio controls">
+                <button class="btn btn-ghost" id="listenBible" type="button">Listen</button>
+                <button class="btn btn-danger" id="stopBible" type="button">Stop</button>
               </div>
 
               <div id="passageText" style="white-space:pre-wrap; margin-top:10px;">—</div>
@@ -768,102 +779,10 @@
 
     <script src="/app.js" defer></script>
 
-    <!-- Language switcher + Book name localization (no app.js edits) -->
+    <!-- Language switcher (no need to edit app.js) -->
     <script>
       (function () {
         const $ = (id) => document.getElementById(id);
-
-        // English -> Spanish book name map (66 books)
-        const BOOKS_ES = {
-          "Genesis": "Génesis",
-          "Exodus": "Éxodo",
-          "Leviticus": "Levítico",
-          "Numbers": "Números",
-          "Deuteronomy": "Deuteronomio",
-          "Joshua": "Josué",
-          "Judges": "Jueces",
-          "Ruth": "Rut",
-          "1 Samuel": "1 Samuel",
-          "2 Samuel": "2 Samuel",
-          "1 Kings": "1 Reyes",
-          "2 Kings": "2 Reyes",
-          "1 Chronicles": "1 Crónicas",
-          "2 Chronicles": "2 Crónicas",
-          "Ezra": "Esdras",
-          "Nehemiah": "Nehemías",
-          "Esther": "Ester",
-          "Job": "Job",
-          "Psalms": "Salmos",
-          "Proverbs": "Proverbios",
-          "Ecclesiastes": "Eclesiastés",
-          "Song of Solomon": "Cantares",
-          "Isaiah": "Isaías",
-          "Jeremiah": "Jeremías",
-          "Lamentations": "Lamentaciones",
-          "Ezekiel": "Ezequiel",
-          "Daniel": "Daniel",
-          "Hosea": "Oseas",
-          "Joel": "Joel",
-          "Amos": "Amós",
-          "Obadiah": "Abdías",
-          "Jonah": "Jonás",
-          "Micah": "Miqueas",
-          "Nahum": "Nahúm",
-          "Habakkuk": "Habacuc",
-          "Zephaniah": "Sofonías",
-          "Haggai": "Hageo",
-          "Zechariah": "Zacarías",
-          "Malachi": "Malaquías",
-          "Matthew": "Mateo",
-          "Mark": "Marcos",
-          "Luke": "Lucas",
-          "John": "Juan",
-          "Acts": "Hechos",
-          "Romans": "Romanos",
-          "1 Corinthians": "1 Corintios",
-          "2 Corinthians": "2 Corintios",
-          "Galatians": "Gálatas",
-          "Ephesians": "Efesios",
-          "Philippians": "Filipenses",
-          "Colossians": "Colosenses",
-          "1 Thessalonians": "1 Tesalonicenses",
-          "2 Thessalonians": "2 Tesalonicenses",
-          "1 Timothy": "1 Timoteo",
-          "2 Timothy": "2 Timoteo",
-          "Titus": "Tito",
-          "Philemon": "Filemón",
-          "Hebrews": "Hebreos",
-          "James": "Santiago",
-          "1 Peter": "1 Pedro",
-          "2 Peter": "2 Pedro",
-          "1 John": "1 Juan",
-          "2 John": "2 Juan",
-          "3 John": "3 Juan",
-          "Jude": "Judas",
-          "Revelation": "Apocalipsis"
-        };
-
-        function localizeBookOptions(uiLang) {
-          const sel = $("bookSelect");
-          if (!sel) return;
-
-          const isSpanish = (uiLang || "en").toLowerCase() === "es";
-
-          Array.from(sel.options).forEach((opt) => {
-            const txt = (opt.textContent || "").trim();
-            if (!txt || txt === "Loading…" || txt === "Cargando…" || txt === "—") return;
-
-            // Store original English once so we can switch back
-            if (!opt.dataset.en) opt.dataset.en = txt;
-
-            if (isSpanish) {
-              const en = opt.dataset.en.trim();
-              opt.textContent = BOOKS_ES[en] || en; // fallback if not found
-            } else {
-              opt.textContent = opt.dataset.en;
-            }
-          });
-        }
 
         const TEXT = {
           en: {
@@ -1180,7 +1099,7 @@
 
           setText("readBtnText", t.readBtn);
 
-          // Passage buttons text
+          // These buttons were moved into Passage, but IDs stayed the same
           const listenBible = $("listenBible");
           if (listenBible) listenBible.textContent = t.listenBtn;
           const stopBible = $("stopBible");
@@ -1189,52 +1108,17 @@
           setText("bibleBottomNote", t.bibleBottomNote);
           setText("dbStatusTitle", t.dbStatusTitle);
           setText("passageTitle", t.passageTitle);
-
-          // ✅ Localize book dropdown labels
-          localizeBookOptions(lang);
-        }
-
-        function initBookObserver() {
-          const sel = $("bookSelect");
-          if (!sel) return;
-
-          // Relabel whenever app.js loads/replaces options
-          const obs = new MutationObserver(() => {
-            const ui = ($("uiLangSelect")?.value || "en").toLowerCase();
-            localizeBookOptions(ui);
-          });
-          obs.observe(sel, { childList: true, subtree: true });
-
-          // Also relabel on open/change
-          sel.addEventListener("mousedown", () => {
-            const ui = ($("uiLangSelect")?.value || "en").toLowerCase();
-            localizeBookOptions(ui);
-          });
-          sel.addEventListener("change", () => {
-            const ui = ($("uiLangSelect")?.value || "en").toLowerCase();
-            localizeBookOptions(ui);
-          });
         }
 
         function init() {
           const uiSelect = $("uiLangSelect");
           if (!uiSelect) return;
 
-          initBookObserver();
-
           applyLang((uiSelect.value || "en").toLowerCase());
 
           uiSelect.addEventListener("change", () => {
-            const lang = (uiSelect.value || "en").toLowerCase();
-            applyLang(lang);
-            localizeBookOptions(lang);
+            applyLang((uiSelect.value || "en").toLowerCase());
           });
-
-          // One more pass after everything settles
-          setTimeout(() => {
-            const lang = (uiSelect.value || "en").toLowerCase();
-            localizeBookOptions(lang);
-          }, 600);
         }
 
         document.addEventListener("DOMContentLoaded", init);
@@ -1242,6 +1126,7 @@
     </script>
   </body>
 </html>
+
 
 
 
