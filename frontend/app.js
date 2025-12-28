@@ -1,3 +1,4 @@
+
 (() => {
   "use strict";
 
@@ -59,6 +60,97 @@
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // ---------------------------
+  // Spanish Bible book display names (UI only)
+  // NOTE: We keep <option value> as the backend id, and only swap the visible label.
+  // ---------------------------
+  const BOOK_NAME_ES = {
+    "Genesis": "Génesis",
+    "Exodus": "Éxodo",
+    "Leviticus": "Levítico",
+    "Numbers": "Números",
+    "Deuteronomy": "Deuteronomio",
+    "Joshua": "Josué",
+    "Judges": "Jueces",
+    "Ruth": "Rut",
+    "1 Samuel": "1 Samuel",
+    "2 Samuel": "2 Samuel",
+    "1 Kings": "1 Reyes",
+    "2 Kings": "2 Reyes",
+    "1 Chronicles": "1 Crónicas",
+    "2 Chronicles": "2 Crónicas",
+    "Ezra": "Esdras",
+    "Nehemiah": "Nehemías",
+    "Esther": "Ester",
+    "Job": "Job",
+    "Psalms": "Salmos",
+    "Proverbs": "Proverbios",
+    "Ecclesiastes": "Eclesiastés",
+    "Song of Solomon": "Cantares",
+    "Isaiah": "Isaías",
+    "Jeremiah": "Jeremías",
+    "Lamentations": "Lamentaciones",
+    "Ezekiel": "Ezequiel",
+    "Daniel": "Daniel",
+    "Hosea": "Oseas",
+    "Joel": "Joel",
+    "Amos": "Amós",
+    "Obadiah": "Abdías",
+    "Jonah": "Jonás",
+    "Micah": "Miqueas",
+    "Nahum": "Nahúm",
+    "Habakkuk": "Habacuc",
+    "Zephaniah": "Sofonías",
+    "Haggai": "Hageo",
+    "Zechariah": "Zacarías",
+    "Malachi": "Malaquías",
+    "Matthew": "Mateo",
+    "Mark": "Marcos",
+    "Luke": "Lucas",
+    "John": "Juan",
+    "Acts": "Hechos",
+    "Romans": "Romanos",
+    "1 Corinthians": "1 Corintios",
+    "2 Corinthians": "2 Corintios",
+    "Galatians": "Gálatas",
+    "Ephesians": "Efesios",
+    "Philippians": "Filipenses",
+    "Colossians": "Colosenses",
+    "1 Thessalonians": "1 Tesalonicenses",
+    "2 Thessalonians": "2 Tesalonicenses",
+    "1 Timothy": "1 Timoteo",
+    "2 Timothy": "2 Timoteo",
+    "Titus": "Tito",
+    "Philemon": "Filemón",
+    "Hebrews": "Hebreos",
+    "James": "Santiago",
+    "1 Peter": "1 Pedro",
+    "2 Peter": "2 Pedro",
+    "1 John": "1 Juan",
+    "2 John": "2 Juan",
+    "3 John": "3 Juan",
+    "Jude": "Judas",
+    "Revelation": "Apocalipsis"
+  };
+
+  // Store the English book name on each <option> so we can re-render labels on UI language switch.
+  function displayBookName(bookEn) {
+    const ui = getUILang();
+    if (ui === "es") return BOOK_NAME_ES[bookEn] || bookEn;
+    return bookEn;
+  }
+
+  function rerenderBookSelectLabels() {
+    const bookSel = $("#bookSelect");
+    if (!bookSel) return;
+    Array.from(bookSel.options).forEach((opt) => {
+      // Skip placeholder option
+      if (!opt.value) return;
+      const en = opt.dataset.enName || opt.textContent || "";
+      if (en) opt.textContent = displayBookName(en);
+    });
   }
 
   // ---------------------------
@@ -427,6 +519,9 @@
 
     // Update streak pill labels
     updateStreakPills();
+
+    // ✅ IMPORTANT: Re-render Book labels when UI language changes
+    rerenderBookSelectLabels();
   }
 
   // ---------------------------
@@ -530,6 +625,7 @@
         const v = normLang(uiSel.value, "en");
         localStorage.setItem(LS.uiLang, v);
         applyUILang();
+        // ✅ book labels switch instantly too (applyUILang calls rerenderBookSelectLabels)
       });
     }
 
@@ -825,9 +921,21 @@
       for (const b of books) {
         const opt = document.createElement("option");
         opt.value = String(b.id);
-        opt.textContent = String(b.name);
+
+        // IMPORTANT:
+        // - b.name might be English (even when UI is Spanish), depending on your backend.
+        // - We store the English name in dataset for toggling UI labels.
+        const enName = String(b.name || "");
+        opt.dataset.enName = enName;
+
+        // Visible label depends on UI language
+        opt.textContent = displayBookName(enName);
+
         bookSel.appendChild(opt);
       }
+
+      // ensure labels are correct after load
+      rerenderBookSelectLabels();
     } catch (e) {
       console.error(e);
       bookSel.innerHTML = `<option value="">(error)</option>`;
@@ -997,7 +1105,7 @@
 
     if (rvSel) {
       rvSel.addEventListener("change", async () => {
-        // When switching to Spanish, reload books from Spanish DB
+        // When switching reading voice to Spanish/English, reload from correct DB
         await refreshBibleStatus();
         await loadBooks();
       });
