@@ -92,10 +92,6 @@
         color: var(--text-1);
       }
 
-      /* ===========================
-         TOP ACCOUNT AREA (NEW MOBILE COLLAPSE)
-         =========================== */
-
       .top-cta {
         padding: 10px 24px 14px;
         border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -104,23 +100,6 @@
         justify-content: center;
         gap: 12px;
         flex-wrap: wrap;
-      }
-
-      .account-toggle {
-        display: none;
-        width: 100%;
-        justify-content: center;
-      }
-
-      .account-toggle button {
-        padding: 8px 12px;
-        border-radius: 999px;
-        border: 1px solid rgba(186,108,184,0.18);
-        cursor: pointer;
-        font-weight: 900;
-        font-size: 13px;
-        color: #ffffff;
-        background: rgba(255,255,255,0.08);
       }
 
       .support-btn {
@@ -283,7 +262,7 @@
       }
 
       /* ===========================
-         CHAT (SCROLL + MOBILE BUTTONS)
+         CHAT (SCROLL FIX)
          =========================== */
 
       .chat-layout{
@@ -292,6 +271,7 @@
         gap: 12px;
         min-height: 0;
       }
+
       @media (max-width: 920px){
         .chat-layout{ grid-template-columns: 1fr; }
       }
@@ -401,10 +381,6 @@
         min-width: 160px;
       }
 
-      /* ===========================
-         MOBILE LAYOUT + TOP COLLAPSE RULES
-         =========================== */
-
       @media (max-width: 900px) {
         body {
           align-items: stretch;
@@ -418,41 +394,19 @@
           border-radius: 0;
         }
         .section-body { padding: 12px; }
-
-        header { padding: 14px 14px 10px; }
-        .menu-bar { padding: 10px 12px; }
-
-        /* Mobile: show Account toggle and collapse the top-cta by default */
-        .account-toggle { display: flex; }
-        .top-cta {
-          padding: 10px 12px 10px;
-          gap: 10px;
-        }
-
-        /* Collapsed view hides bulky items */
-        .top-cta.collapsed #supportNote,
-        .top-cta.collapsed #restoreRow {
-          display: none !important;
-        }
-
-        /* Keep support button but smaller in collapsed mode */
-        .top-cta.collapsed #supportBtn {
-          width: 100%;
-          max-width: 520px;
-          padding: 10px 14px;
-          border-radius: 14px;
-          font-size: 14px;
-        }
-
-        /* Make rows fit nicer on mobile */
-        .account-row > * { width: 100%; }
-        .account-row label { width: 100%; min-width: 0 !important; }
-        #manageBillingBtn, #logoutBtn { width: 100%; }
-
-        /* When subscribed/active: we keep it collapsed always unless user expands */
-        body.is-active .top-cta #restoreRow { display:none !important; }
-        body.is-active .top-cta #supportNote { display:none !important; }
       }
+
+      /* ==========================================================
+         MEMBER UX: When user is ACTIVE, hide support + explanation
+         ========================================================== */
+      body.is-active #supportBtn { display: none !important; }
+      body.is-active #supportNote { display: none !important; }
+      body.is-active #loginEmail { display: none !important; }
+      body.is-active #loginBtn { display: none !important; }
+      body.is-active #authHint { display: none !important; }
+
+      /* Optional: tighten top spacing a little for active members */
+      body.is-active .top-cta { padding-top: 10px; padding-bottom: 10px; }
     </style>
   </head>
 
@@ -464,12 +418,7 @@
         <span class="js-pill" id="jsStatus">JS: loading…</span>
       </header>
 
-      <div class="top-cta collapsed" id="topCta">
-        <!-- Mobile only toggle -->
-        <div class="account-toggle">
-          <button type="button" id="accountToggleBtn">Account</button>
-        </div>
-
+      <div class="top-cta">
         <button class="support-btn" id="supportBtn" type="button">
           ❤️ <span id="supportBtnText">Support Alyana Luz</span>
         </button>
@@ -494,14 +443,15 @@
           </label>
         </div>
 
+        <!-- WHY SUPPORT (non-members only; hidden for active members via CSS) -->
         <p class="support-note" id="supportNote">
           Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.
           <br />
           To access premium features, subscribe with Support, or restore access using the email you used on Stripe.
         </p>
 
-        <!-- Restore row wrapper so we can hide it cleanly -->
-        <div class="row" id="restoreRow" style="max-width:760px; width:100%; justify-content:center;">
+        <!-- RESTORE (non-members only; hidden for active members via CSS) -->
+        <div class="row" style="max-width:760px; width:100%; justify-content:center;">
           <div style="flex:1; min-width:240px; max-width:360px;">
             <input id="loginEmail" type="text" placeholder="Email used for Stripe…" />
           </div>
@@ -841,58 +791,382 @@
       </div>
     </div>
 
-    <!-- Keep your cache bust -->
+    <!-- bump this number when deploying if your phone caches JS -->
     <script src="/app.js?v=7" defer></script>
 
-    <!-- NEW: Mobile collapse + auto-hide restore when active -->
+    <!-- Member detection: set body.is-active if the account pill becomes active -->
     <script>
-      (function () {
-        const top = document.getElementById("topCta");
-        const toggleBtn = document.getElementById("accountToggleBtn");
-        const authPill = document.getElementById("authPill");
+      (function(){
+        function updateMemberClass() {
+          const pill = document.getElementById("authPill");
+          if (!pill) return;
 
-        function setCollapsed(collapsed) {
-          if (!top) return;
-          if (collapsed) top.classList.add("collapsed");
-          else top.classList.remove("collapsed");
-        }
-
-        function detectActive() {
-          const txt = (authPill?.textContent || "").toLowerCase();
-          // app.js typically shows "Account: active ..." when authed/subscribed
-          const isActive = txt.includes("active");
+          const t = (pill.textContent || "").toLowerCase();
+          // Treat "active" as member. Your UI already shows "Account: active • email"
+          const isActive = t.includes("account: active") || t.includes("cuenta: activa") || t.includes("active");
           document.body.classList.toggle("is-active", isActive);
-
-          // If active, default to collapsed on mobile
-          if (window.matchMedia("(max-width: 900px)").matches) {
-            setCollapsed(true);
-          }
         }
 
-        if (toggleBtn) {
-          toggleBtn.addEventListener("click", () => {
-            if (!top) return;
-            const isCollapsed = top.classList.contains("collapsed");
-            setCollapsed(!isCollapsed);
-          });
-        }
+        // Initial + watch for app.js updates
+        document.addEventListener("DOMContentLoaded", () => {
+          updateMemberClass();
+          const pill = document.getElementById("authPill");
+          if (!pill) return;
 
-        // Watch for app.js updating the pill text
-        if (authPill && window.MutationObserver) {
-          const obs = new MutationObserver(detectActive);
-          obs.observe(authPill, { childList: true, subtree: true, characterData: true });
-        }
-
-        window.addEventListener("resize", detectActive);
-        document.addEventListener("DOMContentLoaded", detectActive);
-        setTimeout(detectActive, 800); // safety
+          const obs = new MutationObserver(updateMemberClass);
+          obs.observe(pill, { childList: true, subtree: true, characterData: true });
+        });
       })();
     </script>
 
-    <!-- Keep your language/i18n script if you want (optional).
-         If you already have it in your current file, paste it below this line unchanged. -->
+    <!-- Keep your language script (optional) -->
+    <script>
+      (function () {
+        const $ = (id) => document.getElementById(id);
+
+        const TEXT = {
+          en: {
+            tagline: "pray • learn • walk in the Light",
+            language: "Language",
+            support: "Support Alyana Luz",
+            manageBilling: "Manage billing",
+            logout: "Logout",
+            supportNote:
+              "Your support helps maintain and grow Alyana Luz — continually improving development and expanding this ministry.\nTo access premium features, subscribe with Support, or restore access using the email you used on Stripe.",
+            loginPlaceholder: "Email used for Stripe…",
+            restoreAccess: "Restore access",
+
+            tabChat: "Chat",
+            tabBible: "Read Bible",
+            tabDev: "Devotional",
+            tabPrayer: "Daily Prayer",
+
+            chatTitle: "Chat",
+            chatSub: "Saved chat logs are stored on this device.",
+            chatLangLabel: "Chat Language",
+            chatAuto: "Auto (based on what they type)",
+            chatInputPH: "Ask for a prayer, verse, or ‘verses about forgiveness’…",
+            send: "Send",
+            listen: "Listen",
+            stop: "Stop",
+            newChat: "New",
+            save: "Save",
+            savedChatsTitle: "Saved Chats",
+            savedChatsSub: "Load or delete any saved chat.",
+            noSavedChats: "No saved chats yet.",
+
+            devTitle: "Devotional",
+            devIntro: "Alyana gives short starter examples. You write and save your real devotional.",
+            devTheme: "Theme / Title (Alyana)",
+            devScripture: "Scripture (Alyana)",
+            devCtxA: "Alyana Starter — Context / Observation",
+            devRefA: "Alyana Starter — Reflection / Insight",
+            devAppA: "Alyana Starter — Application (Practical)",
+            devPrA: "Alyana Starter — Prayer",
+            devNotes: "Notes / Reflection (optional)",
+            nowWrite: "Now write yours:",
+            nowWritePrayer: "Now write your real prayer:",
+            devPH_ctx: "Context / Observation (What’s happening? Who is speaking? Why does it matter?)",
+            devPH_ref: "Reflection / Insight (What does this reveal about God? About me?)",
+            devPH_app: "Application (What will I do today because of this?)",
+            devPH_pr: "Prayer (write your real prayer here)",
+            devPH_notes: "Notes…",
+            devReq: "Required to save (streak): Context + Reflection + Application + Prayer.",
+            devSavedTitle: "Saved Devotionals",
+            devSavedSub: "Load or delete past devotionals saved on this device.",
+            devNone: "No saved devotionals yet.",
+            didToday: "I did it today",
+            generate: "Generate",
+
+            prTitle: "Daily Prayer",
+            prIntro: "Alyana gives a short starter example. You write and save your real prayer.",
+            prA: "Alyana Starter — Adoration",
+            prC: "Alyana Starter — Confession",
+            prT: "Alyana Starter — Thanksgiving",
+            prS: "Alyana Starter — Supplication",
+            prN: "Notes",
+            prNow: "Now write your own:",
+            prPH_A: "Adoration (praise God for who He is)…",
+            prPH_C: "Confession (what I need to confess)…",
+            prPH_T: "Thanksgiving (what I’m grateful for)…",
+            prPH_S: "Supplication (requests for myself/others)…",
+            prPH_N: "Notes…",
+            prSavedTitle: "Saved Prayers",
+            prSavedSub: "Load or delete past prayers saved on this device.",
+            prNone: "No saved prayers yet.",
+            generateStarters: "Generate Starters",
+
+            bibleTitle: "Bible Reader (Listen)",
+            bibleSub: "Pick a book/chapter and verse range, or Full Chapter.",
+            labelBook: "Book",
+            labelChapter: "Chapter",
+            labelVerseStart: "Verse (start)",
+            labelVerseEnd: "Verse (end)",
+            labelReaderLang: "Reader Language",
+            readerLangNote: "Only two voices, locked for consistency.",
+            fullChapterText: "Full Chapter",
+            fullChapterNote: "If Full Chapter is on, verses are ignored.",
+            labelVersion: "Version label (English only)",
+            versionNote: "For Spanish voice, we do not speak the version label.",
+            readBtn: "Read",
+            listenBtn: "Listen",
+            stopBtn: "Stop",
+            bibleBottomNote: "Spanish voice reads ONLY verse text (no English labels), so it stays pure Spanish.",
+            dbStatusTitle: "Bible DB Status",
+            passageTitle: "Passage"
+          },
+          es: {
+            tagline: "orar • aprender • camina en la Luz",
+            language: "Idioma",
+            support: "Apoya a Alyana Luz",
+            manageBilling: "Administrar facturación",
+            logout: "Salir",
+            supportNote:
+              "Tu apoyo ayuda a mantener y hacer crecer Alyana Luz — mejorando el desarrollo y expandiendo este ministerio.\nPara acceder a funciones premium, suscríbete con Apoyo, o restaura el acceso usando el correo que usaste en Stripe.",
+            loginPlaceholder: "Correo usado en Stripe…",
+            restoreAccess: "Restaurar acceso",
+
+            tabChat: "Chat",
+            tabBible: "Leer Biblia",
+            tabDev: "Devocional",
+            tabPrayer: "Oración diaria",
+
+            chatTitle: "Chat",
+            chatSub: "Los chats guardados se almacenan en este dispositivo.",
+            chatLangLabel: "Idioma del chat",
+            chatAuto: "Auto (según lo que escriba)",
+            chatInputPH: "Pide una oración, un versículo o ‘versículos sobre el perdón’…",
+            send: "Enviar",
+            listen: "Escuchar",
+            stop: "Detener",
+            newChat: "Nuevo",
+            save: "Guardar",
+            savedChatsTitle: "Chats guardados",
+            savedChatsSub: "Carga o elimina cualquier chat guardado.",
+            noSavedChats: "Aún no hay chats guardados.",
+
+            devTitle: "Devocional",
+            devIntro: "Alyana da ejemplos cortos para empezar. Tú escribes y guardas tu devocional real.",
+            devTheme: "Tema / Título (Alyana)",
+            devScripture: "Escritura (Alyana)",
+            devCtxA: "Inicio de Alyana — Contexto / Observación",
+            devRefA: "Inicio de Alyana — Reflexión / Insight",
+            devAppA: "Inicio de Alyana — Aplicación (Práctica)",
+            devPrA: "Inicio de Alyana — Oración",
+            devNotes: "Notas / Reflexión (opcional)",
+            nowWrite: "Ahora escribe el tuyo:",
+            nowWritePrayer: "Ahora escribe tu oración real:",
+            devPH_ctx: "Contexto / Observación (¿Qué está pasando? ¿Quién habla? ¿Por qué importa?)",
+            devPH_ref: "Reflexión / Insight (¿Qué revela esto sobre Dios? ¿Sobre mí?)",
+            devPH_app: "Aplicación (¿Qué haré hoy por causa de esto?)",
+            devPH_pr: "Oración (escribe aquí tu oración real)",
+            devPH_notes: "Notas…",
+            devReq: "Requerido para guardar (racha): Contexto + Reflexión + Aplicación + Oración.",
+            devSavedTitle: "Devocionales guardados",
+            devSavedSub: "Carga o elimina devocionales guardados en este dispositivo.",
+            devNone: "Aún no hay devocionales guardados.",
+            didToday: "Lo hice hoy",
+            generate: "Generar",
+
+            prTitle: "Oración diaria",
+            prIntro: "Alyana da un ejemplo corto para empezar. Tú escribes y guardas tu oración real.",
+            prA: "Inicio de Alyana — Adoración",
+            prC: "Inicio de Alyana — Confesión",
+            prT: "Inicio de Alyana — Gratitud",
+            prS: "Inicio de Alyana — Súplica",
+            prN: "Notas",
+            prNow: "Ahora escribe la tuya:",
+            prPH_A: "Adoración (alaba a Dios por quien Él es)…",
+            prPH_C: "Confesión (lo que necesito confesar)…",
+            prPH_T: "Gratitud (por lo que estoy agradecido)…",
+            prPH_S: "Súplica (peticiones por mí/otros)…",
+            prPH_N: "Notas…",
+            prSavedTitle: "Oraciones guardadas",
+            prSavedSub: "Carga o elimina oraciones guardadas en este dispositivo.",
+            prNone: "Aún no hay oraciones guardadas.",
+            generateStarters: "Generar inicios",
+
+            bibleTitle: "Lector de Biblia (Escuchar)",
+            bibleSub: "Elige un libro/capítulo y rango de versículos, o Capítulo completo.",
+            labelBook: "Libro",
+            labelChapter: "Capítulo",
+            labelVerseStart: "Versículo (inicio)",
+            labelVerseEnd: "Versículo (fin)",
+            labelReaderLang: "Idioma del lector",
+            readerLangNote: "Solo dos voces, fijadas para consistencia.",
+            fullChapterText: "Capítulo completo",
+            fullChapterNote: "Si Capítulo completo está activo, se ignoran los versículos.",
+            labelVersion: "Etiqueta de versión (solo inglés)",
+            versionNote: "En voz española, no se menciona la etiqueta de versión.",
+            readBtn: "Leer",
+            listenBtn: "Escuchar",
+            stopBtn: "Detener",
+            bibleBottomNote: "La voz en español lee SOLO el texto del versículo (sin etiquetas en inglés).",
+            dbStatusTitle: "Estado de la BD bíblica",
+            passageTitle: "Pasaje"
+          }
+        };
+
+        function setText(id, value) {
+          const el = $(id);
+          if (!el) return;
+          el.textContent = value;
+        }
+
+        function setPH(id, value) {
+          const el = $(id);
+          if (!el) return;
+          el.setAttribute("placeholder", value);
+        }
+
+        function applyLang(lang) {
+          const t = TEXT[lang] || TEXT.en;
+
+          setText("tagline", t.tagline);
+          setText("uiLangLabel", t.language);
+          setText("supportBtnText", t.support);
+          setText("manageBillingText", t.manageBilling);
+          setText("logoutText", t.logout);
+          setText("supportNote", t.supportNote);
+
+          setPH("loginEmail", t.loginPlaceholder);
+          setText("restoreBtnText", t.restoreAccess);
+
+          setText("tabChat", t.tabChat);
+          setText("tabBible", t.tabBible);
+          setText("tabDev", t.tabDev);
+          setText("tabPrayer", t.tabPrayer);
+
+          setText("chatTitle", t.chatTitle);
+          setText("chatSub", t.chatSub);
+          setText("chatLangLabel", t.chatLangLabel);
+
+          const chatLang = $("chatLangSelect");
+          if (chatLang) {
+            const optAuto = chatLang.querySelector('option[value="auto"]');
+            if (optAuto) optAuto.textContent = t.chatAuto;
+          }
+          setPH("chatInput", t.chatInputPH);
+
+          setText("chatSendBtn", t.send);
+          setText("chatListenBtn", t.listen);
+          setText("chatStopBtn", t.stop);
+          setText("chatNewBtn", t.newChat);
+          setText("chatSaveBtn", t.save);
+
+          setText("savedChatsTitle", t.savedChatsTitle);
+          setText("savedChatsSub", t.savedChatsSub);
+          setText("noSavedChats", t.noSavedChats);
+
+          setText("devTitle", t.devTitle);
+          setText("devIntro", t.devIntro);
+          setText("devLabelTheme", t.devTheme);
+          setText("devLabelScripture", t.devScripture);
+          setText("devLabelCtxA", t.devCtxA);
+          setText("devLabelRefA", t.devRefA);
+          setText("devLabelAppA", t.devAppA);
+          setText("devLabelPrA", t.devPrA);
+          setText("devLabelNotes", t.devNotes);
+
+          setText("devNow1", t.nowWrite);
+          setText("devNow2", t.nowWrite);
+          setText("devNow3", t.nowWrite);
+          setText("devNow4", t.nowWritePrayer);
+
+          setPH("devMyContext", t.devPH_ctx);
+          setPH("devMyReflection", t.devPH_ref);
+          setPH("devMyApplication", t.devPH_app);
+          setPH("devMyPrayer", t.devPH_pr);
+          setPH("devMyNotes", t.devPH_notes);
+
+          setText("devReqNote", t.devReq);
+
+          setText("devSavedTitle", t.devSavedTitle);
+          setText("devSavedSub", t.devSavedSub);
+          setText("devNone", t.devNone);
+
+          const devStreakBtn = $("devStreakBtn");
+          if (devStreakBtn) devStreakBtn.textContent = t.didToday;
+          const devBtn = $("devotionalBtn");
+          if (devBtn) devBtn.textContent = t.generate;
+          const devSaveBtn = $("devSaveBtn");
+          if (devSaveBtn) devSaveBtn.textContent = t.save;
+
+          setText("prTitle", t.prTitle);
+          setText("prIntro", t.prIntro);
+
+          setText("prLabelA", t.prA);
+          setText("prLabelC", t.prC);
+          setText("prLabelT", t.prT);
+          setText("prLabelS", t.prS);
+          setText("prLabelN", t.prN);
+
+          setText("prNow1", t.prNow);
+          setText("prNow2", t.prNow);
+          setText("prNow3", t.prNow);
+          setText("prNow4", t.prNow);
+
+          setPH("myAdoration", t.prPH_A);
+          setPH("myConfession", t.prPH_C);
+          setPH("myThanksgiving", t.prPH_T);
+          setPH("mySupplication", t.prPH_S);
+          setPH("prayerNotes", t.prPH_N);
+
+          const prStreakBtn = $("prStreakBtn");
+          if (prStreakBtn) prStreakBtn.textContent = t.didToday;
+
+          const prayerBtn = $("prayerBtn");
+          if (prayerBtn) prayerBtn.textContent = t.generateStarters;
+
+          const prSaveBtn = $("prSaveBtn");
+          if (prSaveBtn) prSaveBtn.textContent = t.save;
+
+          setText("prSavedTitle", t.prSavedTitle);
+          setText("prSavedSub", t.prSavedSub);
+          setText("prNone", t.prNone);
+
+          setText("bibleTitle", t.bibleTitle);
+          setText("bibleSub", t.bibleSub);
+          setText("labelBook", t.labelBook);
+          setText("labelChapter", t.labelChapter);
+          setText("labelVerseStart", t.labelVerseStart);
+          setText("labelVerseEnd", t.labelVerseEnd);
+          setText("labelReaderLang", t.labelReaderLang);
+          setText("readerLangNote", t.readerLangNote);
+          setText("fullChapterText", t.fullChapterText);
+          setText("fullChapterNote", t.fullChapterNote);
+          setText("labelVersion", t.labelVersion);
+          setText("versionNote", t.versionNote);
+
+          setText("readBtnText", t.readBtn);
+
+          const listenBible = $("passageListenBtn");
+          if (listenBible) listenBible.textContent = t.listenBtn;
+          const stopBible = $("passageStopBtn");
+          if (stopBible) stopBible.textContent = t.stopBtn;
+
+          setText("bibleBottomNote", t.bibleBottomNote);
+          setText("dbStatusTitle", t.dbStatusTitle);
+          setText("passageTitle", t.passageTitle);
+        }
+
+        function init() {
+          const uiSelect = $("uiLangSelect");
+          if (!uiSelect) return;
+
+          applyLang((uiSelect.value || "en").toLowerCase());
+
+          uiSelect.addEventListener("change", () => {
+            applyLang((uiSelect.value || "en").toLowerCase());
+          });
+        }
+
+        document.addEventListener("DOMContentLoaded", init);
+      })();
+    </script>
   </body>
 </html>
+
 
 
 
