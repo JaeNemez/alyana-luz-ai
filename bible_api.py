@@ -45,7 +45,8 @@ def _data_dir() -> Path:
 
 
 def resolve_version(version: Optional[str]) -> str:
-    v = (version or "en_default").strip()
+    # ✅ Normalize to lowercase to avoid EN/Es/rvr1909 mismatches
+    v = (version or "en_default").strip().lower()
     return v or "en_default"
 
 
@@ -259,6 +260,3 @@ def bible_text(
         }
     finally:
         con.close()
-
-
-
