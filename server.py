@@ -1,3 +1,6 @@
+# server.py
+from __future__ import annotations
+
 from pathlib import Path
 import time
 import traceback
@@ -47,6 +50,15 @@ JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()  # used for signed session 
 # ✅ IMPORTANT: default to 0 (no trial)
 TRIAL_DAYS = int(os.getenv("TRIAL_DAYS") or "0")
 
+# ✅ IMPORTANT: lock chat behind paid subscription by default
+REQUIRE_SUBSCRIPTION = (os.getenv("REQUIRE_SUBSCRIPTION") or "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+)
+
 if STRIPE_SECRET_KEY and stripe:
     stripe.api_key = STRIPE_SECRET_KEY
 
@@ -72,10 +84,80 @@ SESSION_TTL_SECONDS = 60 * 60 * 6  # 6 hours
 MAX_HISTORY = 30
 
 
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+
+
+def _sign_token(payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
+    return f"{_b64url_encode(raw)}.{_b64url_encode(sig)}"
+
+
+def _verify_token(token: str) -> dict | None:
+    try:
+        parts = (token or "").split(".")
+        if len(parts) != 2:
+            return None
+        raw = _b64url_decode(parts[0])
+        sig = _b64url_decode(parts[1])
+        exp_sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, exp_sig):
+            return None
+        payload = json.loads(raw.decode("utf-8"))
+        iat = int(payload.get("iat") or 0)
+        if not iat:
+            return None
+        # token valid for 30 days
+        if time.time() - iat > 60 * 60 * 24 * 30:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _get_bearer(req: Request) -> str:
+    auth = (req.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth.split(" ", 1)[1].strip()
+    return ""
+
+
+def _require_auth(req: Request) -> dict:
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="JWT is not configured on server.")
+    tok = _get_bearer(req)
+    payload = _verify_token(tok)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return payload
+
+
 def _session_key(req: Request) -> str:
+    """
+    IMPORTANT: key chat memory by authenticated user when possible.
+    This prevents different users behind NAT / shared IP from sharing a history.
+    """
+    # If JWT is configured and token is valid, key by customer_id/email
+    if JWT_SECRET:
+        tok = _get_bearer(req)
+        payload = _verify_token(tok)
+        if payload:
+            cid = str(payload.get("customer_id") or "").strip()
+            email = str(payload.get("email") or "").strip().lower()
+            ident = cid or email
+            if ident:
+                return f"user::{ident}"
+
+    # Fallback for unauth/dev mode
     ip = (req.client.host if req.client else "unknown").strip()
     ua = (req.headers.get("user-agent") or "unknown").strip()
-    return f"{ip}::{ua}"
+    return f"anon::{ip}::{ua}"
 
 
 def _cleanup_sessions():
@@ -138,58 +220,6 @@ def _require_stripe_ready():
         )
 
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
-
-
-def _b64url_decode(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
-
-
-def _sign_token(payload: dict) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
-    return f"{_b64url_encode(raw)}.{_b64url_encode(sig)}"
-
-
-def _verify_token(token: str) -> dict | None:
-    try:
-        parts = (token or "").split(".")
-        if len(parts) != 2:
-            return None
-        raw = _b64url_decode(parts[0])
-        sig = _b64url_decode(parts[1])
-        exp_sig = hmac.new(JWT_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
-        if not hmac.compare_digest(sig, exp_sig):
-            return None
-        payload = json.loads(raw.decode("utf-8"))
-        iat = int(payload.get("iat") or 0)
-        if not iat:
-            return None
-        # token valid for 30 days
-        if time.time() - iat > 60 * 60 * 24 * 30:
-            return None
-        return payload
-    except Exception:
-        return None
-
-
-def _get_bearer(req: Request) -> str:
-    auth = (req.headers.get("authorization") or "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth.split(" ", 1)[1].strip()
-    return ""
-
-
-def _require_auth(req: Request) -> dict:
-    tok = _get_bearer(req)
-    payload = _verify_token(tok)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return payload
-
-
 def _stripe_customer_by_email(email: str):
     _require_stripe_ready()
     email = (email or "").strip().lower()
@@ -215,6 +245,36 @@ def _stripe_has_active_or_trialing_subscription(customer_id: str) -> bool:
         if st in ("active", "trialing"):
             return True
     return False
+
+
+def _require_paid_access(req: Request) -> dict:
+    """
+    Enforces:
+      - valid JWT
+      - Stripe customer_id present
+      - active or trialing subscription
+    Returns the JWT payload if allowed.
+    """
+    payload = _require_auth(req)
+
+    customer_id = str(payload.get("customer_id") or "").strip()
+    if not customer_id:
+        raise HTTPException(status_code=401, detail="Missing customer_id")
+
+    # Stripe must be configured if we require subscription
+    if stripe is None or not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Stripe not configured on server.")
+
+    try:
+        ok = _stripe_has_active_or_trialing_subscription(customer_id)
+    except Exception:
+        ok = False
+
+    if not ok:
+        # 402 = Payment Required (perfect semantic match here)
+        raise HTTPException(status_code=402, detail="Subscription required")
+
+    return payload
 
 
 # -----------------------------
@@ -262,6 +322,14 @@ def daily_prayer():
 
 @app.post("/chat")
 async def chat(req: Request):
+    """
+    ✅ Locked behind subscription by default.
+    Set REQUIRE_SUBSCRIPTION=0 if you ever want dev/free mode.
+    """
+    # Enforce paywall (default ON)
+    if REQUIRE_SUBSCRIPTION:
+        _require_paid_access(req)
+
     try:
         body = await req.json()
     except Exception:
@@ -355,9 +423,7 @@ async def stripe_restore(req: Request):
         if not cust:
             raise HTTPException(status_code=404, detail="No Stripe customer found for that email.")
 
-        token = _sign_token(
-            {"iat": int(time.time()), "email": email, "customer_id": cust.id}
-        )
+        token = _sign_token({"iat": int(time.time()), "email": email, "customer_id": cust.id})
 
         subscribed = False
         try:
@@ -451,7 +517,9 @@ def serve_app_js():
 @app.get("/manifest.webmanifest", include_in_schema=False)
 def serve_manifest():
     if not MANIFEST.exists():
-        raise HTTPException(status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}")
+        raise HTTPException(
+            status_code=404, detail=f"manifest.webmanifest not found at {str(MANIFEST)}"
+        )
     return FileResponse(str(MANIFEST))
 
 
@@ -488,6 +556,3 @@ def serve_frontend_fallback(path: str):
         return FileResponse(str(INDEX_HTML))
 
     raise HTTPException(status_code=404, detail="Not Found")
-
-
-
